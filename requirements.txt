@@ -6,3 +6,7 @@ python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-decouple==3.8
+pillow>=10.0.0
+pytesseract>=0.3.10
+opencv-python>=4.8.0
+numpy>=1.21.0
