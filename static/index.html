@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReconoMed - Healthcare Document Processing</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation Header -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-brand">
+                <img src="/static/images/reconomed-logo.png" alt="ReconoMed" class="brand-logo">
+                <span>ReconoMed</span>
+            </div>
+            <div class="nav-menu">
+                <a href="#" class="nav-link active" data-section="dashboard">
+                    <i class="fas fa-chart-line"></i> Dashboard
+                </a>
+                <a href="#" class="nav-link" data-section="patients">
+                    <i class="fas fa-users"></i> Patients
+                </a>
+                <a href="#" class="nav-link" data-section="documents">
+                    <i class="fas fa-file-medical"></i> Documents
+                </a>
+                <a href="#" class="nav-link" data-section="validation">
+                    <i class="fas fa-check-circle"></i> Validation
+                </a>
+            </div>
+            <div class="nav-user">
+                <div class="user-info">
+                    <span class="user-name">Dr. Ionescu</span>
+                    <span class="user-role">Doctor</span>
+                </div>
+                <button class="btn-logout">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+        <!-- Dashboard Section -->
+        <section id="dashboard" class="content-section active">
+            <div class="page-header">
+                <h1>Dashboard</h1>
+                <p>Overview of your medical document processing system</p>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon patients">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="total-patients">0</h3>
+                        <p>Total Patients</p>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon documents">
+                        <i class="fas fa-file-medical"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="total-documents">0</h3>
+                        <p>Documents Uploaded</p>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon pending">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="pending-validation">0</h3>
+                        <p>Pending Validation</p>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon validated">
+                        <i class="fas fa-check-circle"></i>
+                    </div>
+                    <div class="stat-content">
+                        <h3 id="validated-documents">0</h3>
+                        <p>Validated Documents</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-grid">
+                <div class="dashboard-card">
+                    <h3>Recent Activity</h3>
+                    <div id="recent-activity" class="activity-list">
+                        <!-- Activity items will be loaded here -->
+                    </div>
+                </div>
+                
+                <div class="dashboard-card">
+                    <h3>Quick Actions</h3>
+                    <div class="quick-actions">
+                        <button class="action-btn primary" onclick="showSection('patients')">
+                            <i class="fas fa-user-plus"></i>
+                            Add New Patient
+                        </button>
+                        <button class="action-btn secondary" onclick="showSection('documents')">
+                            <i class="fas fa-upload"></i>
+                            Upload Document
+                        </button>
+                        <button class="action-btn tertiary" onclick="showSection('validation')">
+                            <i class="fas fa-tasks"></i>
+                            Review Pending
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Patients Section -->
+        <section id="patients" class="content-section">
+            <div class="page-header">
+                <h1>Patient Management</h1>
+                <button class="btn-primary" onclick="showAddPatientModal()">
+                    <i class="fas fa-plus"></i> Add New Patient
+                </button>
+            </div>
+            
+            <div class="search-bar">
+                <input type="text" id="patient-search" placeholder="Search patients by name..." class="search-input">
+                <button class="search-btn">
+                    <i class="fas fa-search"></i>
+                </button>
+            </div>
+
+            <div class="patients-grid" id="patients-grid">
+                <!-- Patient cards will be loaded here -->
+            </div>
+        </section>
+
+        <!-- Documents Section -->
+        <section id="documents" class="content-section">
+            <div class="page-header">
+                <h1>Document Management</h1>
+                <select id="patient-select" class="patient-selector">
+                    <option value="">Select a patient...</option>
+                </select>
+            </div>
+
+            <div class="upload-area" id="upload-area">
+                <div class="upload-content">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <h3>Drag & Drop Documents Here</h3>
+                    <p>Or click to select files</p>
+                    <input type="file" id="file-input" multiple accept="image/*,.pdf" hidden>
+                    <button class="btn-secondary" onclick="document.getElementById('file-input').click()">
+                        Choose Files
+                    </button>
+                </div>
+            </div>
+
+            <div class="documents-list" id="documents-list">
+                <!-- Documents will be loaded here -->
+            </div>
+        </section>
+
+        <!-- Validation Section -->
+        <section id="validation" class="content-section">
+            <div class="page-header">
+                <h1>Document Validation</h1>
+                <div class="validation-filters">
+                    <select id="validation-filter">
+                        <option value="all">All Documents</option>
+                        <option value="pending">Pending Validation</option>
+                        <option value="validated">Validated</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="validation-list" id="validation-list">
+                <!-- Validation items will be loaded here -->
+            </div>
+        </section>
+    </main>
+
+    <!-- Add Patient Modal -->
+    <div id="add-patient-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add New Patient</h2>
+                <button class="modal-close" onclick="closeAddPatientModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <form id="add-patient-form" class="patient-form">
+                <div class="form-group">
+                    <label for="patient-name">Full Name *</label>
+                    <input type="text" id="patient-name" name="name" required>
+                </div>
+                <div class="form-group">
+                    <label for="patient-birth-date">Birth Date</label>
+                    <input type="date" id="patient-birth-date" name="birth_date">
+                </div>
+                <div class="form-group">
+                    <label for="patient-phone">Phone Number</label>
+                    <input type="tel" id="patient-phone" name="phone">
+                </div>
+                <div class="form-group">
+                    <label for="patient-email">Email Address</label>
+                    <input type="email" id="patient-email" name="email">
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeAddPatientModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Add Patient</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Document Validation Modal -->
+    <div id="validation-modal" class="modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h2>Document Validation</h2>
+                <button class="modal-close" onclick="closeValidationModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="validation-content" id="validation-content">
+                <!-- Validation content will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div id="loading" class="loading-overlay">
+        <div class="spinner">
+            <i class="fas fa-heartbeat"></i>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -2,6 +2,7 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from datetime import datetime
@@ -45,16 +46,17 @@ app.include_router(search_router)
 def startup_event():
     create_tables()
 
-# Health check endpoints
+# Serve the frontend
 @app.get("/")
-def read_root():
-    return {
-        "message": "ReconoMed API is running!",
-        "version": "0.1.0",
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat()
-    }
+def serve_frontend():
+    return FileResponse('static/index.html')
 
+# Serve the login page
+@app.get("/login")
+def serve_login():
+    return FileResponse('static/login.html')
+
+# Health check endpoints
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "ReconoMed API"}

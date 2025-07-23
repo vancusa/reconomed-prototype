@@ -2,12 +2,19 @@
 import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import io
+import logging
 
-def preprocess_image_aggressive(image_bytes):
+# Set up logging instead of print statements
+logger = logging.getLogger(__name__)
+
+def preprocess_image_aggressive(image_input):
     """Aggressive image preprocessing for better OCR accuracy"""
     try:
-        # Convert bytes to PIL Image
-        image = Image.open(io.BytesIO(image_bytes))
+        # Handle both bytes and file paths
+        if isinstance(image_input, bytes):
+            image = Image.open(io.BytesIO(image_input))
+        else:
+            image = Image.open(image_input)
         
         # Convert to RGB if needed
         if image.mode != 'RGB':
@@ -37,15 +44,17 @@ def preprocess_image_aggressive(image_bytes):
         return sharpened
         
     except Exception as e:
-        print(f"Aggressive preprocessing failed: {e}")
-        # Fallback to simple processing
-        return preprocess_image_simple(image_bytes)
+        logger.error(f"Aggressive preprocessing failed: {e}")
+        return preprocess_image_simple(image_input)
 
-def preprocess_image_simple(image_bytes):
+def preprocess_image_simple(image_input):
     """Simple image preprocessing using PIL only"""
     try:
-        # Convert bytes to PIL Image
-        image = Image.open(io.BytesIO(image_bytes))
+        # Handle both bytes and file paths
+        if isinstance(image_input, bytes):
+            image = Image.open(io.BytesIO(image_input))
+        else:
+            image = Image.open(image_input)
         
         # Convert to RGB if needed
         if image.mode != 'RGB':
@@ -61,11 +70,14 @@ def preprocess_image_simple(image_bytes):
         return enhanced
         
     except Exception as e:
-        print(f"Simple preprocessing failed: {e}")
+        logger.error(f"Simple preprocessing failed: {e}")
         # Return original image if preprocessing fails
-        return Image.open(io.BytesIO(image_bytes))
+        if isinstance(image_input, bytes):
+            return Image.open(io.BytesIO(image_input))
+        else:
+            return Image.open(image_input)
 
-def extract_text_from_image(image_file):
+def extract_text_from_image(image_input):
     """Extract text from image using multiple OCR strategies"""
     strategies = [
         {
@@ -93,10 +105,10 @@ def extract_text_from_image(image_file):
     
     for strategy in strategies:
         try:
-            print(f"Trying OCR strategy: {strategy['name']}")
+            logger.info(f"Trying OCR strategy: {strategy['name']}")
             
             # Preprocess image
-            processed_image = strategy['preprocess'](image_file)
+            processed_image = strategy['preprocess'](image_input)
             
             # Extract text
             text = pytesseract.image_to_string(
@@ -108,30 +120,29 @@ def extract_text_from_image(image_file):
             # Clean up the text
             cleaned_text = text.strip()
             
-            print(f"Strategy {strategy['name']}: extracted {len(cleaned_text)} characters")
-            print(f"First 100 chars: {cleaned_text[:100]}")
+            logger.debug(f"Strategy {strategy['name']}: extracted {len(cleaned_text)} characters")
             
             # Estimate confidence based on text characteristics
             estimated_confidence = estimate_text_quality(cleaned_text)
             
-            print(f"Estimated confidence: {estimated_confidence}")
+            logger.debug(f"Estimated confidence: {estimated_confidence}")
             
             # Keep the best result
             if estimated_confidence > best_confidence and len(cleaned_text) > len(best_result):
                 best_result = cleaned_text
                 best_confidence = estimated_confidence
-                print(f"New best result with confidence {estimated_confidence}")
+                logger.info(f"New best result with confidence {estimated_confidence}")
             
         except Exception as e:
-            print(f"Strategy {strategy['name']} failed: {str(e)}")
+            logger.error(f"Strategy {strategy['name']} failed: {str(e)}")
             continue
     
     # If all strategies failed or produced poor results, return mock data
     if len(best_result) < 10 or best_confidence < 20:
-        print("All OCR strategies failed or produced poor results, using mock data")
+        logger.warning("All OCR strategies failed or produced poor results, using mock data")
         return get_mock_ocr_text()
     
-    print(f"Final OCR result: {len(best_result)} characters, confidence: {best_confidence}")
+    logger.info(f"Final OCR result: {len(best_result)} characters, confidence: {best_confidence}")
     return best_result
 
 def estimate_text_quality(text):
@@ -187,7 +198,7 @@ Observații: Analize în limite normale
 """.strip()
 
 def extract_text_confidence(
-    image_file,
+    image_input,
     lang='ron+eng',
     confidence_threshold=30
 ):
@@ -195,7 +206,7 @@ def extract_text_confidence(
     Extract text with confidence scores and bounding boxes from an image.
     
     Parameters:
-        image_file: Path or file-like object to the image.
+        image_input: Path, file-like object, or bytes of the image.
         lang (str): Tesseract language(s) to use, e.g., 'eng', 'ron+eng'.
         confidence_threshold (int): Minimum confidence score to include a word.
 
@@ -205,12 +216,16 @@ def extract_text_confidence(
             - words: List of dicts with word-level data, confidence, and bounding box.
             - average_confidence: Mean confidence score of accepted words.
     """
+    logger.info(f"Starting OCR extraction with confidence threshold: {confidence_threshold}")
+    
     try:
-        full_text = extract_text_from_image(image_file)
+        # First get the full text using our robust extraction
+        full_text = extract_text_from_image(image_input)
         estimated_confidence = estimate_text_quality(full_text)
 
         try:
-            processed_image = preprocess_image_aggressive(image_file)
+            # Get detailed word-level data
+            processed_image = preprocess_image_aggressive(image_input)
 
             data = pytesseract.image_to_data(
                 processed_image,
@@ -223,7 +238,7 @@ def extract_text_confidence(
             for i, word in enumerate(data['text']):
                 try:
                     conf = int(data['conf'][i])
-                except ValueError:
+                except (ValueError, TypeError):
                     conf = -1  # Tesseract may output '-1' or blank
 
                 if conf > confidence_threshold and word.strip():
@@ -235,91 +250,40 @@ def extract_text_confidence(
                             'y': data['top'][i],
                             'width': data['width'][i],
                             'height': data['height'][i],
-                            'page_num': data.get('page_num', [0])[i],
-                            'line_num': data.get('line_num', [0])[i]
+                            'page_num': data.get('page_num', [0])[i] if data.get('page_num') else 0,
+                            'line_num': data.get('line_num', [0])[i] if data.get('line_num') else 0
                         }
                     })
 
             if confident_words:
                 actual_confidence = sum(w['confidence'] for w in confident_words) / len(confident_words)
             else:
-                print("[Info] No confident words found; using estimated_confidence.")
+                logger.warning("No confident words found; using estimated_confidence.")
                 actual_confidence = estimated_confidence
 
         except Exception as detail_error:
-            print(f"[Warning] Could not get detailed OCR data: {detail_error}")
+            logger.error(f"Could not get detailed OCR data: {detail_error}")
             confident_words = []
             actual_confidence = estimated_confidence
 
-        return {
+        result = {
             'full_text': full_text,
             'words': confident_words,
             'average_confidence': actual_confidence
         }
+        
+        logger.info(f"OCR completed: {len(full_text)} chars, {len(confident_words)} confident words, {actual_confidence:.1f}% confidence")
+        return result
 
     except Exception as e:
-        print(f"[Error] extract_text_confidence failed: {str(e)}")
+        logger.error(f"extract_text_confidence failed: {str(e)}")
         return {
             'full_text': get_mock_ocr_text(),
             'words': [],
             'average_confidence': 85
         }
 
-def get_mock_ocr_text():
-    """Return mock OCR text for development/fallback"""
-    return """
-RAPORT DE LABORATOR MEDICAL
-Pacient: Ion Popescu
-Data: 15.01.2024
-Nr. Laborator: LAB001
-
-Rezultate Analize Sânge:
-- Hemoglobină: 14,2 g/dL (Normal: 12-16)
-- Leucocite: 7.500 /μL (Normal: 4.000-11.000)
-- Trombocite: 250.000 /μL (Normal: 150.000-400.000)
-- Glicemia: 95 mg/dL (Normal: 70-100)
-
-Medic: Dr. Ionescu
-Observații: Analize în limite normale
-""".strip()
-
-def extract_text_confidence(image_file):
-    """Extract text with confidence scores for validation workflow"""
-    try:
-        processed_image = preprocess_image(image_file)
-        
-        # Get detailed OCR results with confidence scores
-        data = pytesseract.image_to_data(
-            processed_image,
-            lang='ron+eng',
-            config=r'--oem 3 --psm 6',
-            output_type=pytesseract.Output.DICT
-        )
-        
-        # Extract words with confidence > 30
-        confident_words = []
-        for i, word in enumerate(data['text']):
-            if int(data['conf'][i]) > 30 and word.strip():
-                confident_words.append({
-                    'text': word,
-                    'confidence': int(data['conf'][i]),
-                    'bbox': {
-                        'x': data['left'][i],
-                        'y': data['top'][i],
-                        'width': data['width'][i],
-                        'height': data['height'][i]
-                    }
-                })
-        
-        return {
-            'full_text': ' '.join([w['text'] for w in confident_words]),
-            'words': confident_words,
-            'average_confidence': sum([w['confidence'] for w in confident_words]) / len(confident_words) if confident_words else 0
-        }
-        
-    except Exception as e:
-        return {
-            'full_text': get_mock_ocr_text(),
-            'words': [],
-            'average_confidence': 85  # Mock confidence
-        }
+# Convenience function for basic text extraction
+def extract_text_basic(image_input):
+    """Simple text extraction without confidence data"""
+    return extract_text_from_image(image_input)
