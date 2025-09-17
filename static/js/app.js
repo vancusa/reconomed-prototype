@@ -424,7 +424,10 @@ class ReconoMedApp {
         }
     }
 
+    // *********************************
     // Rendering Functions
+    //**********************************
+
     renderPatients() {
         const container = document.getElementById('patients-grid');
         if (this.patients.length === 0) {
@@ -433,13 +436,13 @@ class ReconoMedApp {
         }
 
         container.innerHTML = this.patients.map(patient => {
-            const initials = patient.name.split(' ').map(n => n[0]).join('').toUpperCase();
+           const initials = (patient.given_name[0] || '') + (patient.family_name[0] || '');
             return `
                 <div class="patient-card">
                     <div class="patient-header">
                         <div class="patient-avatar">${initials}</div>
                         <div class="patient-info">
-                            <h3>${patient.name}</h3>
+                            <h3>${patient.given_name} ${patient.family_name}</h3>
                             <div class="patient-details">
                                 ${patient.birth_date ? `Born: ${patient.birth_date}` : ''}
                                 ${patient.phone ? ` • ${patient.phone}` : ''}
@@ -466,7 +469,7 @@ class ReconoMedApp {
         this.patients.forEach(patient => {
             const option = document.createElement('option');
             option.value = patient.id;
-            option.textContent = patient.name;
+            option.textContent = patient.given_name + ' ' + patient.family_name;
             select.appendChild(option);
         });
     }
@@ -660,9 +663,14 @@ class ReconoMedApp {
     }
 
     searchPatients(query) {
-        const filteredPatients = this.patients.filter(patient => 
-            patient.name.toLowerCase().includes(query.toLowerCase())
-        );
+        const filteredPatients = this.patients.filter(patient => {
+            const fullName = `${patient.given_name} ${patient.family_name}`.toLowerCase();
+            return fullName.includes(searchTerm) ||
+                patient.given_name.toLowerCase().includes(searchTerm) ||
+                patient.family_name.toLowerCase().includes(searchTerm) ||
+                (patient.cnp && patient.cnp.includes(query)) ||
+                (patient.phone && patient.phone.includes(query));
+        });
         
         // Temporarily store original patients
         const originalPatients = this.patients;

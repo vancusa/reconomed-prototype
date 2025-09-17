@@ -157,7 +157,7 @@ async def get_patients(
     #current_user: User = Depends(get_current_user), #This is commented out for now
     db: Session = Depends(get_db)
 ):
-    #TEMPORAY CURRENT USER DEPENDANCE
+    #TEMPORAY CURRENT USER DEPENDENCE
     # Get demo doctor for testing
     current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
     if not current_user:
