@@ -1,108 +1,205 @@
-"""Document processing service for type detection and data extraction"""
+"""Enhanced document service with Romanian template processing"""
+from typing import Dict, Any, Optional, List
+import json
+import logging
+from datetime import datetime
 
-def detect_document_type(text):
-    """Detect document type based on OCR text (supports Romanian and English)"""
-    text_lower = text.lower()
-    
-    # Romanian terms for document types
-    romanian_terms = {
-        "lab_result": ["laborator", "analize", "sânge", "hemoglobină", "glicemie", "colesterol", "rezultate"],
-        "xray": ["raze-x", "radiografie", "torace", "plămân", "fractură", "oase"],
-        "ct_scan": ["tomografie", "computer", "contrast", "ct"],
-        "mri": ["rezonanță", "magnetică", "creier", "coloană", "articulație"],
-        "ultrasound": ["ecografie", "doppler", "fetal", "abdomen"],
-        "mammography": ["mamografie", "sân"],
-        "endoscopy": ["endoscopie", "colonoscopie", "gastroscopie", "biopsie"],
-        "ecg": ["electrocardiogramă", "cardiac", "inimă", "ritm"],
-        "discharge_note": ["externare", "rezumat", "spital", "internare"],
-        "prescription": ["rețetă", "medicament", "doză", "farmacie", "tratament"],
-        "consultation": ["consultație", "vizită", "examinare", "diagnostic"],
-        "surgical_report": ["chirurgie", "operație", "procedură", "chirurgical"],
-        "pathology_report": ["patologie", "histologie", "țesut", "probă"]
-    }
-    
-    # English terms
-    english_terms = {
-        "lab_result": ["lab", "blood", "test results", "hemoglobin", "glucose", "cholesterol"],
-        "xray": ["x-ray", "xray", "radiography", "chest", "lung", "fracture"],
-        "ct_scan": ["ct", "computed tomography", "scan", "contrast"],
-        "mri": ["mri", "magnetic resonance", "brain", "spine", "joint"],
-        "ultrasound": ["ultrasound", "ultrasonography", "echo", "doppler", "fetal"],
-        "mammography": ["mammography", "mammogram", "breast"],
-        "endoscopy": ["endoscopy", "colonoscopy", "gastroscopy", "biopsy"],
-        "ecg": ["ecg", "electrocardiogram", "ekg", "cardiac", "heart rate"],
-        "discharge_note": ["discharge", "summary", "hospital", "admission"],
-        "prescription": ["prescription", "medication", "dosage", "pharmacy"],
-        "consultation": ["consultation", "visit", "examination", "diagnosis"],
-        "surgical_report": ["surgery", "operation", "procedure", "surgical"],
-        "pathology_report": ["pathology", "histology", "tissue", "specimen"]
-    }
-    
-    # Check both Romanian and English terms
-    for doc_type in romanian_terms:
-        if any(term in text_lower for term in romanian_terms[doc_type]):
-            return doc_type
-        if any(term in text_lower for term in english_terms.get(doc_type, [])):
-            return doc_type
-    
-    return "general"
+from app.services.enhanced_ocr import RomanianOCRProcessor, EnhancedOCRResult
+from app.services.romanian_document_templates import RomanianDocumentTemplates
 
-def extract_structured_data(text, doc_type):
-    """Extract structured data based on document type (Romanian + English support)"""
-    # Mock structured data extraction - we'll enhance this with LLM later
+logger = logging.getLogger(__name__)
+
+class EnhancedDocumentService:
+    """Enhanced document processing with Romanian intelligence"""
     
-    if doc_type == "lab_result":
-        # Support both Romanian and English lab results
-        if "pacient" in text.lower() or "romanian" in text.lower():
-            return {
-                "patient_name": "Ion Popescu",
-                "test_date": "15.01.2024",
-                "lab_id": "LAB001",
-                "results": {
-                    "hemoglobina": "14,2 g/dL",
-                    "leucocite": "7.500 /μL",
-                    "trombocite": "250.000 /μL",
-                    "glicemia": "95 mg/dL"
-                },
-                "language": "ro"
+    def __init__(self):
+        self.ocr_processor = RomanianOCRProcessor()
+        self.templates = RomanianDocumentTemplates.get_all_templates()
+    
+    def detect_document_type(self, ocr_text: str) -> str:
+        """Detect document type from OCR text"""
+        text_upper = ocr_text.upper()
+        
+        # Romanian ID card detection
+        if any(pattern in text_upper for pattern in ["ROMANIA", "CARTE DE IDENTITATE", "CNP"]):
+            return "romanian_id"
+        
+        # Lab results detection
+        elif any(pattern in text_upper for pattern in ["LABORATOR", "ANALIZE", "HEMOGLOBINĂ", "REZULTATE"]):
+            return "lab_result"
+        
+        # Prescription detection
+        elif any(pattern in text_upper for pattern in ["REȚETĂ", "PRESCRIPȚIE", "MEDICAMENT"]):
+            return "prescription"
+        
+        # Medical imaging detection
+        elif any(pattern in text_upper for pattern in ["RADIOGRAFIE", "ECOGRAFIE", "RMN", "CT"]):
+            return "medical_imaging"
+        
+        # Discharge summary detection
+        elif any(pattern in text_upper for pattern in ["FOAIA DE EXTERNARE", "SCRISOARE MEDICALĂ"]):
+            return "discharge_summary"
+        
+        return "unknown_document"
+    
+    def process_document_with_templates(self, file_content: bytes, hint_type: Optional[str] = None) -> Dict[str, Any]:
+        """Process document using Romanian templates"""
+        try:
+            # Use enhanced OCR processor
+            ocr_result = self.ocr_processor.process_document(file_content, hint_type)
+            
+            # Build comprehensive response
+            result = {
+                "success": True,
+                "ocr_text": ocr_result.raw_text,
+                "document_type": ocr_result.template_match.document_type if ocr_result.template_match else "unknown_document",
+                "confidence_score": ocr_result.confidence_score,
+                "structured_data": ocr_result.structured_data,
+                "processing_metadata": ocr_result.processing_metadata,
+                "template_match": {
+                    "matched": ocr_result.template_match is not None,
+                    "template_id": ocr_result.template_match.template_id if ocr_result.template_match else None,
+                    "matched_patterns": ocr_result.template_match.matched_patterns if ocr_result.template_match else [],
+                    "confidence": ocr_result.template_match.confidence if ocr_result.template_match else 0
+                }
             }
-        else:
+            
+            # Add validation results for Romanian ID
+            if ocr_result.template_match and ocr_result.template_match.document_type == "romanian_id":
+                result["validation_results"] = self._validate_romanian_id_extraction(ocr_result.structured_data)
+            
+            # Add medical analysis for lab results
+            elif ocr_result.template_match and ocr_result.template_match.document_type == "lab_result":
+                result["medical_analysis"] = self._analyze_lab_results(ocr_result.structured_data)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Enhanced document processing failed: {str(e)}")
             return {
-                "patient_name": "John Doe",
-                "test_date": "2024-01-15",
-                "lab_id": "LAB001",
-                "results": {
-                    "hemoglobin": "14.2 g/dL",
-                    "wbc": "7,500 /μL",
-                    "platelets": "250,000 /μL"
-                },
-                "language": "en"
+                "success": False,
+                "error": str(e),
+                "ocr_text": "",
+                "document_type": "processing_error",
+                "confidence_score": 0,
+                "structured_data": {},
+                "fallback_used": True
             }
     
-    elif doc_type in ["xray", "ct_scan", "mri", "ultrasound", "mammography"]:
-        return {
-            "imaging_type": doc_type,
-            "patient_name": "Extracted from OCR",
-            "study_date": "2024-01-15",
-            "findings": "Normal study" if "normal" in text.lower() else "Findings noted",
-            "radiologist": "Dr. Radiolog"
+    def _validate_romanian_id_extraction(self, structured_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate Romanian ID card extraction"""
+        validation_results = {
+            "cnp_valid": structured_data.get("cnp_valid", False),
+            "names_extracted": bool(structured_data.get("nume") and structured_data.get("prenume")),
+            "date_consistent": structured_data.get("cnp_date_consistent", False),
+            "required_fields_present": True,
+            "warnings": [],
+            "suggestions": []
         }
+        
+        # Check required fields
+        required_fields = ["nume", "prenume", "cnp"]
+        missing_fields = [field for field in required_fields if not structured_data.get(field)]
+        
+        if missing_fields:
+            validation_results["required_fields_present"] = False
+            validation_results["warnings"].append(f"Missing required fields: {', '.join(missing_fields)}")
+            validation_results["suggestions"].append("Manual verification recommended for missing fields")
+        
+        # CNP validation warnings
+        if not structured_data.get("cnp_valid", True):
+            validation_results["warnings"].append("CNP validation failed")
+            validation_results["suggestions"].append("Verify CNP manually - OCR may have misread digits")
+        
+        # Date consistency warnings
+        if not structured_data.get("cnp_date_consistent", True):
+            validation_results["warnings"].append("CNP and birth date are inconsistent")
+            validation_results["suggestions"].append("Check birth date against CNP-derived date")
+        
+        return validation_results
     
-    elif doc_type == "prescription":
-        return {
-            "patient_name": "Extracted from OCR",
-            "medications": ["Medication 1", "Medication 2"],
-            "prescribing_doctor": "Dr. Doctor",
-            "date": "2024-01-15"
+    def _analyze_lab_results(self, structured_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze lab results for medical insights"""
+        analysis = {
+            "test_count": 0,
+            "abnormal_results": [],
+            "normal_results": [],
+            "unknown_results": [],
+            "critical_flags": [],
+            "recommendations": []
         }
+        
+        test_results = structured_data.get("test_results", [])
+        analysis["test_count"] = len(test_results)
+        
+        for test in test_results:
+            test_status = test.get("status", "unknown")
+            test_name = test.get("test_name", "Unknown Test")
+            
+            if test_status == "normal":
+                analysis["normal_results"].append(test_name)
+            elif test_status in ["high", "low"]:
+                analysis["abnormal_results"].append({
+                    "test": test_name,
+                    "status": test_status,
+                    "value": test.get("value", ""),
+                    "unit": test.get("unit", "")
+                })
+                
+                # Flag critical values (simplified logic)
+                if self._is_critical_value(test):
+                    analysis["critical_flags"].append(test_name)
+            else:
+                analysis["unknown_results"].append(test_name)
+        
+        # Generate recommendations
+        if analysis["abnormal_results"]:
+            analysis["recommendations"].append("Review abnormal results with patient's medical history")
+        
+        if analysis["critical_flags"]:
+            analysis["recommendations"].append("URGENT: Critical values detected - immediate medical review required")
+        
+        if analysis["unknown_results"]:
+            analysis["recommendations"].append("Manual verification needed for tests with unclear results")
+        
+        return analysis
     
-    elif doc_type == "consultation":
-        return {
-            "patient_name": "Extracted from OCR",
-            "consultation_date": "2024-01-15",
-            "chief_complaint": "Patient symptoms",
-            "diagnosis": "Clinical diagnosis",
-            "doctor": "Dr. Doctor"
+    def _is_critical_value(self, test_result: Dict[str, Any]) -> bool:
+        """Determine if a test result represents a critical value"""
+        test_name = test_result.get("normalized_name", "").lower()
+        value_str = test_result.get("value", "")
+        
+        try:
+            value = float(value_str.replace(',', '.'))
+        except (ValueError, AttributeError):
+            return False
+        
+        # Simplified critical value thresholds (would be more comprehensive in production)
+        critical_thresholds = {
+            "hemoglobin": {"low": 7.0, "high": 20.0},
+            "white_blood_cells": {"low": 2.0, "high": 20.0},
+            "blood_glucose": {"low": 50, "high": 400},
+            "creatinine": {"low": 0.5, "high": 3.0}
         }
-    
-    return {"type": doc_type, "status": "processed", "language": "auto-detected"}
+        
+        if test_name in critical_thresholds:
+            thresholds = critical_thresholds[test_name]
+            return value < thresholds["low"] or value > thresholds["high"]
+        
+        return False
+
+# Backward compatibility functions
+def detect_document_type(ocr_text: str) -> str:
+    """Legacy function for backward compatibility"""
+    service = EnhancedDocumentService()
+    return service.detect_document_type(ocr_text)
+
+def extract_structured_data(ocr_text: str, document_type: str) -> Dict[str, Any]:
+    """Legacy function - now replaced by template processing"""
+    # For backward compatibility, return basic extraction
+    return {
+        "legacy_extraction": True,
+        "text_preview": ocr_text[:200] + "..." if len(ocr_text) > 200 else ocr_text,
+        "detected_type": document_type,
+        "upgrade_note": "Use enhanced template processing for better results"
+    }

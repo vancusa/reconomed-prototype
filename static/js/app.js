@@ -436,7 +436,10 @@ class ReconoMedApp {
         }
 
         container.innerHTML = this.patients.map(patient => {
+           /* THIS IS THE RIGHT WAY
            const initials = (patient.given_name[0] || '') + (patient.family_name[0] || '');
+           */
+          const initials = patient.id;
             return `
                 <div class="patient-card">
                     <div class="patient-header">
@@ -665,9 +668,9 @@ class ReconoMedApp {
     searchPatients(query) {
         const filteredPatients = this.patients.filter(patient => {
             const fullName = `${patient.given_name} ${patient.family_name}`.toLowerCase();
-            return fullName.includes(searchTerm) ||
-                patient.given_name.toLowerCase().includes(searchTerm) ||
-                patient.family_name.toLowerCase().includes(searchTerm) ||
+            return fullName.includes(query) ||
+                patient.given_name.toLowerCase().includes(query) ||
+                patient.family_name.toLowerCase().includes(query) ||
                 (patient.cnp && patient.cnp.includes(query)) ||
                 (patient.phone && patient.phone.includes(query));
         });

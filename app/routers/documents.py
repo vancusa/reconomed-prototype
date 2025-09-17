@@ -1,7 +1,7 @@
 """Document management endpoints"""
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import json
 import os
 
@@ -10,6 +10,7 @@ from app.models import Patient, Document, DocumentResponse
 from app.services.ocr import extract_text_from_image, extract_text_confidence
 from app.services.document import detect_document_type, extract_structured_data
 from app.utils.file import validate_file_type, generate_unique_filename, save_uploaded_file
+from app.services.document import EnhancedDocumentService
 
 router = APIRouter(
     prefix="/documents",
@@ -19,7 +20,7 @@ router = APIRouter(
 
 @router.post("/upload")
 def upload_document(
-    patient_id: int,
+    patient_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
@@ -79,105 +80,138 @@ def upload_document(
         raise HTTPException(status_code=500, detail=f"Upload error: {str(e)}")
 
 @router.post("/{document_id}/process-ocr")
-def process_document_ocr(
-    document_id: int,
+async def process_document_ocr(
+    document_id: str,
+    hint_type: Optional[str] = None,  # Add document type hint
     db: Session = Depends(get_db)
 ):
-    """Process OCR for an uploaded document"""
+    """Process OCR with enhanced Romanian template recognition"""
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
     
-    # Check if file exists
+    # Get demo doctor for testing
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    if not current_user:
+        raise HTTPException(status_code=500, detail="Demo user not found")
+    
+    # Check clinic isolation
+    if document.clinic_id != current_user.clinic_id:
+        raise HTTPException(status_code=403, detail="Access denied to this document")
+    
     file_path = f"uploads/{document.filename}"
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Document file not found on server")
+        raise HTTPException(status_code=404, detail="Document file not found")
     
     try:
-        # Check file size
-        file_size = os.path.getsize(file_path)
-        if file_size > 10 * 1024 * 1024:  # 10MB limit
-            raise HTTPException(status_code=400, detail=f"File too large for OCR: {file_size/1024/1024:.1f}MB. Maximum: 10MB")
+        print(f"Processing enhanced OCR for document {document_id}")
         
-        print(f"Processing OCR for document {document_id}, file size: {file_size/1024:.1f}KB")
-        
-        # Read the saved file
+        # Read file content
         with open(file_path, 'rb') as f:
             file_content = f.read()
         
-        print(f"File read successfully, starting OCR...")
+        # Use enhanced document service
+        enhanced_service = EnhancedDocumentService()
+        processing_result = enhanced_service.process_document_with_templates(
+            file_content, hint_type
+        )
         
-        # Process OCR with better error handling
-        try:
-            ocr_result = extract_text_confidence(file_content)
-            ocr_text = ocr_result['full_text']
-            print(f"OCR completed. Text length: {len(ocr_text)} characters")
-            print(f"OCR confidence: {ocr_result['average_confidence']}")
-            print(f"First 100 chars: {ocr_text[:100]}")
-        except Exception as ocr_error:
-            print(f"OCR failed: {str(ocr_error)}")
-            # Fallback to simple OCR without preprocessing
-            try:
-                from app.services.ocr_service import extract_text_from_image
-                ocr_text = extract_text_from_image(file_content)
-                ocr_result = {
-                    'full_text': ocr_text,
-                    'words': [],
-                    'average_confidence': 50  # Default confidence
-                }
-                print(f"Fallback OCR completed. Text length: {len(ocr_text)} characters")
-            except Exception as fallback_error:
-                print(f"Fallback OCR also failed: {str(fallback_error)}")
-                raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(fallback_error)}")
+        if not processing_result["success"]:
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Enhanced OCR processing failed: {processing_result.get('error', 'Unknown error')}"
+            )
         
-        # Detect document type
-        doc_type = detect_document_type(ocr_text)
-        print(f"Document type detected: {doc_type}")
+        # Update document with enhanced results
+        document.document_type = processing_result["document_type"]
+        document.ocr_text = processing_result["ocr_text"]
+        document.ocr_confidence = processing_result["confidence_score"]
+        document.ocr_status = "completed"
         
-        # Extract structured data
-        structured_data = extract_structured_data(ocr_text, doc_type)
+        # Store comprehensive extracted data
+        enhanced_extracted_data = {
+            "structured_data": processing_result["structured_data"],
+            "template_match": processing_result["template_match"],
+            "processing_metadata": processing_result["processing_metadata"],
+            "validation_results": processing_result.get("validation_results", {}),
+            "medical_analysis": processing_result.get("medical_analysis", {}),
+            "processing_timestamp": datetime.utcnow().isoformat(),
+            "processor_version": "enhanced_romanian_v1.0"
+        }
         
-        # Add OCR metadata
-        structured_data['ocr_confidence'] = ocr_result['average_confidence']
-        structured_data['ocr_word_count'] = len(ocr_result['words'])
-        structured_data['ocr_status'] = 'completed'
-        structured_data['ocr_timestamp'] = "2024-01-15T10:30:00"
-        structured_data['file_size'] = file_size
-        
-        # Update document
-        document.document_type = doc_type
-        document.ocr_text = ocr_text
-        document.extracted_data = json.dumps(structured_data)
-        
+        document.extracted_data = json.dumps(enhanced_extracted_data)
         db.commit()
-        db.refresh(document)
+        
+        # Create audit log
+        from app.models import GDPRAuditLog
+        audit_log = GDPRAuditLog(
+            clinic_id=current_user.clinic_id,
+            user_id=current_user.id,
+            patient_id=document.patient_id,
+            action="document_processed",
+            legal_basis="consent",
+            data_category="medical_document",
+            details={
+                "document_id": document.id,
+                "document_type": processing_result["document_type"],
+                "template_matched": processing_result["template_match"]["matched"],
+                "confidence_score": processing_result["confidence_score"],
+                "medical_terms_found": processing_result["processing_metadata"].get("medical_terms_found", 0)
+            }
+        )
+        db.add(audit_log)
+        db.commit()
         
         return {
-            "message": "OCR processing completed",
+            "message": "Enhanced OCR processing completed",
             "document_id": document_id,
-            "document_type": doc_type,
-            "ocr_text_preview": ocr_text[:300] + "..." if len(ocr_text) > 300 else ocr_text,
-            "ocr_full_text": ocr_text,  # Include full text for debugging
-            "ocr_confidence": ocr_result['average_confidence'],
-            "word_count": len(ocr_result['words']),
-            "file_size_kb": file_size / 1024,
-            "structured_data": structured_data,
-            "validation_required": True,
-            "debug_info": {
-                "text_length": len(ocr_text),
-                "detected_type": doc_type,
-                "confidence": ocr_result['average_confidence']
+            "document_type": processing_result["document_type"],
+            "confidence_score": processing_result["confidence_score"],
+            "template_matched": processing_result["template_match"]["matched"],
+            "template_id": processing_result["template_match"]["template_id"],
+            "structured_fields_extracted": len(processing_result["structured_data"]),
+            "medical_terms_found": processing_result["processing_metadata"].get("medical_terms_found", 0),
+            "validation_warnings": len(processing_result.get("validation_results", {}).get("warnings", [])),
+            "processing_summary": {
+                "ocr_confidence": processing_result["processing_metadata"]["ocr_confidence"],
+                "template_confidence": processing_result["template_match"]["confidence"],
+                "language_detected": processing_result["processing_metadata"]["language_detected"],
+                "requires_manual_validation": processing_result["confidence_score"] < 80
             }
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Unexpected error in OCR processing: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"OCR processing error: {str(e)}")
+        print(f"Enhanced OCR processing error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+
+# Add endpoint to get available document types
+@router.get("/document-types")
+async def get_supported_document_types():
+    """Get list of supported Romanian document types"""
+    templates = RomanianDocumentTemplates.get_all_templates()
+    
+    return {
+        "supported_types": [
+            {
+                "template_id": t.template_id,
+                "document_type": t.document_type,
+                "language": t.language,
+                "confidence_threshold": t.confidence_threshold,
+                "description": {
+                    "romanian_id": "Carte de identitate românească",
+                    "lab_result": "Rezultate analize medicale", 
+                    "prescription": "Rețetă medicală"
+                }.get(t.document_type, t.document_type)
+            }
+            for t in templates
+        ],
+        "usage_note": "Provide hint_type parameter to OCR endpoint for better accuracy"
+    }
 
 @router.get("/{document_id}")
-def get_document(document_id: int, db: Session = Depends(get_db)):
+def get_document(document_id: str, db: Session = Depends(get_db)):
     """Get document details including OCR results"""
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
@@ -202,7 +236,7 @@ def get_document(document_id: int, db: Session = Depends(get_db)):
     }
 
 @router.get("/{document_id}/validation")
-def get_document_for_validation(document_id: int, db: Session = Depends(get_db)):
+def get_document_for_validation(document_id: str, db: Session = Depends(get_db)):
     """Get document with validation-specific data (OCR confidence, word boundaries, etc.)"""
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
@@ -338,7 +372,7 @@ def get_validation_suggestions(doc_type: str, structured_data: dict) -> List[str
 
 @router.post("/{document_id}/validate")
 def validate_document(
-    document_id: int,
+    document_id: str,
     validated_data: Dict[str, Any],
     db: Session = Depends(get_db)
 ):
@@ -372,7 +406,7 @@ def validate_document(
         raise HTTPException(status_code=500, detail=f"Validation error: {str(e)}")
 
 @router.get("/patient/{patient_id}", response_model=List[DocumentResponse])
-def get_patient_documents(patient_id: int, db: Session = Depends(get_db)):
+def get_patient_documents(patient_id: str, db: Session = Depends(get_db)):
     """Get all documents for a patient"""
     documents = db.query(Document).filter(Document.patient_id == patient_id).all()
     return documents
