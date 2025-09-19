@@ -108,7 +108,11 @@ class RomanianOCRProcessor:
             self._current_image = image
               
             # Now use the preprocessing functions with the PIL image
-            processed_image = preprocess_image_aggressive(image)
+            #------------NOT WORKING YET!!!!----------------------
+            #processed_image = preprocess_image_aggressive(image)
+
+            # Skip preprocessing for now, use raw image
+            processed_image = image
             
             # Romanian-specific OCR configuration
             romanian_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
@@ -121,7 +125,7 @@ class RomanianOCRProcessor:
             )
             
             # Fallback to English-only if Romanian fails
-            if len(text_ro_en.strip()) < 50:
+            if len(text_ro_en.strip()) < 20:
                 text_en = pytesseract.image_to_string(
                     processed_image,
                     lang='eng',
@@ -503,9 +507,10 @@ class RomanianOCRProcessor:
     def _basic_fallback_ocr(self, image_input) -> Tuple[str, int]:
         """Fallback OCR processing"""
         try:
-            from app.services.ocr import extract_text_from_image
-            text = extract_text_from_image(image_input)
-            confidence = estimate_text_quality(text)
-            return text, confidence
+            # Use working OCR instead of mock data
+            from app.services.ocr import extract_text_confidence
+            result = extract_text_confidence(image_input)
+            return result['full_text'], result['average_confidence']
         except Exception as e:
+            print(f"Fallback OCR also failed: {e}")
             return f"OCR processing failed: {str(e)}", 0

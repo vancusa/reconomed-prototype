@@ -34,8 +34,8 @@ class RomanianDocumentTemplates:
             language="romanian",
             confidence_threshold=70,
             identification_patterns=[
-                r"ROMANIA|ROMÂNIA",
-                r"CARTE DE IDENTITATE",
+                r"ROMANIA|ROMÂNIA|ROUMANIE",
+                r"CARTE DE IDENTITATE||D'IDENTITE",
                 r"IDENTITY CARD",
                 r"CNP[\s:]*\d{13}",
                 r"SERIA|SERIA\s+[A-Z]{2}"
