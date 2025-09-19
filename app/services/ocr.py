@@ -10,11 +10,16 @@ logger = logging.getLogger(__name__)
 def preprocess_image_aggressive(image_input):
     """Aggressive image preprocessing for better OCR accuracy"""
     try:
-        # Handle both bytes and file paths
+        # Handle different input types
         if isinstance(image_input, bytes):
             image = Image.open(io.BytesIO(image_input))
-        else:
+        elif hasattr(image_input, 'seek'):  # BytesIO object
+            image_input.seek(0)
             image = Image.open(image_input)
+        elif isinstance(image_input, Image.Image):  # Already PIL Image
+            image = image_input
+        else:
+            image = Image.open(image_input)  # File path
         
         # Convert to RGB if needed
         if image.mode != 'RGB':

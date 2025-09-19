@@ -5,7 +5,7 @@ from sqlalchemy.sql import func
 from app.database import Base
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import uuid
 
 # Core User Management
@@ -242,6 +242,7 @@ class DocumentResponse(DocumentBase):
     validated_by: Optional[str] = None
     validated_at: Optional[datetime] = None
     created_at: datetime
+    extracted_data: Optional[Union[dict, str]] = None  # Accept both dict and string
     
     class Config:
         from_attributes = True

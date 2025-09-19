@@ -137,7 +137,7 @@ class ReconoMedApp {
 
         // Patient selector for documents
         document.getElementById('patient-select').addEventListener('change', (e) => {
-            this.selectedPatient = e.target.value ? parseInt(e.target.value) : null;
+            this.selectedPatient = e.target.value || null;
             this.loadPatientDocuments();
         });
 
@@ -436,10 +436,8 @@ class ReconoMedApp {
         }
 
         container.innerHTML = this.patients.map(patient => {
-           /* THIS IS THE RIGHT WAY
            const initials = (patient.given_name[0] || '') + (patient.family_name[0] || '');
-           */
-          const initials = patient.id;
+          //const initials = patient.id;
             return `
                 <div class="patient-card">
                     <div class="patient-header">

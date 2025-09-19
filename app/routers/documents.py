@@ -1,16 +1,20 @@
 """Document management endpoints"""
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
 import json
 import os
+import uuid
+from datetime import datetime
 
 from app.database import get_db
-from app.models import Patient, Document, DocumentResponse
-from app.services.ocr import extract_text_from_image, extract_text_confidence
-from app.services.document import detect_document_type, extract_structured_data
-from app.utils.file import validate_file_type, generate_unique_filename, save_uploaded_file
+from app.models import Patient, Document, DocumentResponse, User, GDPRAuditLog 
 from app.services.document import EnhancedDocumentService
+from app.services.romanian_document_templates import RomanianDocumentTemplates
+from app.services.ocr import extract_text_from_image, extract_text_confidence
+from app.utils.file import validate_file_type, generate_unique_filename, save_uploaded_file
+#from app.services.document import detect_document_type, extract_structured_data
+
 
 router = APIRouter(
     prefix="/documents",
@@ -19,65 +23,130 @@ router = APIRouter(
 )
 
 @router.post("/upload")
-def upload_document(
-    patient_id: str,
+async def upload_document(
+    patient_id: Optional[str] = None,
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """Upload and save a document for a patient (OCR processed separately)"""
-    # Check if patient exists
-    patient = db.query(Patient).filter(Patient.id == patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
+    print(f"DEBUG STEP 1: File received - name: {file.filename}, type: {file.content_type}")
     
-    # Validate file type
-    if not validate_file_type(file.content_type):
-        raise HTTPException(status_code=400, detail=f"File type {file.content_type} not supported. Allowed: JPG, PNG, PDF, TIFF")
+    # Debug file size before reading
+    print(f"DEBUG STEP 2: About to read file content")
+    content = await file.read() #THIS is the only reading of the stream, any more and we empty the stream!!!!
+    print(f"DEBUG STEP 3: Read {len(content)} bytes from upload")
+
+    # Debug first few bytes to ensure it's real image data
+    if len(content) > 0:
+        print(f"DEBUG STEP 4: First 20 bytes: {content[:20]}")
+    else:
+        print(f"DEBUG STEP 4: Content is empty!")
+        return {"error": "File content is empty"}
+    
+    print(f"DEBUG: Upload started for patient_id: {patient_id}")
+    print(f"DEBUG: File info: {file.filename}, {file.content_type}")
     
     try:
-        # Read file content
-        content = file.file.read()
+        # Check if patient exists
+        patient = db.query(Patient).filter(Patient.id == patient_id).first()
+        print(f"DEBUG: Patient found: {patient is not None}")
         
-        # Generate unique filename and save file
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        
+        # Get demo user
+        current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+        print(f"DEBUG: User found: {current_user is not None}")
+        if not current_user:
+            raise HTTPException(status_code=500, detail="Demo user not found")
+        
+        # File validation
+        print(f"DEBUG: Starting file validation")
+        if not validate_file_type(file.content_type):
+            print(f"DEBUG: File type validation failed")
+            raise HTTPException(status_code=400, detail=f"File type {file.content_type} not supported")
+        
+        print(f"DEBUG: Generating unique filename")
         unique_filename = generate_unique_filename(file.filename)
+        print(f"DEBUG: Generated filename: {unique_filename}")
+        
+        print(f"DEBUG: Saving file")
         file_path = save_uploaded_file(content, unique_filename)
+        print(f"DEBUG: File saved to: {file_path}")
         
-        # Get file size
-        file_size = len(content)
+        # TEMP demo user lookup
+        current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+        if not current_user:
+            raise HTTPException(status_code=500, detail="Demo user not found")
+
+        """Upload and save a document for a patient (OCR processed separately)"""
+        # Check if patient exists
+        patient = db.query(Patient).filter(Patient.id == patient_id).first()
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
         
-        # Save to database (without OCR processing)
-        document = Document(
-            patient_id=patient_id,
-            filename=unique_filename,
-            document_type="pending_ocr",  # Will be updated after OCR
-            ocr_text="",  # Empty until OCR is processed
-            extracted_data=json.dumps({
+        # Validate file type
+        if not validate_file_type(file.content_type):
+            raise HTTPException(status_code=400, detail=f"File type {file.content_type} not supported. Allowed: JPG, PNG, PDF, TIFF")
+        
+        try:
+            # Read file content
+            
+            # Generate unique filename and save file
+            unique_filename = generate_unique_filename(file.filename)
+            file_path = save_uploaded_file(content, unique_filename)
+            
+            # Get file size
+            file_size = len(content)
+            
+            # Save to database (without OCR processing)
+            document = Document(
+                id=str(uuid.uuid4()),
+                patient_id=patient_id,
+                clinic_id=current_user.clinic_id,
+                filename=unique_filename,
+                original_filename=file.filename,
+                file_path=file_path,
+                file_size=len(content),
+                document_type="pending_ocr",
+                ocr_text="",
+                ocr_confidence=0,
+                ocr_status="pending",
+                extracted_data=json.dumps({
+                    "original_filename": file.filename,
+                    "file_size": len(content),
+                    "upload_status": "completed",
+                    "ocr_status": "pending"
+                }),
+                validation_status="pending"  # Use validation_status instead of is_validated
+            )
+            
+            db.add(document)
+            db.commit()
+            db.refresh(document)
+            
+            return {
+                "message": "Document uploaded successfully",
+                "document_id": document.id,
                 "original_filename": file.filename,
+                "saved_filename": unique_filename,
+                "patient_given_name": patient.given_name,
+                "patient_family_name":patient.family_name,
                 "file_size": file_size,
-                "upload_status": "completed",
-                "ocr_status": "pending"
-            }),
-            is_validated=False
-        )
+                "status": "uploaded",
+                "ocr_status": "pending",
+                "next_steps": f"Use POST /documents/{document.id}/process-ocr to extract text"
+            }
         
-        db.add(document)
-        db.commit()
-        db.refresh(document)
-        
-        return {
-            "message": "Document uploaded successfully",
-            "document_id": document.id,
-            "original_filename": file.filename,
-            "saved_filename": unique_filename,
-            "patient_name": patient.name,
-            "file_size": file_size,
-            "status": "uploaded",
-            "ocr_status": "pending",
-            "next_steps": f"Use POST /documents/{document.id}/process-ocr to extract text"
-        }
-        
+        except HTTPException as he:
+            print(f"DEBUG: HTTP Exception: {he.detail}")
+            raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload error: {str(e)}")
+        print(f"DEBUG: Unexpected exception type: {type(e)}")
+        print(f"DEBUG: Exception args: {e.args}")
+        print(f"DEBUG: Exception str: {str(e)}")
+        import traceback
+        print(f"DEBUG: Full traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Upload processing failed: {str(e)}")
 
 @router.post("/{document_id}/process-ocr")
 async def process_document_ocr(
@@ -85,6 +154,7 @@ async def process_document_ocr(
     hint_type: Optional[str] = None,  # Add document type hint
     db: Session = Depends(get_db)
 ):
+    
     """Process OCR with enhanced Romanian template recognition"""
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:

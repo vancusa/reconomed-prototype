@@ -4,11 +4,13 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 import pytesseract
 from PIL import Image
+import io
 
 from app.services.romanian_document_templates import (
     RomanianDocumentTemplates, DocumentTemplate, RomanianMedicalTerms
 )
 from app.services.ocr import preprocess_image_aggressive, estimate_text_quality
+from app.services.romanian_id_processor import MultiTemplateIDProcessor, RomanianIDType
 from app.utils.romanian_validation import validate_cnp
 
 @dataclass
@@ -76,8 +78,37 @@ class RomanianOCRProcessor:
     def _extract_text_romanian_optimized(self, image_input) -> Tuple[str, int]:
         """OCR extraction optimized for Romanian text"""
         try:
-            # Aggressive preprocessing for Romanian documents
-            processed_image = preprocess_image_aggressive(image_input)
+            
+            print(f"DEBUG OCR: Input type: {type(image_input)}")
+            #print(f"DEBUG OCR: Input length: {len(image_input) if isinstance(image_input, bytes) else 'not bytes'}")
+            
+            # Convert bytes to BytesIO
+            if isinstance(image_input, bytes):
+                bio = io.BytesIO(image_input)
+                #print(f"DEBUG OCR: Created BytesIO, length: {len(image_input)}")
+            else:
+                bio = image_input
+            
+            # Reset position
+            bio.seek(0)
+            
+            # Try to open with PIL - this is where it's failing
+            try:
+                image = Image.open(bio)
+                #print(f"DEBUG OCR: PIL opened image: {image.format}, {image.size}, {image.mode}")
+            except Exception as pil_error:
+                #print(f"DEBUG OCR: PIL failed: {pil_error}")
+                # Check if it's actually image data
+                bio.seek(0)
+                first_bytes = bio.read(10)
+                #print(f"DEBUG OCR: First 10 bytes: {first_bytes}")
+                raise    
+
+            # Store for ID processor
+            self._current_image = image
+              
+            # Now use the preprocessing functions with the PIL image
+            processed_image = preprocess_image_aggressive(image)
             
             # Romanian-specific OCR configuration
             romanian_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
@@ -108,7 +139,7 @@ class RomanianOCRProcessor:
             return cleaned_text, confidence
             
         except Exception as e:
-            print(f"Romanian OCR processing failed: {e}")
+            print(f"DEBUG OCR: Full exception: {e}")
             # Fallback to basic OCR
             return self._basic_fallback_ocr(image_input)
     
@@ -207,6 +238,14 @@ class RomanianOCRProcessor:
         template = next(t for t in self.templates if t.template_id == template_id)
         extracted_data = {}
         
+        # Use Romanian ID processor for ID cards
+        if template_id == "ro_identity_card":
+            id_processor = MultiTemplateIDProcessor()
+            # Convert bytes back to PIL Image for the processor
+            if hasattr(self, '_current_image'):
+                id_results = id_processor.process_id_card(self._current_image)
+                return id_results["extracted_fields"]
+
         for field in template.extraction_fields:
             field_value = None
             
