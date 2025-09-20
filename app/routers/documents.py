@@ -14,7 +14,7 @@ from app.services.romanian_document_templates import RomanianDocumentTemplates
 from app.services.ocr import extract_text_from_image, extract_text_confidence
 from app.utils.file import validate_file_type, generate_unique_filename, save_uploaded_file
 #from app.services.document import detect_document_type, extract_structured_data
-
+from app.services.enhanced_ocr import RomanianOCRProcessor
 
 router = APIRouter(
     prefix="/documents",
@@ -184,10 +184,18 @@ async def process_document_ocr(
         # Step 4: Process with enhanced service
         enhanced_service = EnhancedDocumentService()
         print(f"TRACE 3: Created EnhancedDocumentService")
-        
+        print(f"TRACE 3.1: EnhancedDocumentService methods: {[method for method in dir(enhanced_service) if not method.startswith('_')]}")
+        print(f"TRACE 3.2: OCR processor type: {type(enhanced_service.ocr_processor)}")
+        print(f"TRACE 3.3: OCR processor methods: {[method for method in dir(enhanced_service.ocr_processor) if not method.startswith('_')]}")        
+        print(f"TRACE 3.4: All OCR processor attributes: {dir(enhanced_service.ocr_processor)}")
+
+        #TEMPORARY - to be removed once the testing ends
+        hint_type="romanian_id"
+
         processing_result = enhanced_service.process_document_with_templates(
             file_content, hint_type
         )
+        
         print(f"TRACE 4: Processing result success: {processing_result.get('success')}")
         
         if not processing_result["success"]:

@@ -5,13 +5,19 @@ from dataclasses import dataclass
 import pytesseract
 from PIL import Image
 import io
+import numpy as np
+from typing import Optional
 
-from app.services.romanian_document_templates import (
-    RomanianDocumentTemplates, DocumentTemplate, RomanianMedicalTerms
-)
-from app.services.ocr import preprocess_image_aggressive, estimate_text_quality
-from app.services.romanian_id_processor import MultiTemplateIDProcessor, RomanianIDType
-from app.utils.romanian_validation import validate_cnp
+from app.services.romanian_document_templates import (RomanianDocumentTemplates, DocumentTemplate, RomanianMedicalTerms)
+#from app.services.ocr import preprocess_image_aggressive, estimate_text_quality
+#from app.services.romanian_id_processor import MultiTemplateIDProcessor, RomanianIDType
+#from app.utils.romanian_validation import validate_cnp
+
+from app.services.romanian_document_templates import RomanianDocumentTemplates
+#from app.services.medical_terms import RomanianMedicalTerms
+#from app.models.enhanced_ocr import EnhancedOCRResult, TemplateMatchResult, DocumentTemplate
+from app.utils.romanian_validation import validate_cnp, extract_gender_from_cnp, extract_birth_date_from_cnp
+from app.services.ocr import extract_text_confidence
 
 @dataclass
 class TemplateMatchResult:
@@ -31,121 +37,654 @@ class EnhancedOCRResult:
 
 class RomanianOCRProcessor:
     """Enhanced OCR processor with Romanian document intelligence"""
+
+    def __init__(self):
+        self.templates = RomanianDocumentTemplates.get_all_templates()
+        self.medical_terms = RomanianMedicalTerms()
+        self._current_image = None
+
+    def process_document(self, image_input, hint_document_type: Optional[str] = None) -> 'EnhancedOCRResult':
+        """Process document with layout-first approach"""
+
+        print(f"DEBUG process_document 1: entered the function")
+        # Normalize hint types
+        hint_document_type = self._normalize_hint(hint_document_type)
+
+        # Normalize input
+        image = self._normalize_input_to_image(image_input)
+
+        print(f"DEBUG process_document 2: finish normalizations")
+        
+        # Layout detection
+        detected_layout = self._detect_document_layout(image)
+        print(f"DEBUG process_document 3: finished detecte_layout {detecte_layout}")
+
+        # If explicit hint overrides layout
+        if hint_document_type == "romanian_id":
+            detected_layout = "romanian_id"
+
+        if detected_layout == "romanian_id":
+            try:
+                from app.services.romanian_id_processor import MultiTemplateIDProcessor
+                id_processor = MultiTemplateIDProcessor()
+                id_results = id_processor.process_id_card(image)
+            except Exception as e:
+                import traceback
+                print(f"TRACE LAYOUT ERROR: {repr(e)}")
+                traceback.print_exc()
+                raise
+
+            template_match = TemplateMatchResult(
+                template_id="ro_identity_card",
+                document_type="romanian_id",
+                confidence=id_results.get("overall_confidence", 0),
+                matched_patterns=["layout_detection"],
+                extracted_data=id_results.get("extracted_fields", {})
+            )
+
+            structured = id_results.get("extracted_fields", {})
+            conf = int(id_results.get("overall_confidence", 0)) if id_results.get("overall_confidence") is not None else 0
+
+            return EnhancedOCRResult(
+                raw_text="",
+                template_match=template_match,
+                structured_data=structured,
+                confidence_score=conf,
+                processing_metadata={
+                    "processing_method": "region_based_extraction",
+                    "card_type": id_results.get("card_type", "unknown"),
+                    "regions_processed": len(structured)
+                }
+            )
+
+        # fallback OCR
+        return self._process_with_full_ocr(image, hint_document_type)
+
+    # ----------------- Input Normalization ------------------
+
+    def _normalize_hint(self, hint: Optional[str]) -> Optional[str]:
+        if not hint:
+            return None
+        mapping = {
+            "carte_identitate": "romanian_id",
+            "carte_electronica": "romanian_id",
+            "buletin_identitate": "romanian_id",
+            "romanian_id": "romanian_id",
+            "ro_identity_card": "romanian_id",
+        }
+        return mapping.get(hint, hint)
+
+    def _normalize_input_to_image(self, image_input) -> Image.Image:
+        """Ensure we have a PIL.Image.Image"""
+        if isinstance(image_input, bytes):
+            try:
+                image = Image.open(io.BytesIO(image_input))
+                image.load()
+                if image.mode not in ("RGB", "L"):
+                    image = image.convert("RGB")
+                return image
+            except Exception as e:
+                print(f"Input bytes could not be opened by PIL: {repr(e)}")
+                raise
+        elif isinstance(image_input, Image.Image):
+            img_copy = image_input.copy()
+            if img_copy.mode not in ("RGB", "L"):
+                img_copy = img_copy.convert("RGB")
+            return img_copy
+        else:
+            raise TypeError(f"Unsupported input type for OCR: {type(image_input)}")
+
+    # ----------------- Layout Detection ---------------------
+
+    def _detect_document_layout(self, image: Image.Image) -> str:
+        width, height = image.size
+        aspect_ratio = width / height
+        img_array = np.array(image)
+
+        photo_detected = self._detect_photo_region(img_array)
+        is_card_shaped = 1.3 < aspect_ratio < 1.8
+        has_structured_layout = self._detect_structured_text_blocks(img_array)
+        has_official_colors = self._detect_official_document_colors(image)
+
+        if photo_detected and is_card_shaped and has_structured_layout:
+            return "romanian_id"
+        elif has_official_colors and has_structured_layout:
+            return "official_document"
+        else:
+            return "unknown_document"
+
+    def _detect_photo_region(self, img_array) -> bool:
+        height, width = img_array.shape[:2]
+        left_region = img_array[:, :int(width * 0.3)]
+        if len(left_region.shape) == 3:
+            left_gray = np.mean(left_region, axis=2)
+        else:
+            left_gray = left_region
+        dark_pixel_ratio = np.sum(left_gray < 120) / left_gray.size
+        edges = np.gradient(left_gray)
+        edge_magnitude = np.sqrt(edges[0]**2 + edges[1]**2)
+        strong_edges = np.sum(edge_magnitude > 30) / edge_magnitude.size
+        return dark_pixel_ratio > 0.15 and strong_edges > 0.05
+
+    def _detect_structured_text_blocks(self, img_array) -> bool:
+        if len(img_array.shape) == 3:
+            gray = np.mean(img_array, axis=2)
+        else:
+            gray = img_array
+        edges = np.gradient(gray)
+        edge_magnitude = np.sqrt(edges[0]**2 + edges[1]**2)
+        horizontal_lines = np.sum(edge_magnitude > 20, axis=1)
+        text_rows = np.sum(horizontal_lines > gray.shape[1] * 0.1)
+        return text_rows > 3
+
+    def _detect_official_document_colors(self, image: Image.Image) -> bool:
+        width, height = image.size
+        top_region = image.crop((0, 0, width, int(height * 0.2)))
+        top_array = np.array(top_region)
+        if len(top_array.shape) == 3:
+            blue_pixels = np.sum((top_array[:,:,2] > 100) & (top_array[:,:,0] < 100))
+            red_pixels = np.sum((top_array[:,:,0] > 150) & (top_array[:,:,1] < 100))
+            total_pixels = top_array.shape[0] * top_array.shape[1]
+            official_color_ratio = (blue_pixels + red_pixels) / total_pixels
+            return official_color_ratio > 0.05
+        return False
+
+    # ----------------- OCR Core -----------------------------
+
+    def _extract_text_romanian_optimized(self, image_input) -> Tuple[str, int]:
+        try:
+            print(f"DEBUG OCR RO 1: Starting Romanian OCR")
+            if isinstance(image_input, bytes):
+                bio = io.BytesIO(image_input)
+                print(f"DEBUG OCR RO 2.1: Created BytesIO")
+                bio.seek(0)
+                print(f"DEBUG OCR RO 2.1: Done seek")
+                image = Image.open(bio)
+                image.load()
+                print(f"DEBUG OCR RO 2.1: Done open")
+            elif isinstance(image_input, Image.Image):
+                image = image_input
+                print(f"DEBUG OCR RO 2.2: Using PIL Image directly")
+            else:
+                raise TypeError("Unsupported type for _extract_text_romanian_optimized")
+
+            self._current_image = image.copy()
+            processed_image = image
+            print (f"DEBUG OCR RO 2.3: done copying the image to processed_image")
+
+            romanian_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
+            text_ro_en = pytesseract.image_to_string(processed_image, lang='ron+eng', config=romanian_config)
+            print(f"DEBUG OCR RO 2.4: Pytesseract completed, got {len(text_ro_en)} chars")
+
+            if len(text_ro_en.strip()) < 20:              #IS THIS THRESHOLD OK TO BE HARDCODED????????????
+                print (f"DEBUG OCR RO 2.5: Less then 20, try english")
+                text_en = pytesseract.image_to_string(processed_image, lang='eng', config=romanian_config)
+                if len(text_en) > len(text_ro_en):
+                    text_ro_en = text_en
+
+            cleaned_text = self._clean_romanian_ocr_errors(text_ro_en)
+            confidence = estimate_text_quality(cleaned_text) if 'estimate_text_quality' in globals() else min(100, max(0, int(len(cleaned_text.strip())/2)))
+            print(f"DEBUG OCR RO 2.6: {cleaned_text}")
+            print(f"DEBUG OCR RO 2.7: Confidence: {confidence}")
+
+            return cleaned_text, int(confidence)
+
+        except Exception as e:
+            print(f"DEBUG OCR 1: Full exception in optimized extractor: {repr(e)}")
+            import traceback
+            traceback.print_exc()
+            return self._basic_fallback_ocr(image_input)
+
+    def _clean_romanian_ocr_errors(self, text: str) -> str:
+        corrections = {
+            'ã': 'ă', 'â': 'â', 'î': 'î', 'ş': 'ș', 'ţ': 'ț',
+            r'\bCNF\b': 'CNP', r'\bPACIENT\b': 'PACIENT', r'\bRESULTATE\b': 'REZULTATE',
+            r'\bLABDRATDR\b': 'LABORATOR', r'\bHEMDGLDBINA\b': 'HEMOGLOBINĂ',
+            r'(\d)\s+(\d)': r'\1\2',
+            r'([A-ZĂÂÎȘȚ])\s+([a-zăâîșț])': r'\1\2',
+        }
+        cleaned = text
+        for pat, rep in corrections.items():
+            cleaned = re.sub(pat, rep, cleaned, flags=re.IGNORECASE)
+        return cleaned
+
+    # ----------------- Template Matching -------------------
+
+    def _match_document_template(self, text: str, hint_type: Optional[str] = None) -> Optional['TemplateMatchResult']:
+        best_match, best_score = None, 0
+        templates = self.templates
+        if hint_type:
+            templates = [t for t in self.templates if t.document_type == hint_type] + \
+                        [t for t in self.templates if t.document_type != hint_type]
+        for template in templates:
+            score, matched_patterns = self._calculate_template_score(text, template)
+            if score > best_score and score >= template.confidence_threshold:
+                best_score = score
+                best_match = TemplateMatchResult(
+                    template_id=template.template_id,
+                    document_type=template.document_type,
+                    confidence=score,
+                    matched_patterns=matched_patterns,
+                    extracted_data={}
+                )
+        return best_match
+
+    def _calculate_template_score(self, text: str, template: 'DocumentTemplate') -> Tuple[float, List[str]]:
+        text_upper = text.upper()
+        matched = []
+        for pattern in template.identification_patterns:
+            if re.search(pattern, text_upper, re.IGNORECASE):
+                matched.append(pattern)
+        pattern_score = (len(matched) / len(template.identification_patterns)) * 100
+        if template.document_type in ["lab_result", "prescription"]:
+            medical_terms_found = len(self._find_medical_terms(text))
+            pattern_score += min(medical_terms_found * 5, 20)
+        return min(pattern_score, 100), matched
+
+    def _find_medical_terms(self, text: str) -> List[str]:
+        text_lower = text.lower()
+        found = []
+        for ro, en in self.medical_terms.MEDICAL_TESTS.items():
+            if ro in text_lower:
+                found.append(ro)
+        for ro, en in self.medical_terms.COMMON_MEDICATIONS.items():
+            if ro in text_lower:
+                found.append(ro)
+        return found
+
+    # ----------------- Structured Extraction ---------------
+
+    def _extract_structured_data(self, text: str, template_id: str) -> Dict[str, Any]:
+        template = next(t for t in self.templates if t.template_id == template_id)
+        extracted = {}
+
+        if template_id == "ro_identity_card" and self._current_image is not None:
+            from app.services.romanian_id_processor import MultiTemplateIDProcessor
+            id_results = MultiTemplateIDProcessor().process_id_card(self._current_image)
+            return id_results["extracted_fields"]
+
+        for field in template.extraction_fields:
+            value = None
+            for pat in field.patterns:
+                match = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
+                if match:
+                    value = match.group(1).strip()
+                    break
+            if value and field.validation_func == "validate_cnp":
+                is_valid, error = validate_cnp(value)
+                if is_valid:
+                    extracted[field.field_name] = value
+                    extracted[f"{field.field_name}_valid"] = True
+                else:
+                    extracted[f"{field.field_name}_error"] = error
+                    extracted[f"{field.field_name}_valid"] = False
+            elif value:
+                extracted[field.field_name] = value
+
+        if template_id == "ro_lab_results":
+            extracted["test_results"] = self._extract_lab_test_results(text)
+        elif template_id == "ro_prescription":
+            extracted["medications"] = self._extract_medications(text)
+        return extracted
+
+    def _extract_lab_test_results(self, text: str) -> List[Dict[str, Any]]:
+        results = []
+        pat = r'([A-ZĂÂÎȘȚ][a-zăâîșț\s]+)[\s:]+([0-9.,]+)\s*([a-zA-Z/μ]+)?\s*(?:\([^)]*(\d+[\.,]?\d*)\s*[-–]\s*(\d+[\.,]?\d*)[^)]*\))?'
+        for m in re.finditer(pat, text, re.MULTILINE):
+            test_name, value, unit, ref_min, ref_max = m.group(1).strip(), m.group(2).replace(',', '.'), m.group(3) or "", m.group(4), m.group(5)
+            normalized = self._normalize_test_name(test_name)
+            results.append({
+                "test_name": test_name,
+                "normalized_name": normalized,
+                "value": value,
+                "unit": unit,
+                "reference_min": ref_min,
+                "reference_max": ref_max,
+                "status": self._determine_result_status(value, ref_min, ref_max) if ref_min and ref_max else "unknown"
+            })
+        return results
+
+    def _normalize_test_name(self, test_name: str) -> str:
+        tl = test_name.lower().strip()
+        for ro, en in self.medical_terms.MEDICAL_TESTS.items():
+            if ro in tl:
+                return en
+        return tl.replace(' ', '_')
+
+    def _determine_result_status(self, value: str, ref_min: str, ref_max: str) -> str:
+        try:
+            val, mn, mx = float(value.replace(',', '.')), float(ref_min.replace(',', '.')), float(ref_max.replace(',', '.'))
+            if val < mn: return "low"
+            elif val > mx: return "high"
+            else: return "normal"
+        except ValueError:
+            return "unknown"
+
+    def _extract_medications(self, text: str) -> List[Dict[str, Any]]:
+        meds = []
+        pat = r'([A-ZĂÂÎȘȚ][a-zăâîșț]+)\s*(\d+\s*mg|mg)?\s*(?:(\d+)\s*(?:tablete|capsule|comprimate))?'
+        for m in re.finditer(pat, text, re.MULTILINE):
+            name, dosage, qty = m.group(1).strip(), m.group(2) or "", m.group(3) or ""
+            normalized = None
+            for ro, en in self.medical_terms.COMMON_MEDICATIONS.items():
+                if ro.lower() in name.lower():
+                    normalized = en
+                    break
+            meds.append({"medication_name": name, "normalized_name": normalized, "dosage": dosage, "quantity": qty, "recognized": normalized is not None})
+        return meds
+
+    # ----------------- Post Processing ---------------------
+
+    def _apply_post_processing(self, data: Dict[str, Any], template_id: str) -> Dict[str, Any]:
+        template = next(t for t in self.templates if t.template_id == template_id)
+        if not template.post_processing_rules:
+            return data
+        processed = data.copy()
+        if template.post_processing_rules.get("normalize_names"):
+            for f in ["nume", "prenume", "nume_pacient"]:
+                if f in processed:
+                    processed[f] = self._normalize_romanian_name(processed[f])
+        if template.post_processing_rules.get("validate_cnp_date_consistency"):
+            if "cnp" in processed and "data_nasterii" in processed:
+                processed["cnp_date_consistent"] = self._validate_cnp_date_consistency(processed["cnp"], processed["data_nasterii"])
+        if template.post_processing_rules.get("extract_gender_from_cnp"):
+            if "cnp" in processed:
+                gender = extract_gender_from_cnp(processed["cnp"])
+                if gender:
+                    processed["gender"] = gender
+        return processed
+
+    def _normalize_romanian_name(self, name: str) -> str:
+        if not name: return ""
+        return " ".join(w[0].upper() + w[1:].lower() for w in name.strip().split() if w)
+
+    def _validate_cnp_date_consistency(self, cnp: str, birth_date: str) -> bool:
+        try:
+            cnp_date = extract_birth_date_from_cnp(cnp)
+            if not cnp_date: return False
+            return cnp_date == self._normalize_date(birth_date)
+        except Exception:
+            return False
+
+    def _normalize_date(self, date_str: str) -> str:
+        if not date_str: return ""
+        patterns = [r'(\d{2})[\.\-/](\d{2})[\.\-/](\d{4})', r'(\d{4})[\.\-/](\d{2})[\.\-/](\d{2})']
+        for pat in patterns:
+            m = re.match(pat, date_str.strip())
+            if m:
+                if len(m.group(1)) == 4:
+                    return f"{m.group(1)}-{m.group(2):0>2}-{m.group(3):0>2}"
+                else:
+                    return f"{m.group(3)}-{m.group(2):0>2}-{m.group(1):0>2}"
+        return date_str
+
+    def _enhance_with_medical_terms(self, data: Dict[str, Any], raw_text: str) -> Dict[str, Any]:
+        enhanced = data.copy()
+        terms = self._find_medical_terms(raw_text)
+        enhanced["recognized_medical_terms"] = terms
+        enhanced["contains_lab_tests"] = any(t in self.medical_terms.MEDICAL_TESTS for t in terms)
+        enhanced["contains_medications"] = any(t in self.medical_terms.COMMON_MEDICATIONS for t in terms)
+        return enhanced
+
+    # ----------------- Confidence + Fallback ----------------
+
+    def _calculate_final_confidence(self, ocr_confidence: int, template_match: Optional['TemplateMatchResult'], structured_data: Dict[str, Any]) -> int:
+        base = ocr_confidence
+        if template_match:
+            base += min(template_match.confidence * 0.3, 20)
+        if structured_data:
+            base += min(len(structured_data) * 2, 15)
+        if structured_data.get("recognized_medical_terms"):
+            base += min(len(structured_data["recognized_medical_terms"]) * 3, 10)
+        return min(int(base), 100)
+
+    def _basic_fallback_ocr(self, image_input) -> Tuple[str, int]:
+        try:
+            result = extract_text_confidence(image_input)
+            return result['full_text'], result['average_confidence']
+        except Exception as e:
+            print(f"Fallback OCR also failed: {repr(e)}")
+            return f"OCR processing failed: {str(e)}", 0
+
+    def _process_with_full_ocr(self, image: Image.Image, hint_document_type: Optional[str] = None) -> 'EnhancedOCRResult':
+        try:
+            raw_text, confidence = self._extract_text_romanian_optimized(image)
+            template_match = self._match_document_template(raw_text, hint_document_type)
+            structured = {}
+            if template_match and template_match.document_type != "unknown_document":
+                structured = self._extract_structured_data(raw_text, template_match.template_id)
+                structured = self._apply_post_processing(structured, template_match.template_id)
+                structured = self._enhance_with_medical_terms(structured, raw_text)
+            final_conf = self._calculate_final_confidence(confidence, template_match, structured)
+            return EnhancedOCRResult(
+                raw_text=raw_text,
+                template_match=template_match,
+                structured_data=structured,
+                confidence_score=int(final_conf),
+                processing_metadata={"method": "full_ocr_fallback"}
+            )
+        except Exception as e:
+            print(f"_process_with_full_ocr error: {repr(e)}")
+            import traceback
+            traceback.print_exc()
+            text, conf = self._basic_fallback_ocr(image)
+            return EnhancedOCRResult(
+                raw_text=text,
+                template_match=None,
+                structured_data={},
+                confidence_score=int(conf),
+                processing_metadata={"method": "basic_fallback"}
+            )
+
+    """Enhanced OCR processor with Romanian document intelligence"""
     
     def __init__(self):
         self.templates = RomanianDocumentTemplates.get_all_templates()
         self.medical_terms = RomanianMedicalTerms()
-        
+    
     def process_document(self, image_input, hint_document_type: Optional[str] = None) -> EnhancedOCRResult:
-        """Process document with Romanian template recognition"""
+        """Process document with layout-first approach"""
+        print(f"DEBUG PD1: we are inside services - enchanced_ocr - class RomanianOCRProcessor - function process_document")
+        # Convert bytes to PIL Image once
+        if isinstance(image_input, bytes):
+            image = Image.open(io.BytesIO(image_input))
+            print(f"DEBUG PD2: check if image is bytes")
+        else:
+            image = image_input
+            print(f"DEBUG PD2: check if image is image")
         
-        # Step 1: Enhanced OCR with Romanian language optimization
-        raw_text, ocr_confidence = self._extract_text_romanian_optimized(image_input)
+        print(f"DEBUG PD2-1: starting layout based detection")
+        # Step 1: Layout-based detection (no OCR yet)
+        detected_layout = self._detect_document_layout(image)
+        print(f"DEBUG PD2-2: Finished layout {detected_layout}")
+        # Step 2: Route based on layout
+
+        if detected_layout == "romanian_id":
+            print(f"DEBUG PD3 TRACE LAYOUT: About to import Romanian processor")
+            try:
+                from app.services.romanian_id_processor import MultiTemplateIDProcessor
+                print(f"DEBUG PD4 TRACE LAYOUT: Import successful")
+                id_processor = MultiTemplateIDProcessor()
+                print(f"DEBUG PD5 TRACE LAYOUT: Processor created")
+                id_results = id_processor.process_id_card(image)
+                print(f"DEBUG PD6 TRACE LAYOUT: Processing completed")
+            except Exception as e:
+                print(f"DEBUG PD7 TRACE LAYOUT ERROR: {e}")
+                raise
+            # Use region-based processor directly
+            #from app.services.romanian_id_processor import MultiTemplateIDProcessor
+            #id_processor = MultiTemplateIDProcessor()
+            #id_results = id_processor.process_id_card(image)
+            
+            return EnhancedOCRResult(
+                raw_text="",  # No full OCR needed
+                template_match=TemplateMatchResult(
+                    template_id="ro_identity_card",
+                    document_type="romanian_id", 
+                    confidence=id_results["overall_confidence"],
+                    matched_patterns=["layout_detection"],
+                    extracted_data=id_results["extracted_fields"]
+                ),
+                structured_data=id_results["extracted_fields"],
+                confidence_score=int(id_results["overall_confidence"]),
+                processing_metadata={
+                    "processing_method": "region_based_extraction",
+                    "card_type": id_results.get("card_type", "unknown"),
+                    "regions_processed": len(id_results["extracted_fields"])
+                }
+            )
+        else:
+            # Fall back to existing full-text OCR for other documents
+            return self._process_with_full_ocr(image, hint_document_type)
+
+    def _detect_document_layout(self, image: Image.Image) -> str:
+        """Detect document type by layout features, not OCR"""
+        print(f"DEBUG DDL1: hello! we are inside the detect_document_layout function")
+        width, height = image.size
+        aspect_ratio = width / height
+        print(f"DEBUG DDL2: Computed width {width} and height {height}")
+
+        # Convert to array for analysis
+        img_array = np.array(image)
+        print(f"DEBUG DDL3: converted the image to array")
+
+        # Romanian ID detection by layout features:
         
-        # Step 2: Template matching
-        template_match = self._match_document_template(raw_text, hint_document_type)
+        # 1. Photo detection (dark rectangular region on left)
+        photo_detected = self._detect_photo_region(img_array)
+        print(f"DEBUG DDL4: photo detection {photo_detected}")
+
+        # 2. Card-like aspect ratio
+        is_card_shaped = 1.3 < aspect_ratio < 1.8
+        print(f"DEBUG DDL5: is card shaped {is_card_shaped}")
         
-        # Step 3: Structured data extraction
-        structured_data = {}
-        if template_match:
-            structured_data = self._extract_structured_data(raw_text, template_match.template_id)
-            # Apply post-processing rules
-            structured_data = self._apply_post_processing(structured_data, template_match.template_id)
+        # 3. Structured layout (text blocks vs scattered text)
+        has_structured_layout = self._detect_structured_text_blocks(img_array)
+        print(f"DEBUG DDL6: has layout {has_structured_layout}")
+
+        # 4. Color pattern analysis (flags, headers)
+        has_official_colors = self._detect_official_document_colors(image)
+        print(f"DEBUG DDL7: photo detection {has_official_colors}")
+
+        # Decision logic
+        if photo_detected and is_card_shaped and has_structured_layout:
+            return "romanian_id"
+        elif has_official_colors and has_structured_layout:
+            return "official_document" 
+        else:
+            return "unknown_document"
+
+    def _detect_photo_region(self, img_array) -> bool:
+        """Detect photo region (dark rectangular area on left side)"""
+        height, width = img_array.shape[:2]
         
-        # Step 4: Medical term enhancement
-        if template_match and template_match.document_type in ["lab_result", "prescription"]:
-            structured_data = self._enhance_with_medical_terms(structured_data, raw_text)
+        # Check left 30% of image for photo-like region
+        left_region = img_array[:, :int(width * 0.3)]
         
-        # Step 5: Calculate final confidence
-        final_confidence = self._calculate_final_confidence(
-            ocr_confidence, template_match, structured_data
-        )
+        # Convert to grayscale if color
+        if len(left_region.shape) == 3:
+            left_gray = np.mean(left_region, axis=2)
+        else:
+            left_gray = left_region
         
-        return EnhancedOCRResult(
-            raw_text=raw_text,
-            template_match=template_match,
-            structured_data=structured_data,
-            confidence_score=final_confidence,
-            processing_metadata={
-                "ocr_confidence": ocr_confidence,
-                "template_confidence": template_match.confidence if template_match else 0,
-                "processing_time": "calculated_in_real_implementation",
-                "language_detected": "romanian",
-                "medical_terms_found": len(self._find_medical_terms(raw_text))
-            }
-        )
+        # Photos have: dark regions (hair, clothing) + rectangular boundaries
+        dark_pixel_ratio = np.sum(left_gray < 120) / left_gray.size
+        
+        # Edge detection for rectangular boundaries
+        edges = np.gradient(left_gray)
+        edge_magnitude = np.sqrt(edges[0]**2 + edges[1]**2)
+        strong_edges = np.sum(edge_magnitude > 30) / edge_magnitude.size
+        
+        # Photo criteria: significant dark area + rectangular edges
+        return dark_pixel_ratio > 0.15 and strong_edges > 0.05
+
+    def _detect_structured_text_blocks(self, img_array) -> bool:
+        """Detect if image has structured text blocks (vs random text)"""
+        # Use edge detection to find text regions
+        if len(img_array.shape) == 3:
+            gray = np.mean(img_array, axis=2)
+        else:
+            gray = img_array
+        
+        edges = np.gradient(gray)
+        edge_magnitude = np.sqrt(edges[0]**2 + edges[1]**2)
+        
+        # Text blocks have horizontal alignment patterns
+        horizontal_lines = np.sum(edge_magnitude > 20, axis=1)
+        text_rows = np.sum(horizontal_lines > gray.shape[1] * 0.1)
+        
+        # Structured documents have multiple aligned text rows
+        return text_rows > 3
+
+    def _detect_official_document_colors(self, image: Image.Image) -> bool:
+        """Detect official document colors (flags, coats of arms)"""
+        # Sample top and right regions for official colors
+        width, height = image.size
+        
+        # Top region (flags)
+        top_region = image.crop((0, 0, width, int(height * 0.2)))
+        top_array = np.array(top_region)
+        
+        if len(top_array.shape) == 3:
+            # Check for blue/yellow (EU flag) or red/yellow/blue (Romanian flag)
+            blue_pixels = np.sum((top_array[:,:,2] > 100) & (top_array[:,:,0] < 100))
+            red_pixels = np.sum((top_array[:,:,0] > 150) & (top_array[:,:,1] < 100))
+            
+            total_pixels = top_array.shape[0] * top_array.shape[1]
+            official_color_ratio = (blue_pixels + red_pixels) / total_pixels
+            
+            return official_color_ratio > 0.05
+        
+        return False
     
     def _extract_text_romanian_optimized(self, image_input) -> Tuple[str, int]:
         """OCR extraction optimized for Romanian text"""
         try:
+            print(f"DEBUG OCR A: Input type: {type(image_input)}")
             
-            print(f"DEBUG OCR: Input type: {type(image_input)}")
-            #print(f"DEBUG OCR: Input length: {len(image_input) if isinstance(image_input, bytes) else 'not bytes'}")
-            
-            # Convert bytes to BytesIO
-            if isinstance(image_input, bytes):
-                bio = io.BytesIO(image_input)
-                #print(f"DEBUG OCR: Created BytesIO, length: {len(image_input)}")
+            if isinstance(image_input, Image.Image):
+                image = image_input.copy()
+                print("DEBUG OCR B: Using PIL Image directly")
+            elif isinstance(image_input, bytes):
+                image = Image.open(io.BytesIO(image_input))
+                print("DEBUG OCR B: Converted bytes to PIL Image")
             else:
-                bio = image_input
+                raise ValueError(f"Unexpected input type: {type(image_input)}")
             
-            # Reset position
-            bio.seek(0)
+            # Ensure fully loaded and in good mode
+            image.load()
+            if image.mode not in ("RGB", "L"):
+                image = image.convert("RGB")
+            self._current_image = image.copy()
             
-            # Try to open with PIL - this is where it's failing
-            try:
-                image = Image.open(bio)
-                #print(f"DEBUG OCR: PIL opened image: {image.format}, {image.size}, {image.mode}")
-            except Exception as pil_error:
-                #print(f"DEBUG OCR: PIL failed: {pil_error}")
-                # Check if it's actually image data
-                bio.seek(0)
-                first_bytes = bio.read(10)
-                #print(f"DEBUG OCR: First 10 bytes: {first_bytes}")
-                raise    
-
-            # Store for ID processor
-            self._current_image = image
-              
-            # Now use the preprocessing functions with the PIL image
-            #------------NOT WORKING YET!!!!----------------------
-            #processed_image = preprocess_image_aggressive(image)
-
-            # Skip preprocessing for now, use raw image
-            processed_image = image
+            print("DEBUG OCR C: About to call pytesseract")
             
-            # Romanian-specific OCR configuration
             romanian_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
-            
-            # Try Romanian + English combination for medical documents
             text_ro_en = pytesseract.image_to_string(
-                processed_image,
+                image,
                 lang='ron+eng',
                 config=romanian_config
             )
             
-            # Fallback to English-only if Romanian fails
-            if len(text_ro_en.strip()) < 20:
-                text_en = pytesseract.image_to_string(
-                    processed_image,
-                    lang='eng',
-                    config=romanian_config
-                )
-                if len(text_en) > len(text_ro_en):
-                    text_ro_en = text_en
-            
-            # Clean up common OCR errors in Romanian
-            cleaned_text = self._clean_romanian_ocr_errors(text_ro_en)
-            
-            # Estimate confidence
-            confidence = estimate_text_quality(cleaned_text)
-            
-            return cleaned_text, confidence
+            # --- Confidence calculation via image_to_data ---
+            ocr_data = pytesseract.image_to_data(
+                image,
+                lang='ron+eng',
+                config=romanian_config,
+                output_type=pytesseract.Output.DICT
+            )
+
+            confs = [int(c) for c in ocr_data["conf"] if c != "-1"]
+            avg_conf = int(sum(confs) / len(confs)) if confs else 0
+
+            print(f"DEBUG OCR D: Extracted {len(text_ro_en)} characters, avg conf={avg_conf}")
+            return text_ro_en, avg_conf
+
+            #return text_ro_en, 80  # placeholder confidence
             
         except Exception as e:
-            print(f"DEBUG OCR: Full exception: {e}")
-            # Fallback to basic OCR
-            return self._basic_fallback_ocr(image_input)
+            print(f"DEBUG OCR ERROR: {e}")
+            return f"OCR failed: {str(e)}", 0
     
     def _clean_romanian_ocr_errors(self, text: str) -> str:
         """Clean common OCR errors in Romanian text"""
@@ -514,3 +1053,28 @@ class RomanianOCRProcessor:
         except Exception as e:
             print(f"Fallback OCR also failed: {e}")
             return f"OCR processing failed: {str(e)}", 0
+
+    def _process_with_full_ocr(self, image: Image.Image, hint_document_type: Optional[str] = None) -> 'EnhancedOCRResult':
+        """Fallback to full OCR processing for non-ID documents"""
+        try:
+            # Extract text using existing method
+            raw_text, confidence = self._extract_text_romanian_optimized(image)
+            
+            # Use existing template matching
+            template_match = self._match_document_template(raw_text, hint_document_type)
+            
+            # Extract structured data if template found
+            if template_match and template_match.document_type != "unknown_document":
+                structured_data = self._extract_structured_data(raw_text, template_match.template_id)
+            else:
+                structured_data = {}
+            
+            return EnhancedOCRResult(
+                raw_text=raw_text,
+                template_match=template_match,
+                structured_data=structured_data,
+                confidence_score=confidence,
+                processing_metadata={"method": "full_ocr_fallback"}
+            )
+        except Exception as e:
+            return self._basic_fallback_ocr(image)

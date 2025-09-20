@@ -2,7 +2,7 @@
 from typing import Dict, Optional, Tuple
 from enum import Enum
 import pytesseract
-from PIL import Image
+from PIL import Image, ImageEnhance
 import numpy as np
 
 class RomanianIDType(Enum):
@@ -239,25 +239,29 @@ class MultiTemplateIDProcessor:
         gray = region_img.convert('L')
         
         # Field-specific enhancements
-        if field_type == "cnp":
+        #if field_type == "cnp":
             # High contrast for numbers
-            from PIL import ImageEnhance
-            enhancer = ImageEnhance.Contrast(gray)
-            enhanced = enhancer.enhance(2.5)
-        elif field_type in ["nume", "prenume"]:
+        #    from PIL import ImageEnhance
+        #    enhancer = ImageEnhance.Contrast(gray)
+        #    enhanced = enhancer.enhance(2.5)
+        #elif field_type in ["nume", "prenume"]:
             # Balanced enhancement for names
-            from PIL import ImageEnhance
-            enhancer = ImageEnhance.Contrast(gray)
-            enhanced = enhancer.enhance(1.8)
-        elif field_type == "address":
+        #    from PIL import ImageEnhance
+        #    enhancer = ImageEnhance.Contrast(gray)
+        #    enhanced = enhancer.enhance(1.8)
+        #elif field_type == "address":
             # Moderate enhancement for mixed text
-            from PIL import ImageEnhance  
-            enhancer = ImageEnhance.Contrast(gray)
-            enhanced = enhancer.enhance(1.5)
-        else:
-            enhanced = gray
+        #    from PIL import ImageEnhance  
+        #    enhancer = ImageEnhance.Contrast(gray)
+        #    enhanced = enhancer.enhance(1.5)
+        #else:
+        #    enhanced = gray
         
-        # Scale up for better OCR (3x)
+        # Simple contrast enhancement
+        enhancer = ImageEnhance.Contrast(gray)
+        enhanced = enhancer.enhance(2.0)
+  
+      # Scale up for better OCR (3x)
         width, height = enhanced.size
         scaled = enhanced.resize((width * 3, height * 3), Image.Resampling.LANCZOS)
         

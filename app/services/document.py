@@ -45,9 +45,11 @@ class EnhancedDocumentService:
     def process_document_with_templates(self, file_content: bytes, hint_type: Optional[str] = None) -> Dict[str, Any]:
         """Process document using Romanian templates"""
         try:
+            print(f"DEBUG: we are inside the process_document_with_templates function, with the hint {hint_type}")
             # Use enhanced OCR processor
             ocr_result = self.ocr_processor.process_document(file_content, hint_type)
             
+            print(f"DEBUG: we are nside the process_document_with_templates function, after ocr_result, which is {ocr_result.raw_text} with the confidence {ocr_result.confidence_score}")
             # Build comprehensive response
             result = {
                 "success": True,
