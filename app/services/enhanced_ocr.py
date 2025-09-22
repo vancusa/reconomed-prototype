@@ -576,27 +576,35 @@ class RomanianOCRProcessor:
 
     def _detect_photo_region(self, img_array) -> bool:
         """Detect photo region (dark rectangular area on left side)"""
+        print(f"DEBUG DPR1: Hello! we are inside detect photo region")
         height, width = img_array.shape[:2]
-        
+        print(f"DEBUG DPR2: The height and width are {height} and {width}")
         # Check left 30% of image for photo-like region
         left_region = img_array[:, :int(width * 0.3)]
         
         # Convert to grayscale if color
         if len(left_region.shape) == 3:
             left_gray = np.mean(left_region, axis=2)
+            print(f"DEBUG DPR3: converting to grayscale")
         else:
             left_gray = left_region
+            print(f"DEBUG DPR4: no conversion needed")
         
         # Photos have: dark regions (hair, clothing) + rectangular boundaries
         dark_pixel_ratio = np.sum(left_gray < 120) / left_gray.size
-        
+        print(f"DEBUG DPR5: Dark pixel ration: {dark_pixel_ratio} (need > 0.15)")
         # Edge detection for rectangular boundaries
         edges = np.gradient(left_gray)
+        print(f"DEBUG DPR6: Edges {edges}")
         edge_magnitude = np.sqrt(edges[0]**2 + edges[1]**2)
+        print(f"DEBUG DPR7: Edge magnitude {edge_magnitude}")
         strong_edges = np.sum(edge_magnitude > 30) / edge_magnitude.size
-        
+        print(f"DEBUG DPR8: Strong edge {strong_edges}")
+        result = (dark_pixel_ratio > 0.10) or (strong_edges > 0.01)
+        print(f"DEBUG DPR10: Final result: {result}")
+
         # Photo criteria: significant dark area + rectangular edges
-        return dark_pixel_ratio > 0.15 and strong_edges > 0.05
+        return result
 
     def _detect_structured_text_blocks(self, img_array) -> bool:
         """Detect if image has structured text blocks (vs random text)"""

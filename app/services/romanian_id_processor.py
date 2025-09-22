@@ -21,11 +21,12 @@ class MultiTemplateIDProcessor:
                 "regions": {
                     "nume": {
                         "x_start": 0.305, "x_end": 0.935, "y_start": 0.365, "y_end": 0.415,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț -"
+                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
+
                     },
                     "prenume": {
                         "x_start": 0.305, "x_end": 0.935, "y_start": 0.463, "y_end": 0.513,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț -"
+                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "cnp": {
                         "x_start": 0.305, "x_end": 0.570, "y_start": 0.267, "y_end": 0.307,
@@ -44,11 +45,11 @@ class MultiTemplateIDProcessor:
                 "regions": {
                     "nume": {
                         "x_start": 0.538, "x_end": 0.938, "y_start": 0.190, "y_end": 0.240,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț -"
+                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "prenume": {
                         "x_start": 0.538, "x_end": 0.938, "y_start": 0.252, "y_end": 0.340,
-                        "ocr_config": "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț -"
+                        "ocr_config": "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "cnp": {
                         "x_start": 0.538, "x_end": 0.845, "y_start": 0.488, "y_end": 0.538,
@@ -64,11 +65,11 @@ class MultiTemplateIDProcessor:
                 "regions": {
                     "nume": {
                         "x_start": 0.251, "x_end": 0.600, "y_start": 0.360, "y_end": 0.420,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț -"
+                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "prenume": {
                         "x_start": 0.251, "x_end": 0.600, "y_start": 0.440, "y_end": 0.500,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț -"
+                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "address": {
                         "x_start": 0.620, "x_end": 0.950, "y_start": 0.360, "y_end": 0.500,
@@ -159,7 +160,7 @@ class MultiTemplateIDProcessor:
     def process_id_card(self, image: Image.Image) -> Dict:
         """Process Romanian ID card with automatic type detection"""
         # Detect card type
-        card_type = self.detect_id_type(image)
+        card_type = self.detect_id_type_by_layout(image)
         
         if card_type == RomanianIDType.UNKNOWN:
             return self._try_all_templates(image)

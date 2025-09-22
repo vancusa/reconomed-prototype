@@ -1,0 +1,204 @@
+================================================================================
+RECONOMED PROJECT STRUCTURE ANALYSIS
+================================================================================
+
+📁 app/main.py
+-----------
+  🔧 Functions:
+     • health_check()
+     • serve_frontend()
+     • serve_login()
+     • startup_event()
+     • test_database()
+
+📁 app/models.py
+-------------
+  🔷 Class: User
+  🔷 Class: Clinic
+  🔷 Class: Patient
+  🔷 Class: Consultation
+  🔷 Class: Document
+  🔷 Class: GDPRAuditLog
+  🔷 Class: PatientBase
+  🔷 Class: PatientCreate
+  🔷 Class: PatientResponse
+  🔷 Class: UserCreate
+  🔷 Class: UserResponse
+  🔷 Class: ConsultationBase
+  🔷 Class: ConsultationCreate
+  🔷 Class: ConsultationResponse
+  🔷 Class: DocumentBase
+  🔷 Class: DocumentCreate
+  🔷 Class: DocumentResponse
+  🔷 Class: Config
+
+📁 app/routers/auth.py
+-------------------
+  🔷 Class: Token
+  🔷 Class: UserResponse
+  🔷 Class: UserCreate
+
+📁 app/routers/clinics.py
+----------------------
+  🔷 Class: ClinicBase
+  🔷 Class: ClinicCreate
+  🔷 Class: ClinicResponse
+  🔷 Class: Config
+
+📁 app/routers/documents.py
+------------------------
+  🔧 Functions:
+     • create_validation_fields()
+     • get_document()
+     • get_document_for_validation()
+     • get_patient_documents()
+     • get_pending_ocr_documents()
+     • get_pending_validations()
+     • get_validation_suggestions()
+     • validate_document()
+
+📁 app/routers/search.py
+---------------------
+  🔧 Functions:
+     • get_document_types()
+     • search()
+
+📁 app/services/document.py
+------------------------
+  🔷 Class: EnhancedDocumentService
+     • __init__()
+     • _analyze_lab_results()
+     • _is_critical_value()
+     • _validate_romanian_id_extraction()
+     • detect_document_type()
+     • process_document_with_templates()
+  🔧 Functions:
+     • detect_document_type()
+     • extract_structured_data()
+
+📁 app/services/enhanced_ocr.py
+----------------------------
+  🔷 Class: TemplateMatchResult
+  🔷 Class: EnhancedOCRResult
+  🔷 Class: RomanianOCRProcessor
+     • __init__()
+     • __init__()
+     • _apply_post_processing()
+     • _apply_post_processing()
+     • _basic_fallback_ocr()
+     • _basic_fallback_ocr()
+     • _calculate_final_confidence()
+     • _calculate_final_confidence()
+     • _calculate_template_score()
+     • _calculate_template_score()
+     • _clean_romanian_ocr_errors()
+     • _clean_romanian_ocr_errors()
+     • _detect_document_layout()
+     • _detect_document_layout()
+     • _detect_official_document_colors()
+     • _detect_official_document_colors()
+     • _detect_photo_region()
+     • _detect_photo_region()
+     • _detect_structured_text_blocks()
+     • _detect_structured_text_blocks()
+     • _determine_result_status()
+     • _determine_result_status()
+     • _enhance_with_medical_terms()
+     • _enhance_with_medical_terms()
+     • _extract_lab_test_results()
+     • _extract_lab_test_results()
+     • _extract_medications()
+     • _extract_medications()
+     • _extract_structured_data()
+     • _extract_structured_data()
+     • _extract_text_romanian_optimized()
+     • _extract_text_romanian_optimized()
+     • _find_medical_terms()
+     • _find_medical_terms()
+     • _match_document_template()
+     • _match_document_template()
+     • _normalize_date()
+     • _normalize_date()
+     • _normalize_hint()
+     • _normalize_input_to_image()
+     • _normalize_romanian_name()
+     • _normalize_romanian_name()
+     • _normalize_test_name()
+     • _normalize_test_name()
+     • _process_with_full_ocr()
+     • _process_with_full_ocr()
+     • _validate_cnp_date_consistency()
+     • _validate_cnp_date_consistency()
+     • process_document()
+     • process_document()
+
+📁 app/services/ocr.py
+-------------------
+  🔧 Functions:
+     • estimate_text_quality()
+     • extract_text_basic()
+     • extract_text_confidence()
+     • extract_text_from_image()
+     • get_mock_ocr_text()
+     • preprocess_image_aggressive()
+     • preprocess_image_simple()
+
+📁 app/services/romanian_document_templates.py
+-------------------------------------------
+  🔷 Class: DocumentField
+  🔷 Class: DocumentTemplate
+  🔷 Class: RomanianDocumentTemplates
+     • get_all_templates()
+     • get_lab_result_template()
+     • get_prescription_template()
+     • get_romanian_id_template()
+  🔷 Class: RomanianMedicalTerms
+
+📁 app/services/romanian_id_processor.py
+-------------------------------------
+  🔷 Class: RomanianIDType
+  🔷 Class: MultiTemplateIDProcessor
+     • __init__()
+     • _analyze_text_density()
+     • _detect_blue_yellow_regions()
+     • _detect_photo_position()
+     • _enhance_region_for_ocr()
+     • _extract_from_template()
+     • _try_all_templates()
+     • _validate_field()
+     • detect_id_type_by_layout()
+     • process_id_card()
+
+📁 app/utils/file.py
+-----------------
+  🔧 Functions:
+     • ensure_upload_directory()
+     • generate_unique_filename()
+     • get_file_info()
+     • save_uploaded_file()
+     • validate_file_type()
+
+📁 app/utils/gdpr_utils.py
+-----------------------
+  🔷 Class: ConsentType
+  🔷 Class: LegalBasis
+  🔧 Functions:
+     • check_required_consents()
+     • create_gdpr_consent_record()
+     • get_default_romanian_consents()
+     • is_consent_valid()
+     • withdraw_consent()
+
+📁 app/utils/romanian_validation.py
+--------------------------------
+  🔧 Functions:
+     • extract_birth_date_from_cnp()
+     • extract_gender_from_cnp()
+     • normalize_phone_for_search()
+     • normalize_romanian_address()
+     • validate_cnp()
+     • validate_insurance_number()
+     • validate_romanian_phone()
+
+================================================================================
+SUMMARY: 14 files, 37 classes, 70 methods, 41 functions
