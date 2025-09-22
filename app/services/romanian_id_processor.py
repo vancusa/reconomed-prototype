@@ -182,7 +182,9 @@ class MultiTemplateIDProcessor:
         }
         
         width, height = image.size
-        
+        print(f"DEBUG EFT1: Hello! we are inside extract from template function and the image is {width} x {height}")
+        print(f"DEBUG EFT2: The card type we got is {card_type}")
+
         for field_name, region in template["regions"].items():
             try:
                 # Calculate pixel coordinates
@@ -194,7 +196,11 @@ class MultiTemplateIDProcessor:
                 # Extract and enhance region
                 region_img = image.crop((x1, y1, x2, y2))
                 enhanced_region = self._enhance_region_for_ocr(region_img, field_name)
-                
+       
+                print(f"DEBUG EFT3: About to process field '{field_name}'")
+                print(f"DEBUG EFT4: Enhanced region size: {enhanced_region.size}")
+                print(f"DEBUG EFT5: Enhanced region mode: {enhanced_region.mode}")        
+       
                 # OCR extraction
                 field_text = pytesseract.image_to_string(
                     enhanced_region,
@@ -237,8 +243,20 @@ class MultiTemplateIDProcessor:
     def _enhance_region_for_ocr(self, region_img: Image.Image, field_type: str) -> Image.Image:
         """Field-specific enhancement for better OCR"""
         # Convert to grayscale
-        gray = region_img.convert('L')
+        print(f"DEBUG ERFOCR 1: We are inside the Enhance region for OCR function")
+        width, height = region_img.size    
+        # Debug the incoming region size
+        print(f"DEBUG ERFOCR 2: Field '{field_type}' incoming size: {width}x{height}")
         
+        # Ensure minimum size before processing
+        if width < 50 or height < 20:
+            print(f"DEBUG ERFOCR 3: Region too small ({width}x{height}), skipping OCR")
+            # Return a blank image or raise an exception
+            raise ValueError(f"Region too small for OCR: {width}x{height}")
+        
+        gray = region_img.convert('L')
+        print(f"DEBUG ERFOCR 4: Gray done")
+
         # Field-specific enhancements
         #if field_type == "cnp":
             # High contrast for numbers
@@ -261,11 +279,13 @@ class MultiTemplateIDProcessor:
         # Simple contrast enhancement
         enhancer = ImageEnhance.Contrast(gray)
         enhanced = enhancer.enhance(2.0)
-  
-      # Scale up for better OCR (3x)
-        width, height = enhanced.size
-        scaled = enhanced.resize((width * 3, height * 3), Image.Resampling.LANCZOS)
-        
+        print(f"DEBUG ERFOCR 5: Enhanced done")
+
+        #Scale up for better OCR (3x)
+        scale_factor = max(3, 100 // min(width, height))  # Ensure at least 100px minimum dimension
+        scaled = enhanced.resize((width * scale_factor, height * scale_factor), Image.Resampling.LANCZOS)
+        print(f"DEBUG ERFOCR 6: Final size: {scaled.size}")
+
         return scaled
     
     def _validate_field(self, field_name: str, field_value: str, card_type: RomanianIDType) -> Dict:
