@@ -6,7 +6,9 @@ import uuid
 
 from app.database import get_db
 from app.auth import get_current_user, get_any_staff
-from app.models import Patient, User, PatientCreate, PatientResponse, GDPRAuditLog
+from app.models import Patient, User, GDPRAuditLog
+from app.schemas import PatientCreate, PatientResponse
+
 from app.utils.romanian_validation import (
     validate_cnp, extract_birth_date_from_cnp, extract_gender_from_cnp,
     validate_romanian_phone, validate_insurance_number, normalize_romanian_address
