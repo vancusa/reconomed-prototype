@@ -7,6 +7,42 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 import os
 
+#---SETUP LOGGING
+import logging
+from logging.handlers import RotatingFileHandler
+
+# --- Application Logger ---
+app_logger = logging.getLogger("reconomed.app")
+app_logger.setLevel(logging.DEBUG)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+
+file_handler = RotatingFileHandler("reconomed.log", maxBytes=5_000_000, backupCount=5)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+
+app_logger.addHandler(console_handler)
+app_logger.addHandler(file_handler)
+
+
+# --- Audit Logger ---
+audit_logger = logging.getLogger("reconomed.audit")
+audit_logger.setLevel(logging.INFO)
+
+audit_file_handler = logging.FileHandler("audit.log")
+audit_file_handler.setLevel(logging.INFO)
+audit_file_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+
+audit_logger.addHandler(audit_file_handler)
+
+# Example usage
+#app_logger.debug("Detecting layout for new document")
+#audit_logger.info("User=doctor123 accessed patient_id=456 at endpoint=/patients/456")
+
+#----END LOGGING SETUP
+
 from app.database import get_db, create_tables
 from app.routers.auth import router as auth_router
 from app.routers.clinics import router as clinics_router

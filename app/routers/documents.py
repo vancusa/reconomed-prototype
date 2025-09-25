@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 import json
 import os
 import uuid
+import logging
 from datetime import datetime
 
 from app.database import get_db
@@ -22,33 +23,37 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+# Reuse the logger created in app.main
+audit_logger = logging.getLogger("reconomed.audit")
+
 @router.post("/upload")
 async def upload_document(
     patient_id: Optional[str] = None,
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    print(f"DEBUG STEP 1: File received - name: {file.filename}, type: {file.content_type}")
+    audit_logger.info(f"user={user} action=upload_document patient_id={patient_id}")
+    app_logger.debug(f"STEP 1: File received - name: {file.filename}, type: {file.content_type}")
     
     # Debug file size before reading
-    print(f"DEBUG STEP 2: About to read file content")
+    app_logger.debug("DEBUG STEP 2: About to read file content")
     content = await file.read() #THIS is the only reading of the stream, any more and we empty the stream!!!!
-    print(f"DEBUG STEP 3: Read {len(content)} bytes from upload")
+    app_logger.debug(f"DEBUG STEP 3: Read {len(content)} bytes from upload")
 
     # Debug first few bytes to ensure it's real image data
     if len(content) > 0:
-        print(f"DEBUG STEP 4: First 20 bytes: {content[:20]}")
+        app_logger.debug(f"DEBUG STEP 4: First 20 bytes: {content[:20]}")
     else:
-        print(f"DEBUG STEP 4: Content is empty!")
+        app_logger.debug(f"DEBUG STEP 4: Content is empty!")
         return {"error": "File content is empty"}
     
-    print(f"DEBUG: Upload started for patient_id: {patient_id}")
-    print(f"DEBUG: File info: {file.filename}, {file.content_type}")
+    app_logger.debug(f"DEBUG: Upload started for patient_id: {patient_id}")
+    app_logger.debug(f"DEBUG: File info: {file.filename}, {file.content_type}")
     
     try:
         # Check if patient exists
         patient = db.query(Patient).filter(Patient.id == patient_id).first()
-        print(f"DEBUG: Patient found: {patient is not None}")
+        app_logger.debug(f"DEBUG: Patient found: {patient is not None}")
         
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found")

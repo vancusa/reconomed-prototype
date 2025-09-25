@@ -7,6 +7,9 @@ from PIL import Image
 import io
 import numpy as np
 from typing import Optional
+import logging
+audit_logger = logging.getLogger("reconomed.audit")
+app_logger = logging.getLogger("reconomed.app")
 
 from app.services.romanian_document_templates import (RomanianDocumentTemplates, DocumentTemplate, RomanianMedicalTerms)
 #from app.services.ocr import preprocess_image_aggressive, estimate_text_quality
@@ -56,12 +59,13 @@ class RomanianOCRProcessor:
         print(f"DEBUG process_document 2: finish normalizations")
         
         # Layout detection
-        detected_layout = self._detect_document_layout(image)
-        print(f"DEBUG process_document 3: finished detecte_layout {detecte_layout}")
+        detected_layout, document_subtype = self._detect_document_layout(image)
+        #detected_layout = self._detect_document_layout(image)
+        print(f"DEBUG process_document 3: finished detect_layout and is ID {detected_layout} with the type {document_subtype}")
 
         # If explicit hint overrides layout
-        if hint_document_type == "romanian_id":
-            detected_layout = "romanian_id"
+        #if hint_document_type == "romanian_id":
+        #    detected_layout = "romanian_id"
 
         if detected_layout == "romanian_id":
             try:
@@ -136,7 +140,78 @@ class RomanianOCRProcessor:
 
     # ----------------- Layout Detection ---------------------
 
-    def _detect_document_layout(self, image: Image.Image) -> str:
+    def _detect_document_layout(self, image: Image.Image) -> Tuple[str, Optional[str]]
+        """
+            Detect the document layout type before OCR. 
+
+            Input:
+                image (PIL.Image): Input document image.
+
+            Output:
+                Tuple[str, Optional[str]]:
+                str --> the actual detected layout
+                    values:
+                        "romanian_id" - romanian ID
+                        "lab_result" - known formats for the big labs: Bioclinica, Synevo, Golea, Regina Maria
+                        "unknown"  - for example a hospital discharge note or some other stuff
+                Optional[str] --> specific subtype
+                        For IDs: "electronic_id" | "standard_id"
+                        For labs: "Bioclinica" | "Synevo" | "Golea" | "Regina Maria"
+            
+            Notes on future versions:
+                Replace heuristic _is_card_shaped / _detect_photo_region / _detect_lab_header checks with a CNN or transformer-based document layout classifier.
+                This would improve determinism, handle new templates, and adapt to noisy scans.
+        """
+    app_logger.debug("Entering detect_document_layout")
+
+    try:
+        # Get dimensions
+        width, height = image.size
+        app_logger.debug(f"Image size: width={width}, height={height}")
+
+        # Convert to numpy (could be optimized later)
+        img_array = np.array(image)
+        app_logger.debug("Converted image to numpy array")
+
+        # --- Step 1: Romanian ID detection ---
+        is_card_shaped = self._is_card_shaped(width, height)
+        app_logger.debug(f"is_card_shaped={is_card_shaped}")
+
+        has_photo = self._detect_photo_region(img_array)
+        lapp_logger.debug(f"has_photo={has_photo}")
+
+        has_id_layout = self._has_structured_text_blocks(img_array)
+        app_logger.debug(f"has_id_layout={has_id_layout}")
+
+        if is_card_shaped and has_photo and has_id_layout:
+            id_type = self._classify_romanian_id_type(image)
+            app_logger.info(f"Detected Romanian ID: {id_type}")
+            return "romanian_id", id_type
+
+        # --- Step 2: Lab result detection ---
+        has_lab_header = self._detect_lab_header(img_array)
+        app_logger.debug(f"has_lab_header={has_lab_header}")
+
+        if has_lab_header:
+            lab_type = self._classify_lab_type(image)
+            app_logger.info(f"Detected lab result: {lab_type}")
+            return "lab_result", lab_type
+
+        # --- Step 3: Fallback ---
+        app_logger.info("Document layout unknown")
+        return "unknown", None
+
+    except Exception as e:
+        # Defensive fallback in case helpers break
+        logging.error(f"Layout detection failed: {e}", exc_info=True)
+        return "unknown", None
+
+
+
+
+
+"""
+
         width, height = image.size
         aspect_ratio = width / height
         img_array = np.array(image)
@@ -152,6 +227,7 @@ class RomanianOCRProcessor:
             return "official_document"
         else:
             return "unknown_document"
+"""
 
     def _detect_photo_region(self, img_array) -> bool:
         height, width = img_array.shape[:2]

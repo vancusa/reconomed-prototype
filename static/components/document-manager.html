@@ -1,0 +1,156 @@
+<!-- static/components/document-manager.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Management - ReconoMed</title>
+    <link rel="stylesheet" href="../css/styles.css">
+    <link rel="stylesheet" href="document-manager.css">
+</head>
+<body>
+    <div id="document-manager">
+        <div class="document-manager__header">
+            <h2>Document Management</h2>
+            <div class="document-manager__stats">
+                <span id="upload-count">0/20 uploads used</span>
+                <span class="expiry-warning">Files expire after 30 days if not processed</span>
+            </div>
+        </div>
+
+        <!-- Upload Area -->
+        <div id="upload-area" class="upload-area">
+            <div class="upload-dropzone" id="upload-dropzone">
+                <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
+                <div id="upload-prompt" class="upload-prompt">
+                    <div class="upload-icon">📷</div>
+                    <h3>Upload Documents</h3>
+                    <p>Drag and drop images here or click to select files</p>
+                    <p class="upload-hint">Images will be compressed automatically</p>
+                </div>
+                <div id="upload-status" class="upload-status" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Compressing and uploading files...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Document Tabs -->
+        <div class="document-tabs">
+            <div class="document-tabs__header">
+                <button class="tab-button active" data-tab="unprocessed">
+                    Unprocessed <span class="tab-count" id="unprocessed-count">0</span>
+                </button>
+                <button class="tab-button" data-tab="processing">
+                    Processing <span class="tab-count" id="processing-count">0</span>
+                </button>
+                <button class="tab-button" data-tab="validation">
+                    Validation <span class="tab-count" id="validation-count">0</span>
+                </button>
+            </div>
+
+            <div class="document-tabs__content">
+                <!-- Unprocessed Tab -->
+                <div id="unprocessed-tab" class="tab-content active">
+                    <div class="uploads-toolbar">
+                        <div class="uploads-toolbar__left">
+                            <label class="select-all">
+                                <input type="checkbox" id="select-all">
+                                Select All (<span id="total-uploads">0</span>)
+                            </label>
+                        </div>
+                        <div class="uploads-toolbar__right">
+                            <button class="view-toggle active" data-view="grid">⊞</button>
+                            <button class="view-toggle" data-view="list">☰</button>
+                        </div>
+                    </div>
+
+                    <div id="batch-actions" class="batch-actions" style="display: none;">
+                        <div class="batch-actions__header">
+                            <h4><span id="selected-count">0</span> files selected</h4>
+                        </div>
+                        <div class="batch-actions__controls">
+                            <div class="batch-control-group">
+                                <label>Assign to Patient:</label>
+                                <div class="batch-control-row">
+                                    <select id="batch-patient">
+                                        <option value="">Select Patient...</option>
+                                    </select>
+                                    <button id="apply-batch-patient" class="btn-secondary">Apply</button>
+                                </div>
+                            </div>
+                            <div class="batch-control-group">
+                                <label>Set Document Type:</label>
+                                <div class="batch-control-row">
+                                    <select id="batch-document-type">
+                                        <option value="">Document Type...</option>
+                                        <option value="romanian_id">Romanian ID</option>
+                                        <option value="lab_result">Lab Result</option>
+                                        <option value="discharge_note">Discharge Note</option>
+                                    </select>
+                                    <button id="apply-batch-type" class="btn-secondary">Apply</button>
+                                </div>
+                            </div>
+                            <div class="batch-control-group">
+                                <button id="start-processing" class="btn-primary">Start OCR Processing</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="file-container" class="file-container grid"></div>
+                    <div id="empty-state" class="empty-state">
+                        <div class="empty-icon">📄</div>
+                        <h3>No uploads yet</h3>
+                        <p>Upload some documents to get started</p>
+                    </div>
+                </div>
+
+                <!-- Processing Tab -->
+                <div id="processing-tab" class="tab-content">
+                    <div class="queue-summary">
+                        <h3>Processing <span id="processing-total">0</span> documents</h3>
+                        <p>Documents are processed automatically in order</p>
+                    </div>
+                    <div id="processing-list" class="processing-list"></div>
+                </div>
+
+                <!-- Validation Tab -->
+                <div id="validation-tab" class="tab-content">
+                    <div class="validation-summary">
+                        <h3><span id="validation-pending">0</span> documents need validation</h3>
+                        <p>Review OCR results and approve or correct them</p>
+                    </div>
+                    <div id="validation-list" class="validation-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Validation Detail Modal -->
+        <div id="validation-modal" class="validation-modal" style="display: none;">
+            <div class="validation-modal__content">
+                <div class="validation-modal__header">
+                    <button id="validation-back" class="back-button">← Back to list</button>
+                    <h3 id="validation-title">Document Validation</h3>
+                </div>
+                <div class="validation-modal__body">
+                    <div class="validation-image">
+                        <img id="validation-preview" src="" alt="Document preview">
+                    </div>
+                    <div class="validation-form">
+                        <h4>OCR Results - Please verify and correct:</h4>
+                        <div id="validation-fields"></div>
+                        <div class="validation-actions">
+                            <button id="approve-validation" class="btn-success">Approve & Save</button>
+                            <button id="reject-validation" class="btn-danger">Reject - Manual Entry</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../js/image-compression.js"></script>
+    <script src="../js/upload-handler.js"></script>
+    <script src="document-manager.js"></script>
+</body>
+</html>

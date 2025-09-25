@@ -8,7 +8,7 @@ import numpy as np
 class RomanianIDType(Enum):
     ECI_ELECTRONIC = "carte_electronica"  # Image 1 (newest)
     CI_STANDARD = "carte_identitate"      # Image 2 (current standard)
-    BI_OLD = "buletin_identitate"         # Image 3 (old bulletin)
+    BI_OLD = "buletin_identitate"         # Image 3 (old bulletin) - to be developed in further versions, if needed.
     UNKNOWN = "unknown"
 
 class MultiTemplateIDProcessor:
@@ -16,21 +16,21 @@ class MultiTemplateIDProcessor:
     
     def __init__(self):
         self.templates = {
-            RomanianIDType.ECI_ELECTRONIC: {
+            RomanianIDType.CI_STANDARD: {
                 "alignment_reference": "romania_text_top",  # "ROMANIA" at top
                 "regions": {
                     "nume": {
                         "x_start": 0.305, "x_end": 0.935, "y_start": 0.365, "y_end": 0.415,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
+                        "ocr_config": "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
 
                     },
                     "prenume": {
                         "x_start": 0.305, "x_end": 0.935, "y_start": 0.463, "y_end": 0.513,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
+                        "ocr_config": "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "cnp": {
                         "x_start": 0.305, "x_end": 0.570, "y_start": 0.267, "y_end": 0.307,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=0123456789"
+                        "ocr_config": "--psm 8 -c tessedit_char_whitelist=0123456789"
                     },
                     "address": {
                         "x_start": 0.305, "x_end": 0.935, "y_start": 0.755, "y_end": 0.855,
@@ -40,22 +40,22 @@ class MultiTemplateIDProcessor:
                 "photo_region": {"x_start": 0.035, "x_end": 0.280, "y_start": 0.155, "y_end": 0.800}
             },
             
-            RomanianIDType.CI_STANDARD: {
+            RomanianIDType.ECI_ELECTRONIC: {
                 "alignment_reference": "romania_coat_of_arms",  # Right side coat of arms
                 "regions": {
                     "nume": {
                         "x_start": 0.538, "x_end": 0.938, "y_start": 0.190, "y_end": 0.240,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
+                        "ocr_config": "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "prenume": {
                         "x_start": 0.538, "x_end": 0.938, "y_start": 0.252, "y_end": 0.340,
-                        "ocr_config": "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
+                        "ocr_config": "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "cnp": {
                         "x_start": 0.538, "x_end": 0.845, "y_start": 0.488, "y_end": 0.538,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=0123456789"
+                        "ocr_config": "--psm 8 -c tessedit_char_whitelist=0123456789"
                     }
-                    # No address field in standard CI (not marked in your image)
+                    # No address field in electronic CI
                 },
                 "photo_region": {"x_start": 0.048, "x_end": 0.485, "y_start": 0.155, "y_end": 0.590}
             },
@@ -65,11 +65,11 @@ class MultiTemplateIDProcessor:
                 "regions": {
                     "nume": {
                         "x_start": 0.251, "x_end": 0.600, "y_start": 0.360, "y_end": 0.420,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
+                        "ocr_config": "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "prenume": {
                         "x_start": 0.251, "x_end": 0.600, "y_start": 0.440, "y_end": 0.500,
-                        "ocr_config": "--psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
+                        "ocr_config": "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzĂÎÂȘȚăîâșț"
                     },
                     "address": {
                         "x_start": 0.620, "x_end": 0.950, "y_start": 0.360, "y_end": 0.500,
