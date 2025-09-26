@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ReconoMed - Healthcare Document Processing</title>
     <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/document-manager.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
@@ -17,16 +18,20 @@
             </div>
             <div class="nav-menu">
                 <a href="#" class="nav-link active" data-section="dashboard">
-                    <i class="fas fa-chart-line"></i> Dashboard
+                    <i class="fas fa-chart-line"></i>
+                    <span>Dashboard</span>
                 </a>
                 <a href="#" class="nav-link" data-section="patients">
-                    <i class="fas fa-users"></i> Patients
+                    <i class="fas fa-users"></i>
+                    <span>Patients</span>
                 </a>
-                <a href="components/document-manager.html" class="nav-link" data-section="documents">
-                    <i class="fas fa-file-medical"></i> Documents
+                <a href="#" class="nav-link" data-section="documents">
+                    <i class="fas fa-file-medical"></i>
+                    <span>Documents</span>
                 </a>
-                <a href="#" class="nav-link" data-section="validation">
-                    <i class="fas fa-check-circle"></i> Validation
+                <a href="#" class="nav-link" data-section="consultations">
+                    <i class="fas fa-stethoscope"></i>
+                    <span>Consultations</span>
                 </a>
             </div>
             <div class="nav-user">
@@ -34,7 +39,7 @@
                     <span class="user-name">Dr. Ionescu</span>
                     <span class="user-role">Doctor</span>
                 </div>
-                <button class="btn-logout">
+                <button class="btn-logout" onclick="app.logout()">
                     <i class="fas fa-sign-out-alt"></i>
                 </button>
             </div>
@@ -47,61 +52,122 @@
         <section id="dashboard" class="content-section active">
             <div class="page-header">
                 <h1>Dashboard</h1>
-                <p>Overview of your medical document processing system</p>
+                <p>Today's healthcare activity overview</p>
+                <div class="dashboard-date">
+                    <i class="fas fa-calendar"></i>
+                    <span id="current-date"></span>
+                </div>
             </div>
             
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon patients">
-                        <i class="fas fa-users"></i>
+            <!-- Today's Stats -->
+            <div class="stats-section">
+                <h2>Today's Activity</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon patients">
+                            <i class="fas fa-user-md"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="patients-today">-</h3>
+                            <p>Patients Seen Today</p>
+                        </div>
                     </div>
-                    <div class="stat-content">
-                        <h3 id="total-patients">0</h3>
-                        <p>Total Patients</p>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon documents">
+                            <i class="fas fa-upload"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="uploads-today">-</h3>
+                            <p>Documents Uploaded</p>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon pending">
+                            <i class="fas fa-clock"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="pending-processing">-</h3>
+                            <p>Pending Processing</p>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon validated">
+                            <i class="fas fa-check-circle"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="pending-validation">-</h3>
+                            <p>Needs Validation</p>
+                        </div>
                     </div>
                 </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon documents">
-                        <i class="fas fa-file-medical"></i>
+            </div>
+
+            <!-- Overall Stats -->
+            <div class="stats-section">
+                <h2>System Overview</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon patients">
+                            <i class="fas fa-users"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="total-patients">-</h3>
+                            <p>Total Patients</p>
+                        </div>
                     </div>
-                    <div class="stat-content">
-                        <h3 id="total-documents">0</h3>
-                        <p>Documents Uploaded</p>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon documents">
+                            <i class="fas fa-file-medical"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="total-documents">-</h3>
+                            <p>Total Documents</p>
+                        </div>
                     </div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon pending">
-                        <i class="fas fa-clock"></i>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon validated">
+                            <i class="fas fa-chart-bar"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="system-efficiency">-%</h3>
+                            <p>Processing Efficiency</p>
+                        </div>
                     </div>
-                    <div class="stat-content">
-                        <h3 id="pending-validation">0</h3>
-                        <p>Pending Validation</p>
-                    </div>
-                </div>
-                
-                <div class="stat-card">
-                    <div class="stat-icon validated">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
-                    <div class="stat-content">
-                        <h3 id="validated-documents">0</h3>
-                        <p>Validated Documents</p>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon pending">
+                            <i class="fas fa-tasks"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="workflow-status">-</h3>
+                            <p>Active Workflows</p>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <div class="dashboard-grid">
                 <div class="dashboard-card">
-                    <h3>Recent Activity</h3>
+                    <div class="card-header">
+                        <h3>Recent Activity</h3>
+                        <button class="btn-tertiary" onclick="app.refreshActivity()">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
                     <div id="recent-activity" class="activity-list">
-                        <!-- Activity items will be loaded here -->
+                        <div class="loading-placeholder">Loading recent activity...</div>
                     </div>
                 </div>
                 
                 <div class="dashboard-card">
-                    <h3>Quick Actions</h3>
+                    <div class="card-header">
+                        <h3>Quick Actions</h3>
+                    </div>
                     <div class="quick-actions">
                         <button class="action-btn primary" onclick="showSection('patients')">
                             <i class="fas fa-user-plus"></i>
@@ -109,9 +175,13 @@
                         </button>
                         <button class="action-btn secondary" onclick="showSection('documents')">
                             <i class="fas fa-upload"></i>
-                            Upload Document
+                            Upload Documents
                         </button>
-                        <button class="action-btn tertiary" onclick="showSection('validation')">
+                        <button class="action-btn tertiary" onclick="showSection('consultations')">
+                            <i class="fas fa-plus-circle"></i>
+                            Record Consultation
+                        </button>
+                        <button class="action-btn secondary" onclick="app.goToValidation()">
                             <i class="fas fa-tasks"></i>
                             Review Pending
                         </button>
@@ -123,68 +193,360 @@
         <!-- Patients Section -->
         <section id="patients" class="content-section">
             <div class="page-header">
-                <h1>Patient Management</h1>
+                <div class="page-title">
+                    <h1>Patient Management</h1>
+                    <div class="patient-count">
+                        <span id="patient-count-display">Loading...</span>
+                    </div>
+                </div>
                 <button class="btn-primary" onclick="showAddPatientModal()">
                     <i class="fas fa-plus"></i> Add New Patient
                 </button>
             </div>
             
-            <div class="search-bar">
-                <input type="text" id="patient-search" placeholder="Search patients by name..." class="search-input">
-                <button class="search-btn">
-                    <i class="fas fa-search"></i>
-                </button>
+            <div class="search-and-filters">
+                <div class="search-bar">
+                    <input type="text" id="patient-search" placeholder="Search patients by name, phone, or CNP..." class="search-input">
+                    <button class="search-btn" onclick="app.searchPatients()">
+                        <i class="fas fa-search"></i>
+                    </button>
+                </div>
+                <div class="filters-section">
+                    <select id="patient-sort" onchange="app.sortPatients()">
+                        <option value="name">Sort by Name</option>
+                        <option value="recent">Recently Added</option>
+                        <option value="activity">Recent Activity</option>
+                    </select>
+                </div>
             </div>
 
-            <div class="patients-grid" id="patients-grid">
-                <!-- Patient cards will be loaded here -->
+            <div class="patients-container">
+                <div class="patients-grid" id="patients-grid">
+                    <div class="loading-placeholder">Loading patients...</div>
+                </div>
+                
+                <!-- Pagination -->
+                <div class="pagination-container" id="patients-pagination" style="display: none;">
+                    <div class="pagination-info">
+                        Showing <span id="patients-showing">0</span> of <span id="patients-total">0</span> patients
+                    </div>
+                    <div class="pagination-controls">
+                        <button class="btn-pagination" id="patients-prev" onclick="app.previousPatientsPage()">
+                            <i class="fas fa-chevron-left"></i> Previous
+                        </button>
+                        <span class="pagination-info">Page <span id="patients-page">1</span></span>
+                        <button class="btn-pagination" id="patients-next" onclick="app.nextPatientsPage()">
+                            Next <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
             </div>
         </section>
 
         <!-- Documents Section -->
         <section id="documents" class="content-section">
-            <div class="page-header">
-                <h1>Document Management</h1>
-                <select id="patient-select" class="patient-selector">
-                    <option value="">Select a patient...</option>
-                </select>
-            </div>
-
-            <div class="upload-area" id="upload-area">
-                <div class="upload-content">
-                    <i class="fas fa-cloud-upload-alt"></i>
-                    <h3>Drag & Drop Documents Here</h3>
-                    <p>Or click to select files</p>
-                    <input type="file" id="file-input" multiple accept="image/*,.pdf" hidden>
-                    <button class="btn-secondary" onclick="document.getElementById('file-input').click()">
-                        Choose Files
-                    </button>
+            <div class="document-manager">
+                <div class="document-manager__header">
+                    <div>
+                        <h1>Document Management</h1>
+                        <p>Upload, process, and validate medical documents</p>
+                    </div>
+                    <div class="document-manager__stats">
+                        <span id="upload-count">0/20 uploads used</span>
+                        <span class="expiry-warning">Files expire after 30 days if not processed</span>
+                    </div>
                 </div>
-            </div>
 
-            <div class="documents-list" id="documents-list">
-                <!-- Documents will be loaded here -->
+                <!-- Upload Area -->
+                <div id="upload-area" class="upload-area">
+                    <div class="upload-dropzone" id="upload-dropzone">
+                        <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
+                        <div id="upload-prompt" class="upload-prompt">
+                            <div class="upload-icon">📷</div>
+                            <h3>Upload Documents</h3>
+                            <p>Drag and drop images here or click to select files</p>
+                            <p class="upload-hint">Images will be compressed automatically</p>
+                        </div>
+                        <div id="upload-status" class="upload-status" style="display: none;">
+                            <div class="spinner"></div>
+                            <p>Compressing and uploading files...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Document Workflow Tabs -->
+                <div class="document-tabs">
+                    <div class="document-tabs__header">
+                        <button class="tab-button active" data-tab="unprocessed">
+                            Unprocessed <span class="tab-count" id="unprocessed-count">0</span>
+                        </button>
+                        <button class="tab-button" data-tab="processing">
+                            Processing <span class="tab-count" id="processing-count">0</span>
+                        </button>
+                        <button class="tab-button" data-tab="validation">
+                            Validation <span class="tab-count" id="validation-count">0</span>
+                        </button>
+                        <button class="tab-button" data-tab="completed">
+                            Completed <span class="tab-count" id="completed-count">0</span>
+                        </button>
+                    </div>
+
+                    <div class="document-tabs__content">
+                        <!-- Unprocessed Tab -->
+                        <div id="unprocessed-tab" class="tab-content active">
+                            <div class="uploads-toolbar">
+                                <div class="uploads-toolbar__left">
+                                    <label class="select-all">
+                                        <input type="checkbox" id="select-all">
+                                        Select All (<span id="total-uploads">0</span>)
+                                    </label>
+                                </div>
+                                <div class="uploads-toolbar__right">
+                                    <button class="view-toggle active" data-view="grid">⊞</button>
+                                    <button class="view-toggle" data-view="list">☰</button>
+                                </div>
+                            </div>
+
+                            <div id="batch-actions" class="batch-actions" style="display: none;">
+                                <div class="batch-actions__header">
+                                    <h4><span id="selected-count">0</span> files selected</h4>
+                                </div>
+                                <div class="batch-actions__controls">
+                                    <div class="batch-control-group">
+                                        <label>Assign to Patient:</label>
+                                        <div class="batch-control-row">
+                                            <select id="batch-patient">
+                                                <option value="">Select Patient...</option>
+                                            </select>
+                                            <button id="apply-batch-patient" class="btn-secondary">Apply</button>
+                                        </div>
+                                    </div>
+                                    <div class="batch-control-group">
+                                        <label>Set Document Type:</label>
+                                        <div class="batch-control-row">
+                                            <select id="batch-document-type">
+                                                <option value="">Document Type...</option>
+                                                <option value="romanian_id">Romanian ID</option>
+                                                <option value="lab_result">Lab Result</option>
+                                                <option value="discharge_note">Discharge Note</option>
+                                                <option value="prescription">Prescription</option>
+                                            </select>
+                                            <button id="apply-batch-type" class="btn-secondary">Apply</button>
+                                        </div>
+                                    </div>
+                                    <div class="batch-control-group">
+                                        <button id="start-processing" class="btn-primary">Start OCR Processing</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="file-container" class="file-container grid"></div>
+                            <div id="empty-state" class="empty-state">
+                                <div class="empty-icon">📄</div>
+                                <h3>No uploads yet</h3>
+                                <p>Upload some documents to get started</p>
+                            </div>
+                        </div>
+
+                        <!-- Processing Tab -->
+                        <div id="processing-tab" class="tab-content">
+                            <div class="queue-summary">
+                                <h3>Processing <span id="processing-total">0</span> documents</h3>
+                                <p>Documents are processed automatically in order</p>
+                                <button class="btn-secondary" onclick="app.refreshProcessingQueue()">
+                                    <i class="fas fa-sync-alt"></i> Refresh Queue
+                                </button>
+                            </div>
+                            <div id="processing-list" class="processing-list"></div>
+                        </div>
+
+                        <!-- Validation Tab -->
+                        <div id="validation-tab" class="tab-content">
+                            <div class="validation-summary">
+                                <h3><span id="validation-pending">0</span> documents need validation</h3>
+                                <p>Review OCR results and approve or correct them</p>
+                            </div>
+                            <div id="validation-list" class="validation-list"></div>
+                        </div>
+
+                        <!-- Completed Tab -->
+                        <div id="completed-tab" class="tab-content">
+                            <div class="completed-summary">
+                                <h3>Completed Documents</h3>
+                                <p>Successfully processed and validated documents</p>
+                                <div class="completed-filters">
+                                    <select id="completed-filter">
+                                        <option value="all">All Documents</option>
+                                        <option value="today">Today</option>
+                                        <option value="week">This Week</option>
+                                        <option value="month">This Month</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="completed-list" class="completed-list"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 
-        <!-- Validation Section -->
-        <section id="validation" class="content-section">
-            <div class="page-header">
-                <h1>Document Validation</h1>
-                <div class="validation-filters">
-                    <select id="validation-filter">
-                        <option value="all">All Documents</option>
-                        <option value="pending">Pending Validation</option>
-                        <option value="validated">Validated</option>
-                    </select>
-                </div>
+    <!-- Consultations Section -->
+    <section id="consultations" class="content-section">
+        <div class="page-header">
+            <h1>Consultations</h1>
+            <p>Record consultations, generate discharge notes, and manage patient care</p>
+        </div>
+
+        <!-- Consultation Tabs -->
+        <div class="consultation-tabs">
+            <div class="consultation-tabs__header">
+                <button class="tab-button active" data-tab="new-consultation">
+                    Consultation <span class="tab-count" id="active-consultations">0</span>
+                </button>
+                <button class="tab-button" data-tab="patient-review">
+                    Patient Review <span class="tab-count" id="review-pending">0</span>
+                </button>
+                <button class="tab-button" data-tab="discharge">
+                    Discharge <span class="tab-count" id="discharge-ready">0</span>
+                </button>
+
+                <!--- TODO: In next version, add schedule
+                
+                <button class="tab-button" data-tab="calendar">
+                    Today's Schedule <span class="tab-count" id="todays-appointments">0</span>
+                </button>
+                
+                -->
             </div>
 
-            <div class="validation-list" id="validation-list">
-                <!-- Validation items will be loaded here -->
+            <div class="consultation-tabs__content">
+                <!-- New Consultation Tab -->
+                <div id="new-consultation-tab" class="tab-content active">
+                    <div class="consultation-form-container">
+                        <h3>Start New Consultation</h3>
+                        <form id="new-consultation-form" class="consultation-form">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="consultation-patient">Select Patient *</label>
+                                    <select id="consultation-patient" name="patient_id" required>
+                                        <option value="">Choose a patient...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="consultation-type">Consultation Type *</label>
+                                    <select id="consultation-type" name="consultation_type" required>
+                                        <option value="">Select type...</option>
+                                        <option value="general">General Consultation</option>
+                                        <option value="followup">Follow-up</option>
+                                        <option value="emergency">Emergency</option>
+                                        <option value="routine">Routine Check</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="consultation-notes">Consultation Notes</label>
+                                <textarea id="consultation-notes" name="notes" rows="6" 
+                                    placeholder="Record consultation details, symptoms, examination findings..."></textarea>
+                            </div>
+                            
+                            <div class="consultation-actions">
+                                <button type="button" class="btn-secondary" id="start-audio-recording">
+                                    <i class="fas fa-microphone"></i> Start Audio Recording
+                                </button>
+                                <button type="submit" class="btn-primary">
+                                    <i class="fas fa-save"></i> Save Consultation
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Generate Discharge Tab -->
+                <div id="discharge-tab" class="tab-content">
+                    <div class="discharge-container">
+                        <h3>Generate Discharge Notes</h3>
+                        <div class="discharge-selection">
+                            <div class="form-group">
+                                <label for="discharge-patient">Select Patient with Completed Consultation</label>
+                                <select id="discharge-patient" name="patient_id">
+                                    <option value="">Choose patient...</option>
+                                </select>
+                            </div>
+                            <div id="patient-consultations" class="consultations-list">
+                                <!-- Consultations will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Patient Review Tab -->
+                <div id="patient-review-tab" class="tab-content">
+                    <div class="review-container">
+                        <h3>Patient Review</h3>
+                        <div class="review-search">
+                            <div class="form-group">
+                                <label for="review-patient-search">Search Patient</label>
+                                <input type="text" id="review-patient-search" placeholder="Search by name, CNP, or phone...">
+                            </div>
+                        </div>
+                        <div id="review-results" class="review-results">
+                            <div class="empty-state">
+                                <div class="empty-icon">🔍</div>
+                                <h4>Search for a patient to review their history</h4>
+                                <p>Enter patient name, CNP, or phone number above</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+
+                <!-- Today's Schedule Tab -->
+                
+                <!--- TODO: In next version, add schedule 
+                <div id="calendar-tab" class="tab-content">
+                    <div class="calendar-container">
+                        <h3>Today's Schedule</h3>
+                        <div class="calendar-integration">
+                            <div class="calendar-info">
+                                <p>View and manage your Google Calendar appointments</p>
+                                <div class="calendar-actions">
+                                    <a href="https://calendar.google.com" target="_blank" class="btn-primary">
+                                        <i class="fas fa-external-link-alt"></i> Open Google Calendar
+                                    </a>
+                                    <button class="btn-secondary" onclick="app.syncCalendar()">
+                                        <i class="fas fa-sync-alt"></i> Sync Appointments
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="todays-appointments-list" class="appointments-list">
+                                <div class="loading-placeholder">Loading today's appointments...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                -->
+
             </div>
-        </section>
+        </div>
+    </section>
+
     </main>
+
+    <!-- Patient Details Modal -->
+    <div id="patient-details-modal" class="modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h2>Patient Details</h2>
+                <button class="modal-close" onclick="closePatientDetailsModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="patient-details-content" id="patient-details-content">
+                <!-- Patient details will be loaded here -->
+            </div>
+        </div>
+    </div>
 
     <!-- Add Patient Modal -->
     <div id="add-patient-modal" class="modal">
@@ -196,28 +558,42 @@
                 </button>
             </div>
             <form id="add-patient-form" class="patient-form">
-                <div class="form-group">
-                    <label for="patient-given-name">Given Name / Prenume *</label>
-                    <input type="text" id="patient-given-name" name="given_name" required>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="patient-given-name">Given Name / Prenume *</label>
+                        <input type="text" id="patient-given-name" name="given_name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="patient-family-name">Family Name / Nume de familie *</label>
+                        <input type="text" id="patient-family-name" name="family_name" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="patient-birth-date">Birth Date</label>
+                        <input type="date" id="patient-birth-date" name="birth_date">
+                    </div>
+                    <div class="form-group">
+                        <label for="patient-cnp">CNP (Personal Code)</label>
+                        <input type="text" id="patient-cnp" name="cnp" placeholder="1234567890123">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="patient-phone">Phone Number / Telefon</label>
+                        <input type="tel" id="patient-phone" name="phone" placeholder="0712345678">
+                    </div>
+                    <div class="form-group">
+                        <label for="patient-email">Email Address</label>
+                        <input type="email" id="patient-email" name="email">
+                    </div>
                 </div>
                 <div class="form-group">
-                    <label for="patient-family-name">Family Name / Nume de familie *</label>
-                    <input type="text" id="patient-family-name" name="family_name" required>
-                </div>
-                <div class="form-group">
-                    <label for="patient-birth-date">Birth Date</label>
-                    <input type="date" id="patient-birth-date" name="birth_date">
-                </div>
-                <div class="form-group">
-                    <label for="patient-phone">
-                        Phone Number / Telefon
-                        <span class="help-icon" title="Any format accepted: Romanian, EU, international, or leave blank">?</span>
-                    </label>
-                    <input type="tel" id="patient-phone" name="phone" placeholder="0712345678, +49123456789, etc.">
-                </div>
-                <div class="form-group">
-                    <label for="patient-email">Email Address</label>
-                    <input type="email" id="patient-email" name="email">
+                    <label for="patient-insurance">Insurance Information</label>
+                    <div class="form-row">
+                        <input type="text" id="patient-insurance-number" name="insurance_number" placeholder="Insurance Number">
+                        <input type="text" id="patient-insurance-house" name="insurance_house" placeholder="Insurance House">
+                    </div>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="btn-secondary" onclick="closeAddPatientModal()">Cancel</button>
@@ -227,31 +603,43 @@
         </div>
     </div>
 
-    <!-- Document Validation Modal -->
-    <div id="validation-modal" class="modal">
-        <div class="modal-content large">
-            <div class="modal-header">
-                <h2>Document Validation</h2>
-                <button class="modal-close" onclick="closeValidationModal()">
-                    <i class="fas fa-times"></i>
-                </button>
+    <!-- Validation Modal -->
+    <div id="validation-modal" class="validation-modal" style="display: none;">
+        <div class="validation-modal__content">
+            <div class="validation-modal__header">
+                <button id="validation-back" class="back-button">← Back to list</button>
+                <h3 id="validation-title">Document Validation</h3>
             </div>
-            <div class="validation-content" id="validation-content">
-                <!-- Validation content will be loaded here -->
+            <div class="validation-modal__body">
+                <div class="validation-image">
+                    <img id="validation-preview" src="" alt="Document preview">
+                </div>
+                <div class="validation-form">
+                    <h4>OCR Results - Please verify and correct:</h4>
+                    <div id="validation-fields"></div>
+                    <div class="validation-actions">
+                        <button id="approve-validation" class="btn-success">Approve & Save</button>
+                        <button id="reject-validation" class="btn-danger">Reject - Manual Entry</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Loading Spinner -->
+    <!-- Loading Overlay -->
     <div id="loading" class="loading-overlay">
         <div class="spinner">
             <i class="fas fa-heartbeat"></i>
         </div>
+        <p>Processing...</p>
     </div>
 
     <!-- Toast Notifications -->
     <div id="toast-container" class="toast-container"></div>
 
+    <script src="/static/js/image-compression.js"></script>
+    <script src="/static/js/upload-handler.js"></script>
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/document-manager.js"></script>
 </body>
 </html>

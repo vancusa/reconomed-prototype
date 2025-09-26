@@ -29,6 +29,9 @@ class PatientResponse(PatientBase):
     class Config:
         from_attributes = True
 
+class PatientUpdate(PatientBase):
+    gdpr_consents: Optional[dict] = None
+
 # ----------------------------
 # User Schemas
 # ----------------------------

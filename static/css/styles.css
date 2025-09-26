@@ -746,6 +746,417 @@ body {
     }
 }
 
+/*New classes for mobile responsiveness and document managment*/
+/* Dashboard Enhancements */
+.stats-section {
+    margin-bottom: 2rem;
+}
+
+.stats-section h2 {
+    font-family: var(--font-family-heading);
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+    font-size: 1.5rem;
+}
+
+.dashboard-date {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.loading-placeholder {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* Navigation Mobile Improvements */
+@media (max-width: 768px) {
+    .nav-menu {
+        justify-content: space-between;
+    }
+    
+    .nav-link span {
+        font-size: 0.75rem;
+    }
+}
+
+/* Patient Section Enhancements */
+.page-title {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+}
+
+.patient-count {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.search-and-filters {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 2rem;
+    align-items: center;
+}
+
+.search-and-filters .search-bar {
+    flex: 1;
+    margin: 0;
+}
+
+.filters-section select {
+    padding: 0.5rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--border-radius);
+    background: var(--bg-content);
+}
+
+.patients-container {
+    position: relative;
+}
+
+/* Pagination */
+.pagination-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 2rem;
+    padding: 1rem 0;
+    border-top: 1px solid var(--border-light);
+}
+
+.pagination-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.btn-pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-default);
+    background: var(--bg-content);
+    color: var(--text-primary);
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-pagination:hover:not(:disabled) {
+    background: var(--primary);
+    color: white;
+    border-color: var(--primary);
+}
+
+.btn-pagination:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pagination-info {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+/* Consultations Section */
+.consultation-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 2rem;
+    margin-bottom: 3rem;
+}
+
+.consultation-card {
+    background: var(--bg-content);
+    border-radius: var(--border-radius);
+    padding: 2rem;
+    text-align: center;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+}
+
+.consultation-card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+}
+
+.consultation-icon {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1rem;
+    font-size: 2rem;
+}
+
+.consultation-card h3 {
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+    font-family: var(--font-family-heading);
+}
+
+.consultation-card p {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+    line-height: 1.5;
+}
+
+.recent-consultations {
+    margin-top: 3rem;
+}
+
+.recent-consultations h2 {
+    font-family: var(--font-family-heading);
+    color: var(--text-primary);
+    margin-bottom: 1.5rem;
+}
+
+.consultations-list {
+    background: var(--bg-content);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+    padding: 1.5rem;
+}
+
+/* Form Enhancements */
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+@media (max-width: 768px) {
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Processing Queue Enhancements */
+.queue-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--bg-main);
+    border: 1px solid var(--primary);
+    border-radius: var(--border-radius);
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.queue-summary h3 {
+    margin: 0;
+    color: var(--primary);
+}
+
+.queue-summary p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.completed-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+}
+
+.completed-filters select {
+    padding: 0.5rem;
+    border: 1px solid var(--border-default);
+    border-radius: var(--border-radius);
+    background: var(--bg-content);
+}
+
+/* Button Variations */
+.btn-success {
+    background: var(--success-text);
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--border-radius);
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-success:hover {
+    background: #047857;
+}
+
+.btn-danger {
+    background: var(--critical);
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--border-radius);
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-danger:hover {
+    background: #B91C1C;
+}
+
+/* Mobile Responsiveness Improvements */
+@media (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 1rem;
+    }
+    
+    .consultation-actions {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+    }
+    
+    .search-and-filters {
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    .pagination-container {
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    .queue-summary {
+        flex-direction: column;
+        text-align: center;
+        gap: 1rem;
+    }
+    
+    .completed-summary {
+        flex-direction: column;
+        gap: 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .consultation-card {
+        padding: 1.5rem;
+    }
+    
+    .consultation-icon {
+        width: 60px;
+        height: 60px;
+        font-size: 1.5rem;
+    }
+}
+
+/* Consultation classes */
+/* Consultation Tabs */
+.consultation-tabs {
+    background: var(--bg-content);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.consultation-tabs__header {
+    display: flex;
+    border-bottom: 1px solid var(--border-default);
+    background: #F9FAFB;
+}
+
+.consultation-tabs__content {
+    padding: 2rem;
+}
+
+.consultation-form-container,
+.discharge-container,
+.review-container,
+.calendar-container {
+    max-width: 800px;
+}
+
+.consultation-form {
+    background: var(--bg-main);
+    padding: 2rem;
+    border-radius: var(--border-radius);
+    border: 1px solid var(--border-light);
+}
+
+.consultation-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end;
+    margin-top: 2rem;
+}
+
+.review-search {
+    margin-bottom: 2rem;
+}
+
+.review-results {
+    min-height: 300px;
+}
+
+.calendar-integration {
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.calendar-info {
+    background: var(--bg-main);
+    padding: 1.5rem;
+    border-radius: var(--border-radius);
+    text-align: center;
+}
+
+.calendar-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-top: 1rem;
+}
+
+.appointments-list {
+    background: var(--bg-main);
+    border-radius: var(--border-radius);
+    padding: 1.5rem;
+    min-height: 200px;
+}
+
+@media (max-width: 768px) {
+    .consultation-actions {
+        flex-direction: column;
+    }
+    
+    .calendar-actions {
+        flex-direction: column;
+    }
+}
+
+.tab-count:empty,
+.tab-count[data-count="0"] {
+    display: none;
+}
+
 /* Utility Classes */
 .text-center { text-align: center; }
 .text-right { text-align: right; }

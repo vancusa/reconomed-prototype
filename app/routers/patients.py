@@ -7,7 +7,7 @@ import uuid
 from app.database import get_db
 from app.auth import get_current_user, get_any_staff
 from app.models import Patient, User, GDPRAuditLog
-from app.schemas import PatientCreate, PatientResponse
+from app.schemas import PatientCreate, PatientUpdate, PatientResponse
 
 from app.utils.romanian_validation import (
     validate_cnp, extract_birth_date_from_cnp, extract_gender_from_cnp,
@@ -270,6 +270,12 @@ async def get_patient(
         gdpr_consents=patient.gdpr_consents,
         created_at=patient.created_at
     )
+
+@router.put("/{patient_id}")
+async def update_patient(patient_id: str, patient_data: PatientUpdate, db: Session = Depends(get_db)):{
+# Implementation here
+}
+
 
 @router.get("/validate-cnp/{cnp}")
 async def validate_cnp_endpoint(cnp: str):

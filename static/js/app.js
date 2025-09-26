@@ -16,13 +16,23 @@ class ReconoMedApp {
             window.location.href = '/static/login.html';
             return;
         }
-        
+
+
+    setTabCount(elementId, count) {
+        const element = document.getElementById(elementId);
+        if (element) {
+            element.textContent = count;
+            element.setAttribute('data-count', count);
+        }
+}        
+
         this.setupEventListeners();
         this.setupNavigation();
         this.setupDragAndDrop();
         this.updateUserInterface();
         await this.loadInitialData();
         this.updateDashboardStats();
+        this.updateConsultationTabCounts();
     }
 
     checkAuthentication() {
@@ -655,12 +665,29 @@ class ReconoMedApp {
         }, 3000);
     }
 
-    updateDashboardStats() {
+    async updateDashboardStats() {
         document.getElementById('total-patients').textContent = this.patients.length;
         document.getElementById('total-documents').textContent = this.documents.length;
         // These would be calculated from real data
         document.getElementById('pending-validation').textContent = '3';
         document.getElementById('validated-documents').textContent = '12';
+        document.getElementById('active-consultations').textContent = count;
+        document.getElementById('active-consultations').setAttribute('data-count', count);
+    }
+
+    async updateConsultationTabCounts() {
+        try {
+            // For v1, use mock data since you don't have consultation endpoints yet
+            const activeConsultations = 0; // TODO: fetch from API
+            const dischargeReady = 0; // TODO: fetch from API  
+            const reviewPending = 0; // TODO: fetch from API
+
+            this.setTabCount('active-consultations', activeConsultations);
+            this.setTabCount('discharge-ready', dischargeReady);
+            this.setTabCount('review-pending', reviewPending);
+        } catch (error) {
+            console.error('Failed to update consultation tab counts:', error);
+        }
     }
 
     searchPatients(query) {
