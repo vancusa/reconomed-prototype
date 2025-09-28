@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/css/styles.css">
     <link rel="stylesheet" href="/static/css/document-manager.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 </head>
 <body>
     <!-- Navigation Header -->
@@ -39,7 +40,7 @@
                     <span class="user-name">Dr. Ionescu</span>
                     <span class="user-role">Doctor</span>
                 </div>
-                <button class="btn-logout" onclick="app.logout()">
+                <button class="btn-logout" id="logout-button">
                     <i class="fas fa-sign-out-alt"></i>
                 </button>
             </div>
@@ -54,8 +55,10 @@
                 <h1>Dashboard</h1>
                 <p>Today's healthcare activity overview</p>
                 <div class="dashboard-date">
-                    <i class="fas fa-calendar"></i>
-                    <span id="current-date"></span>
+                    <a href="https://calendar.google.com/" target="_blank" alt="Open Google Calendar">
+                            <i class="fas fa-calendar"></i>
+                    </a>
+                    <span id="date-time"></span>
                 </div>
             </div>
             
@@ -68,7 +71,7 @@
                             <i class="fas fa-user-md"></i>
                         </div>
                         <div class="stat-content">
-                            <h3 id="patients-today">-</h3>
+                            <h3 id="patients-today"></h3>
                             <p>Patients Seen Today</p>
                         </div>
                     </div>
@@ -78,7 +81,7 @@
                             <i class="fas fa-upload"></i>
                         </div>
                         <div class="stat-content">
-                            <h3 id="uploads-today">-</h3>
+                            <h3 id="uploads-today"></h3>
                             <p>Documents Uploaded</p>
                         </div>
                     </div>
@@ -88,7 +91,7 @@
                             <i class="fas fa-clock"></i>
                         </div>
                         <div class="stat-content">
-                            <h3 id="pending-processing">-</h3>
+                            <h3 id="pending-processing"></h3>
                             <p>Pending Processing</p>
                         </div>
                     </div>
@@ -98,54 +101,8 @@
                             <i class="fas fa-check-circle"></i>
                         </div>
                         <div class="stat-content">
-                            <h3 id="pending-validation">-</h3>
+                            <h3 id="pending-validation"></h3>
                             <p>Needs Validation</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Overall Stats -->
-            <div class="stats-section">
-                <h2>System Overview</h2>
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon patients">
-                            <i class="fas fa-users"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="total-patients">-</h3>
-                            <p>Total Patients</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon documents">
-                            <i class="fas fa-file-medical"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="total-documents">-</h3>
-                            <p>Total Documents</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon validated">
-                            <i class="fas fa-chart-bar"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="system-efficiency">-%</h3>
-                            <p>Processing Efficiency</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon pending">
-                            <i class="fas fa-tasks"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="workflow-status">-</h3>
-                            <p>Active Workflows</p>
                         </div>
                     </div>
                 </div>
@@ -188,6 +145,53 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Overall Stats -->
+            <div class="stats-section">
+                <h2>System Overview</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon patients">
+                            <i class="fas fa-users"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="total-patients"></h3>
+                            <p>Total Patients</p>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon documents">
+                            <i class="fas fa-file-medical"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="total-documents"></h3>
+                            <p>Total Documents</p>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon validated">
+                            <i class="fas fa-chart-bar"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="system-efficiency"></h3>
+                            <p>Processing Efficiency</p>
+                        </div>
+                    </div>
+                    
+                    <div class="stat-card">
+                        <div class="stat-icon pending">
+                            <i class="fas fa-tasks"></i>
+                        </div>
+                        <div class="stat-content">
+                            <h3 id="workflow-status"></h3>
+                            <p>Active Workflows</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
         </section>
 
         <!-- Patients Section -->
@@ -390,147 +394,146 @@
             </div>
         </section>
 
-    <!-- Consultations Section -->
-    <section id="consultations" class="content-section">
-        <div class="page-header">
-            <h1>Consultations</h1>
-            <p>Record consultations, generate discharge notes, and manage patient care</p>
-        </div>
-
-        <!-- Consultation Tabs -->
-        <div class="consultation-tabs">
-            <div class="consultation-tabs__header">
-                <button class="tab-button active" data-tab="new-consultation">
-                    Consultation <span class="tab-count" id="active-consultations">0</span>
-                </button>
-                <button class="tab-button" data-tab="patient-review">
-                    Patient Review <span class="tab-count" id="review-pending">0</span>
-                </button>
-                <button class="tab-button" data-tab="discharge">
-                    Discharge <span class="tab-count" id="discharge-ready">0</span>
-                </button>
-
-                <!--- TODO: In next version, add schedule
-                
-                <button class="tab-button" data-tab="calendar">
-                    Today's Schedule <span class="tab-count" id="todays-appointments">0</span>
-                </button>
-                
-                -->
+        <!-- Consultations Section -->
+        <section id="consultations" class="content-section">
+            <div class="page-header">
+                <h1>Consultations</h1>
+                <p>Record consultations, generate discharge notes, and manage patient care</p>
             </div>
 
-            <div class="consultation-tabs__content">
-                <!-- New Consultation Tab -->
-                <div id="new-consultation-tab" class="tab-content active">
-                    <div class="consultation-form-container">
-                        <h3>Start New Consultation</h3>
-                        <form id="new-consultation-form" class="consultation-form">
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="consultation-patient">Select Patient *</label>
-                                    <select id="consultation-patient" name="patient_id" required>
-                                        <option value="">Choose a patient...</option>
-                                    </select>
+            <!-- Consultation Tabs -->
+            <div class="consultation-tabs">
+                <div class="consultation-tabs__header">
+                    <button class="tab-button active" data-tab="new-consultation">
+                        Consultation <span class="tab-count" id="active-consultations">0</span>
+                    </button>
+                    <button class="tab-button" data-tab="patient-review">
+                        Patient Review <span class="tab-count" id="review-pending">0</span>
+                    </button>
+                    <button class="tab-button" data-tab="discharge">
+                        Discharge <span class="tab-count" id="discharge-ready">0</span>
+                    </button>
+
+                    <!--- TODO: In next version, add schedule
+                    
+                    <button class="tab-button" data-tab="calendar">
+                        Today's Schedule <span class="tab-count" id="todays-appointments">0</span>
+                    </button>
+                    
+                    -->
+                </div>
+
+                <div class="consultation-tabs__content">
+                    <!-- New Consultation Tab -->
+                    <div id="new-consultation-tab" class="tab-content active">
+                        <div class="consultation-form-container">
+                            <h3>Start New Consultation</h3>
+                            <form id="new-consultation-form" class="consultation-form">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="consultation-patient">Select Patient *</label>
+                                        <select id="consultation-patient" name="patient_id" required>
+                                            <option value="">Choose a patient...</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="consultation-type">Consultation Type *</label>
+                                        <select id="consultation-type" name="consultation_type" required>
+                                            <option value="">Select type...</option>
+                                            <option value="general">General Consultation</option>
+                                            <option value="followup">Follow-up</option>
+                                            <option value="emergency">Emergency</option>
+                                            <option value="routine">Routine Check</option>
+                                        </select>
+                                    </div>
                                 </div>
+                                
                                 <div class="form-group">
-                                    <label for="consultation-type">Consultation Type *</label>
-                                    <select id="consultation-type" name="consultation_type" required>
-                                        <option value="">Select type...</option>
-                                        <option value="general">General Consultation</option>
-                                        <option value="followup">Follow-up</option>
-                                        <option value="emergency">Emergency</option>
-                                        <option value="routine">Routine Check</option>
-                                    </select>
+                                    <label for="consultation-notes">Consultation Notes</label>
+                                    <textarea id="consultation-notes" name="notes" rows="6" 
+                                        placeholder="Record consultation details, symptoms, examination findings..."></textarea>
                                 </div>
-                            </div>
-                            
-                            <div class="form-group">
-                                <label for="consultation-notes">Consultation Notes</label>
-                                <textarea id="consultation-notes" name="notes" rows="6" 
-                                    placeholder="Record consultation details, symptoms, examination findings..."></textarea>
-                            </div>
-                            
-                            <div class="consultation-actions">
-                                <button type="button" class="btn-secondary" id="start-audio-recording">
-                                    <i class="fas fa-microphone"></i> Start Audio Recording
-                                </button>
-                                <button type="submit" class="btn-primary">
-                                    <i class="fas fa-save"></i> Save Consultation
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <!-- Generate Discharge Tab -->
-                <div id="discharge-tab" class="tab-content">
-                    <div class="discharge-container">
-                        <h3>Generate Discharge Notes</h3>
-                        <div class="discharge-selection">
-                            <div class="form-group">
-                                <label for="discharge-patient">Select Patient with Completed Consultation</label>
-                                <select id="discharge-patient" name="patient_id">
-                                    <option value="">Choose patient...</option>
-                                </select>
-                            </div>
-                            <div id="patient-consultations" class="consultations-list">
-                                <!-- Consultations will be loaded here -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Patient Review Tab -->
-                <div id="patient-review-tab" class="tab-content">
-                    <div class="review-container">
-                        <h3>Patient Review</h3>
-                        <div class="review-search">
-                            <div class="form-group">
-                                <label for="review-patient-search">Search Patient</label>
-                                <input type="text" id="review-patient-search" placeholder="Search by name, CNP, or phone...">
-                            </div>
-                        </div>
-                        <div id="review-results" class="review-results">
-                            <div class="empty-state">
-                                <div class="empty-icon">🔍</div>
-                                <h4>Search for a patient to review their history</h4>
-                                <p>Enter patient name, CNP, or phone number above</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-
-                <!-- Today's Schedule Tab -->
-                
-                <!--- TODO: In next version, add schedule 
-                <div id="calendar-tab" class="tab-content">
-                    <div class="calendar-container">
-                        <h3>Today's Schedule</h3>
-                        <div class="calendar-integration">
-                            <div class="calendar-info">
-                                <p>View and manage your Google Calendar appointments</p>
-                                <div class="calendar-actions">
-                                    <a href="https://calendar.google.com" target="_blank" class="btn-primary">
-                                        <i class="fas fa-external-link-alt"></i> Open Google Calendar
-                                    </a>
-                                    <button class="btn-secondary" onclick="app.syncCalendar()">
-                                        <i class="fas fa-sync-alt"></i> Sync Appointments
+                                
+                                <div class="consultation-actions">
+                                    <button type="button" class="btn-secondary" id="start-audio-recording">
+                                        <i class="fas fa-microphone"></i> Start Audio Recording
+                                    </button>
+                                    <button type="submit" class="btn-primary">
+                                        <i class="fas fa-save"></i> Save Consultation
                                     </button>
                                 </div>
-                            </div>
-                            <div id="todays-appointments-list" class="appointments-list">
-                                <div class="loading-placeholder">Loading today's appointments...</div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Generate Discharge Tab -->
+                    <div id="discharge-tab" class="tab-content">
+                        <div class="discharge-container">
+                            <h3>Generate Discharge Notes</h3>
+                            <div class="discharge-selection">
+                                <div class="form-group">
+                                    <label for="discharge-patient">Select Patient with Completed Consultation</label>
+                                    <select id="discharge-patient" name="patient_id">
+                                        <option value="">Choose patient...</option>
+                                    </select>
+                                </div>
+                                <div id="patient-consultations" class="consultations-list">
+                                    <!-- Consultations will be loaded here -->
+                                </div>
                             </div>
                         </div>
                     </div>
+
+                    <!-- Patient Review Tab -->
+                    <div id="patient-review-tab" class="tab-content">
+                        <div class="review-container">
+                            <h3>Patient Review</h3>
+                            <div class="review-search">
+                                <div class="form-group">
+                                    <label for="review-patient-search">Search Patient</label>
+                                    <input type="text" id="review-patient-search" placeholder="Search by name, CNP, or phone...">
+                                </div>
+                            </div>
+                            <div id="review-results" class="review-results">
+                                <div class="empty-state">
+                                    <div class="empty-icon">🔍</div>
+                                    <h4>Search for a patient to review their history</h4>
+                                    <p>Enter patient name, CNP, or phone number above</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+
+                    <!-- Today's Schedule Tab -->
+                    
+                    <!--- TODO: In next version, add schedule 
+                    <div id="calendar-tab" class="tab-content">
+                        <div class="calendar-container">
+                            <h3>Today's Schedule</h3>
+                            <div class="calendar-integration">
+                                <div class="calendar-info">
+                                    <p>View and manage your Google Calendar appointments</p>
+                                    <div class="calendar-actions">
+                                        <a href="https://calendar.google.com" target="_blank" class="btn-primary">
+                                            <i class="fas fa-external-link-alt"></i> Open Google Calendar
+                                        </a>
+                                        <button class="btn-secondary" onclick="app.syncCalendar()">
+                                            <i class="fas fa-sync-alt"></i> Sync Appointments
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="todays-appointments-list" class="appointments-list">
+                                    <div class="loading-placeholder">Loading today's appointments...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    -->
+
                 </div>
-                -->
-
             </div>
-        </div>
-    </section>
-
+        </section>
     </main>
 
     <!-- Patient Details Modal -->
@@ -637,9 +640,6 @@
     <!-- Toast Notifications -->
     <div id="toast-container" class="toast-container"></div>
 
-    <script src="/static/js/image-compression.js"></script>
-    <script src="/static/js/upload-handler.js"></script>
-    <script src="/static/js/app.js"></script>
-    <script src="/static/js/document-manager.js"></script>
+    <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

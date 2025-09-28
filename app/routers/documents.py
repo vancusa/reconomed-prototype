@@ -1,5 +1,6 @@
 """Document management endpoints"""
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
 import json
@@ -18,7 +19,7 @@ from app.services.enhanced_ocr import RomanianOCRProcessor
 from app.utils.file import validate_file_type, generate_unique_filename, save_uploaded_file
 
 router = APIRouter(
-    prefix="/documents",
+    #prefix="/documents",
     tags=["documents"],
     responses={404: {"description": "Not found"}},
 )
@@ -408,3 +409,121 @@ async def get_supported_document_types():
         ],
         "usage_note": "Provide hint_type parameter to OCR endpoint for better accuracy"
     }
+
+# ------------------------------------------------------
+# Get documents for specific patient
+# ------------------------------------------------------
+@router.get("/patients/{patient_id}/documents", response_model=List[UploadResponse])
+async def get_patient_documents(
+    patient_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    user = request.headers.get("X-User", "anonymous")
+    app_logger.debug(f"Fetching documents for patient {patient_id}")
+    audit_logger.info(f"user={user} action=get_patient_documents patient_id={patient_id}")
+
+    try:
+        # Get uploads for this patient
+        uploads = db.query(Upload).filter(Upload.patient_id == patient_id).all()
+        
+        # Convert to response format with status mapping
+        documents = []
+        for upload in uploads:
+            doc_data = {
+                "id": upload.id,
+                "name": upload.filename,
+                "original_filename": upload.filename,
+                "status": upload.ocr_status or "pending",
+                "file_size": upload.file_size,
+                "uploaded_at": upload.uploaded_at,
+                "document_type": upload.document_type
+            }
+            documents.append(doc_data)
+        
+        return documents
+
+    except Exception as e:
+        app_logger.error(f"Error fetching patient documents: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch patient documents")
+
+# ------------------------------------------------------
+# Download document file
+# ------------------------------------------------------
+@router.get("/documents/{doc_id}/download")
+async def download_document(
+    doc_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    user = request.headers.get("X-User", "anonymous")
+    audit_logger.info(f"user={user} action=download_document doc_id={doc_id}")
+
+    try:
+        # Find the upload record
+        upload = db.query(Upload).filter(Upload.id == doc_id).first()
+        if not upload:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Check if file exists
+        if not os.path.exists(upload.file_path):
+            raise HTTPException(status_code=404, detail="File not found on disk")
+
+        # Return file for download
+        from fastapi.responses import FileResponse
+        return FileResponse(
+            path=upload.file_path,
+            filename=upload.filename,
+            media_type='application/octet-stream'
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error downloading document: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Download failed")
+
+# ------------------------------------------------------
+# Validate document (approve/reject)
+# ------------------------------------------------------
+@router.post("/documents/{doc_id}/validate")
+async def validate_document(
+    doc_id: str,
+    body: dict,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    user = request.headers.get("X-User", "anonymous")
+    approved = body.get("approved", False)
+    
+    audit_logger.info(f"user={user} action=validate_document doc_id={doc_id} approved={approved}")
+
+    try:
+        # Find the upload record
+        upload = db.query(Upload).filter(Upload.id == doc_id).first()
+        if not upload:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Update validation status
+        if approved:
+            upload.ocr_status = "validated"
+        else:
+            upload.ocr_status = "rejected"
+        
+        db.commit()
+        db.refresh(upload)
+
+        # Return updated document data
+        return {
+            "id": upload.id,
+            "name": upload.filename,
+            "status": upload.ocr_status,
+            "validated_at": datetime.utcnow().isoformat(),
+            "validated_by": user
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        app_logger.error(f"Error validating document: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Validation failed")

@@ -18,7 +18,6 @@ from app.utils.gdpr_utils import (
 )
 
 router = APIRouter(
-    prefix="/patients",
     tags=["patients"],
     #dependencies=[Depends(get_any_staff)]  # Require staff authentication
 )

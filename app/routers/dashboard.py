@@ -5,8 +5,11 @@ from datetime import datetime
 from app.database import get_db
 from app.models import Patient, Document, Upload, Consultation
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
-
+router = APIRouter(
+    #prefix="/dashboard",
+    tags=["dashboard"],
+    responses={404: {"description": "Not found"}},
+)
 @router.get("/stats")
 async def get_dashboard_stats(db: Session = Depends(get_db)):
     today = datetime.now().date()

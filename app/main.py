@@ -49,8 +49,8 @@ from app.routers.clinics import router as clinics_router
 from app.routers.patients import router as patients_router
 from app.routers.documents import router as documents_router
 from app.routers.search import router as search_router
-from app.routers import dashboard
-
+from app.routers.dashboard import router as dashboard_router
+from app.routers.consultations import router as consultations_router
 
 # Create FastAPI app
 app = FastAPI(
@@ -74,15 +74,21 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
+) 
 
-# Include routers
-app.include_router(auth_router)
-app.include_router(clinics_router)
-app.include_router(patients_router)
-app.include_router(documents_router)
-app.include_router(search_router)
-app.include_router(dashboard.router)
+#------ ROUTES ------
+
+# API Configuration - centralized prefix management
+API_PREFIX = "/api"  # Change to "/api/v1" or "/api/v2" easily
+
+# Include all routers with consistent API prefix
+app.include_router(auth_router, prefix=f"{API_PREFIX}/auth", tags=["auth"])
+app.include_router(clinics_router, prefix=f"{API_PREFIX}/clinics", tags=["clinics"])
+app.include_router(patients_router, prefix=f"{API_PREFIX}/patients", tags=["patients"])
+app.include_router(documents_router, prefix=f"{API_PREFIX}/documents", tags=["documents"])
+app.include_router(search_router, prefix=f"{API_PREFIX}/search", tags=["search"])
+app.include_router(dashboard_router, prefix=f"{API_PREFIX}/dashboard", tags=["dashboard"])
+app.include_router(consultations_router, prefix=f"{API_PREFIX}/consultations", tags=["consultations"])
 
 # Create database tables on startup
 @app.on_event("startup")

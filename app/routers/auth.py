@@ -14,7 +14,7 @@ from app.models import User, Clinic
 from pydantic import BaseModel, EmailStr
 
 router = APIRouter(
-    prefix="/auth",
+    #prefix="/auth",
     tags=["authentication"]
 )
 

@@ -9,7 +9,7 @@ from app.models import Clinic, User
 from pydantic import BaseModel
 
 router = APIRouter(
-    prefix="/clinics",
+    #prefix="/clinics",
     tags=["clinics"]
 )
 

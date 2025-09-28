@@ -1,83 +1,58 @@
-// static/js/image-compression.js
-class ImageCompressor {
-    constructor(options = {}) {
-        this.maxSizeMB = options.maxSizeMB || 2;
-        this.maxWidth = options.maxWidth || 2048;
-        this.maxHeight = options.maxHeight || 2048;
-        this.quality = options.quality || 0.8;
-    }
+// image-compression.js
+// ES Module version
+// Utility functions to compress images before uploading
 
-    async compressFile(file) {
-        return new Promise((resolve, reject) => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
+/* *
+ * Compress an image file using a <canvas>.
+ * @param {File} file - The original image file
+ * @param {Object} options - Compression options
+ * @param {number} options.maxWidth - Max width for resized image
+ * @param {number} options.maxHeight - Max height for resized image
+ * @param {number} options.quality - Compression quality (0.0 - 1.0)
+ * @returns {Promise<File>} - A new File object with compressed image
+ */
+export async function compressImage(file, { maxWidth = 1280, maxHeight = 1280, quality = 0.8 } = {}) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        
+        reader.onload = event => {
             const img = new Image();
-
             img.onload = () => {
-                // Calculate new dimensions
-                let { width, height } = this.calculateDimensions(img.width, img.height);
-                
+                let { width, height } = img;
+
+                // Resize while keeping aspect ratio
+                if (width > maxWidth || height > maxHeight) {
+                    const ratio = Math.min(maxWidth / width, maxHeight / height);
+                    width = width * ratio;
+                    height = height * ratio;
+                }
+
+                // Draw image to canvas
+                const canvas = document.createElement('canvas');
                 canvas.width = width;
                 canvas.height = height;
-
-                // Draw and compress
+                const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                
-                canvas.toBlob((blob) => {
-                    if (blob) {
-                        // Create new file with compressed data
-                        const compressedFile = new File([blob], file.name, {
-                            type: file.type,
-                            lastModified: Date.now()
-                        });
+
+                // Export compressed blob
+                canvas.toBlob(
+                    blob => {
+                        if (!blob) {
+                            reject(new Error('Image compression failed.'));
+                            return;
+                        }
+                        const compressedFile = new File([blob], file.name, { type: file.type });
                         resolve(compressedFile);
-                    } else {
-                        resolve(file); // Fallback to original
-                    }
-                }, file.type, this.quality);
+                    },
+                    file.type,
+                    quality
+                );
             };
+            img.onerror = () => reject(new Error('Image loading failed.'));
+            img.src = event.target.result;
+        };
 
-            img.onerror = () => resolve(file); // Fallback to original
-            img.src = URL.createObjectURL(file);
-        });
-    }
-
-    calculateDimensions(width, height) {
-        const ratio = width / height;
-        
-        if (width > this.maxWidth) {
-            width = this.maxWidth;
-            height = width / ratio;
-        }
-        
-        if (height > this.maxHeight) {
-            height = this.maxHeight;
-            width = height * ratio;
-        }
-        
-        return { width: Math.round(width), height: Math.round(height) };
-    }
-
-    async compressMultiple(files, onProgress = null) {
-        const compressed = [];
-        
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            if (onProgress) onProgress(i, files.length, file.name);
-            
-            const compressedFile = await this.compressFile(file);
-            compressed.push({
-                original: file,
-                compressed: compressedFile,
-                originalSize: file.size,
-                compressedSize: compressedFile.size,
-                compressionRatio: ((file.size - compressedFile.size) / file.size * 100).toFixed(1)
-            });
-        }
-        
-        return compressed;
-    }
+        reader.onerror = () => reject(new Error('File reading failed.'));
+        reader.readAsDataURL(file);
+    });
 }
-
-// Global instance
-window.imageCompressor = new ImageCompressor();
