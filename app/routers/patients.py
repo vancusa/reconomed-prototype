@@ -1,13 +1,14 @@
 """Enhanced patient management with Romanian fields and GDPR compliance"""
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import List, Optional
 import uuid
 
 from app.database import get_db
 from app.auth import get_current_user, get_any_staff
 from app.models import Patient, User, GDPRAuditLog
-from app.schemas import PatientCreate, PatientUpdate, PatientResponse
+from app.schemas import PatientCreate, PatientUpdate, PatientResponse, PaginatedPatientsResponse
 
 from app.utils.romanian_validation import (
     validate_cnp, extract_birth_date_from_cnp, extract_gender_from_cnp,
@@ -150,6 +151,7 @@ async def create_patient(
         created_at=new_patient.created_at
     )
 
+""" OLD ROUTE
 @router.get("/", response_model=List[PatientResponse])
 async def get_patients(
     skip: int = Query(0, ge=0),
@@ -164,7 +166,7 @@ async def get_patients(
     if not current_user:
         raise HTTPException(status_code=500, detail="Demo user not found")
 
-    """Get patients for current user's clinic with search capability"""
+    #Get patients for current user's clinic with search capability
     
     # Base query - clinic isolation
     query = db.query(Patient).filter(Patient.clinic_id == current_user.clinic_id)
@@ -202,6 +204,7 @@ async def get_patients(
         )
         for patient in patients
     ]
+"""
 
 @router.get("/{patient_id}", response_model=PatientResponse)
 async def get_patient(
@@ -275,6 +278,82 @@ async def update_patient(patient_id: str, patient_data: PatientUpdate, db: Sessi
 # Implementation here
 }
 
+@router.get("/", response_model=PaginatedPatientsResponse)
+async def get_patients(
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, le=100, description="Items per page"),
+    search: Optional[str] = Query(None, min_length=1, max_length=100),
+    sort_by: str = Query("name", regex="^(name|recent|activity)$"),
+    db: Session = Depends(get_db)
+):
+    # Get demo doctor for testing
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    if not current_user:
+        raise HTTPException(status_code=500, detail="Demo user not found")
+
+    # Base query - clinic isolation
+    query = db.query(Patient).filter(Patient.clinic_id == current_user.clinic_id)
+    
+    # Add search filter
+    if search:
+        search_term = f"%{search.strip().lower()}%"
+        query = query.filter(
+            or_(
+                Patient.family_name.ilike(search_term),
+                Patient.given_name.ilike(search_term),
+                Patient.cnp.like(f"%{search.strip()}%"),
+                Patient.phone.like(f"%{search.strip()}%")
+            )
+        )
+
+    # Apply sorting
+    if sort_by == "name":
+        query = query.order_by(Patient.family_name, Patient.given_name)
+    elif sort_by == "recent":
+        query = query.order_by(Patient.created_at.desc())
+    elif sort_by == "activity":
+        # For now, same as recent - later can join with consultations table
+        query = query.order_by(Patient.created_at.desc())
+    
+    # Get total count before pagination
+    total = query.count()
+    
+    # Calculate pagination
+    offset = (page - 1) * per_page
+    total_pages = (total + per_page - 1) // per_page
+    
+    # Apply pagination and ordering
+    patients = query.order_by(Patient.family_name, Patient.given_name).offset(offset).limit(per_page).all()
+    
+    # Convert to response format
+    patient_responses = [
+        PatientResponse(
+            id=patient.id,
+            clinic_id=patient.clinic_id,
+            family_name=patient.family_name,
+            given_name=patient.given_name,
+            birth_date=patient.birth_date,
+            cnp=patient.cnp,
+            insurance_number=patient.insurance_number,
+            insurance_house=patient.insurance_house,
+            phone=patient.phone,
+            email=patient.email,
+            address=patient.address,
+            gdpr_consents=patient.gdpr_consents,
+            created_at=patient.created_at
+        )
+        for patient in patients
+    ]
+    
+    return PaginatedPatientsResponse(
+        patients=patient_responses,
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=total_pages,
+        has_next=page < total_pages,
+        has_prev=page > 1
+    )
 
 @router.get("/validate-cnp/{cnp}")
 async def validate_cnp_endpoint(cnp: str):

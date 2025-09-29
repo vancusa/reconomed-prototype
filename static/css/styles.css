@@ -158,12 +158,12 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: 2rem;
+    margin-bottom: 1rem;
 }
 
 .page-header h1 {
     font-family: var(--font-family-heading);
-    font-size: 2rem;
+    font-size: 1.75rem;
     font-weight: 700;
     color: var(--text-primary);
     margin-bottom: 0.5rem;
@@ -361,14 +361,14 @@ body {
 /* Patients Grid */
 .patients-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 1rem;
 }
 
-.patient-card {
+.patient-card { 
     background: var(--bg-content);
     border-radius: var(--border-radius);
-    padding: 1.5rem;
+    padding: 1rem;
     box-shadow: var(--shadow);
     transition: var(--transition);
 }
@@ -381,7 +381,7 @@ body {
     display: flex;
     align-items: center;
     gap: 1rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.75rem;
 }
 
 .patient-avatar {
@@ -725,10 +725,6 @@ body {
     
     .stats-grid {
         grid-template-columns: repeat(2, 1fr);
-    }
-    
-    .patients-grid {
-        grid-template-columns: 1fr;
     }
     
     .modal-content {

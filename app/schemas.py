@@ -32,6 +32,15 @@ class PatientResponse(PatientBase):
 class PatientUpdate(PatientBase):
     gdpr_consents: Optional[dict] = None
 
+class PaginatedPatientsResponse(BaseModel):
+    patients: List[PatientResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+    has_next: bool
+    has_prev: bool
+
 # ----------------------------
 # User Schemas
 # ----------------------------

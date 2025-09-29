@@ -22,10 +22,23 @@ export class PatientManager {
         this.app = app;
         this.patients = [];
 
+        //for showing patients with pagination:
+        this.currentPage = 1;
+        this.perPage = 8;
+        this.totalPages = 1;
+        this.totalPatients = 0;
+        this.hasNext = false;
+        this.hasPrev = false;
+
         // DOM references
         this.gridContainer = document.getElementById('patients-grid');
         this.addForm = document.getElementById('add-patient-form');
         this.searchInput = document.getElementById('patient-search');
+        this.sortSelect = document.getElementById('patient-sort');
+
+        //DOM pagination references
+        this.paginationContainer = document.getElementById('patients-pagination');
+        this.patientCountDisplay = document.getElementById('patient-count-display');
     }
 
     // -------------------------------------------------------------------------
@@ -39,28 +52,159 @@ export class PatientManager {
             });
         }
 
+        //console.log('PatientManager init called');
+        //console.log('Search input found:', this.searchInput);
+
         if (this.searchInput) {
+            //console.log('Adding search listener');
+            // Debounced search
+            // Debouncing = Instead of running the search function immediately every time a user types a character 
+            // (which can be resource-intensive, especially for network requests), debouncing ensures the function 
+            // is only executed after a specific period of inactivity has passed since the last event (e.g., the last keypress).
+            let searchTimeout;
+        
             this.searchInput.addEventListener('input', (e) => {
-                this.searchPatients(e.target.value);
+                const value = e.target.value;  // capture immediately
+                //console.log('Search input detected:', value);
+                //console.log('Clearing existing timeout...');
+                clearTimeout(searchTimeout);
+                //console.log('Setting new timeout...');
+                searchTimeout = setTimeout(() => {
+                    //console.log('--- DEBOUNCED SEARCH EXECUTING ---')
+                    this.searchPatients(value);
+                }, 300);
+        });
+        // Sort change handler
+        if (this.sortSelect) {
+            this.sortSelect.addEventListener('change', (e) => {
+                this.currentSort = e.target.value;
+                this.loadPatients(1, this.searchInput?.value || '');
             });
         }
     }
 
+    // Pagination button handlers
+    const prevBtn = document.getElementById('patients-prev');
+    const nextBtn = document.getElementById('patients-next');
+    
+    if (prevBtn) {
+        prevBtn.addEventListener('click', () => this.previousPage());
+    }
+    
+    if (nextBtn) {
+        nextBtn.addEventListener('click', () => this.nextPage());
+    }
+}
+
     // -------------------------------------------------------------------------
     // Data Loading
     // -------------------------------------------------------------------------
-    async loadPatients() {
+    async loadPatients(page = 1, searchQuery = '') {
         try {
-            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.patients));
+            //console.log('loadPatients called - page:', page, 'search:', searchQuery);
+            // Build URL with pagination parameters
+            let url = apiUrl(API_CONFIG.ENDPOINTS.patients, ``);
+            const params = new URLSearchParams({
+                page: page,
+                per_page: this.perPage
+            });
+            
+            if (searchQuery) {
+                params.append('search', searchQuery);
+            }
+            
+            url += `?${params.toString()}`;
+            
+            //console.log('Fetching URL:', url);
+
+            const response = await fetch(url);
             if (!response.ok) throw new Error('Failed to load patients');
 
-            this.patients = await response.json();
+            const data = await response.json();
+            
+            // Update state from paginated response
+            this.patients = data.patients;
+            this.currentPage = data.page;
+            this.totalPages = data.total_pages;
+            this.totalPatients = data.total;
+            this.hasNext = data.has_next;
+            this.hasPrev = data.has_prev;
+            
+            // Update UI
             this.renderPatients();
+            this.updatePaginationControls();
+            this.updatePatientCount();
+
         } catch (err) {
             console.error(err);
             showToast('Could not load patients', 'error');
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Pagination Controls
+    // -------------------------------------------------------------------------
+    updatePaginationControls() {
+        if (!this.paginationContainer) return;
+        
+        // Show pagination only if there's more than one page
+        if (this.totalPages <= 1) {
+            this.paginationContainer.style.display = 'none';
+            return;
+        }
+        
+        this.paginationContainer.style.display = 'flex';
+        
+        // Update pagination info
+        const showingStart = (this.currentPage - 1) * this.perPage + 1;
+        const showingEnd = Math.min(this.currentPage * this.perPage, this.totalPatients);
+        
+        document.getElementById('patients-showing').textContent = 
+            `${showingStart}-${showingEnd}`;
+        document.getElementById('patients-total').textContent = this.totalPatients;
+        document.getElementById('patients-page').textContent = this.currentPage;
+        
+        // Enable/disable pagination buttons
+        const prevBtn = document.getElementById('patients-prev');
+        const nextBtn = document.getElementById('patients-next');
+        
+        if (prevBtn) prevBtn.disabled = !this.hasPrev;
+        if (nextBtn) nextBtn.disabled = !this.hasNext;
+    }
+
+    updatePatientCount() {
+        if (this.patientCountDisplay) {
+            this.patientCountDisplay.textContent = 
+                `${this.totalPatients} patient${this.totalPatients !== 1 ? 's' : ''}`;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Pagination Navigation
+    // -------------------------------------------------------------------------
+    async nextPage() {
+        if (this.hasNext) {
+            await this.loadPatients(this.currentPage + 1, this.searchInput?.value || '');
+        }
+    }
+
+    async previousPage() {
+        if (this.hasPrev) {
+            await this.loadPatients(this.currentPage - 1, this.searchInput?.value || '');
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Search with Pagination Reset
+    // -------------------------------------------------------------------------
+    async searchPatients(query) {
+        // Reset to page 1 when searching
+        
+        //console.log('searchPatients called with:', query);
+        
+        await this.loadPatients(1, query);
+    }
+
 
     // -------------------------------------------------------------------------
     // Rendering
@@ -77,9 +221,8 @@ export class PatientManager {
         this.patients.forEach(patient => {
             const card = document.createElement('div');
             card.className = 'patient-card';
-            const initials = (patient.given_name[0] || '') + (patient.family_name[0] || '');
+            //const initials = (patient.given_name[0] || '') + (patient.family_name[0] || '');
             card.innerHTML = `
-                <div class="patient-avatar">${initials}</div>
                 <div class="patient-info">
                     <h3>${patient.given_name} ${patient.family_name}</h3>
                     <p>${patient.birth_date || ''} ${patient.phone ? '• ' + patient.phone : ''}</p>
@@ -96,19 +239,6 @@ export class PatientManager {
         this.gridContainer.querySelectorAll('button').forEach(btn => {
             btn.addEventListener('click', (e) => this.handleAction(e));
         });
-    }
-
-    // -------------------------------------------------------------------------
-    // Search/Filter
-    // -------------------------------------------------------------------------
-    searchPatients(query) {
-        const normalizedQuery = query.toLowerCase();
-        const filtered = this.patients.filter(patient => {
-            const fullName = `${patient.given_name} ${patient.family_name}`.toLowerCase();
-            return fullName.includes(normalizedQuery) ||
-                (patient.phone && patient.phone.includes(normalizedQuery));
-        });
-        this.renderPatients(filtered);
     }
 
     // -------------------------------------------------------------------------
