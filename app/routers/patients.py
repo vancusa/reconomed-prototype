@@ -274,9 +274,120 @@ async def get_patient(
     )
 
 @router.put("/{patient_id}")
-async def update_patient(patient_id: str, patient_data: PatientUpdate, db: Session = Depends(get_db)):{
-# Implementation here
-}
+async def update_patient(
+    patient_id: str, 
+    patient_data: PatientUpdate, 
+    db: Session = Depends(get_db)
+):
+    """Update patient information"""
+    # Get demo doctor for testing
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    if not current_user:
+        raise HTTPException(status_code=500, detail="Demo user not found")
+    
+    # Find patient with clinic isolation
+    patient = db.query(Patient).filter(
+        Patient.id == patient_id,
+        Patient.clinic_id == current_user.clinic_id
+    ).first()
+    
+    if not patient:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found"
+        )
+    
+    # Validation errors
+    validation_errors = []
+    
+    # Validate CNP if provided and changed
+    if patient_data.cnp and patient_data.cnp != patient.cnp:
+        is_valid_cnp, cnp_error = validate_cnp(patient_data.cnp)
+        if not is_valid_cnp:
+            validation_errors.append(f"CNP: {cnp_error}")
+        
+        # Check for duplicate CNP
+        existing_cnp = db.query(Patient).filter(
+            Patient.cnp == patient_data.cnp,
+            Patient.clinic_id == current_user.clinic_id,
+            Patient.id != patient_id
+        ).first()
+        if existing_cnp:
+            validation_errors.append("CNP already exists for another patient")
+    
+    # Validate phone if provided
+    if patient_data.phone:
+        is_valid_phone, phone_error = validate_romanian_phone(patient_data.phone)
+        if not is_valid_phone:
+            validation_errors.append(f"Phone: {phone_error}")
+    
+    # Validate insurance if provided
+    if patient_data.insurance_number:
+        is_valid_insurance, insurance_error = validate_insurance_number(patient_data.insurance_number)
+        if not is_valid_insurance:
+            validation_errors.append(f"Insurance: {insurance_error}")
+    
+    if validation_errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation errors: {', '.join(validation_errors)}"
+        )
+    
+    # Update patient fields
+    if patient_data.given_name is not None:
+        patient.given_name = patient_data.given_name.strip().title()
+    if patient_data.family_name is not None:
+        patient.family_name = patient_data.family_name.strip().title()
+    if patient_data.birth_date is not None:
+        patient.birth_date = patient_data.birth_date
+    if patient_data.cnp is not None:
+        patient.cnp = patient_data.cnp
+    if patient_data.phone is not None:
+        patient.phone = patient_data.phone
+    if patient_data.email is not None:
+        patient.email = patient_data.email.lower() if patient_data.email else None
+    if patient_data.insurance_number is not None:
+        patient.insurance_number = patient_data.insurance_number
+    if patient_data.insurance_house is not None:
+        patient.insurance_house = patient_data.insurance_house
+    
+    db.commit()
+    db.refresh(patient)
+    
+    # Audit log
+    audit_log = GDPRAuditLog(
+        clinic_id=current_user.clinic_id,
+        user_id=current_user.id,
+        patient_id=patient.id,
+        action="patient_updated",
+        legal_basis="consent",
+        data_category="personal_medical",
+        details={
+            "updated_by": current_user.full_name,
+            "update_method": "manual_edit"
+        }
+    )
+    db.add(audit_log)
+    db.commit()
+    
+    return {
+        "message": "Patient updated successfully",
+        "patient": PatientResponse(
+            id=patient.id,
+            clinic_id=patient.clinic_id,
+            family_name=patient.family_name,
+            given_name=patient.given_name,
+            birth_date=patient.birth_date,
+            cnp=patient.cnp,
+            insurance_number=patient.insurance_number,
+            insurance_house=patient.insurance_house,
+            phone=patient.phone,
+            email=patient.email,
+            address=patient.address,
+            gdpr_consents=patient.gdpr_consents,
+            created_at=patient.created_at
+        )
+    }
 
 @router.get("/", response_model=PaginatedPatientsResponse)
 async def get_patients(

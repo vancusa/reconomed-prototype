@@ -3,7 +3,7 @@ import { checkAuthentication, logout } from './auth.js';
 import { Navigation } from './navigation.js';
 import { PatientManager } from './patients.js';
 import { DocumentManager } from './documents.js';
-import { showLoading, hideLoading, showToast } from './ui.js';
+import { showLoading, hideLoading, showToast, showModal, hideModal} from './ui.js';
 import { startLiveClock } from './utils.js';
 import { initDocumentTabs } from './document-manager.js';
 import { initConsultationTabs } from './consultations.js';
@@ -165,6 +165,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Make app available globally for HTML onclick handlers
 window.app = app;
+
+// =========================================================================
+// GLOBAL MODAL FUNCTIONS for HTML onclick handlers
+// =========================================================================
+window.closeAddPatientModal = function() {
+    const form = document.getElementById('add-patient-form');
+    const modal = document.getElementById('add-patient-modal');
+    const modalTitle = modal.querySelector('.modal-header h2');
+    const submitButton = form.querySelector('button[type="submit"]');
+    
+    // Reset to add mode
+    modalTitle.textContent = 'Add New Patient';
+    submitButton.innerHTML = '<i class="fas fa-plus"></i> Add Patient';
+    form.dataset.mode = 'create';
+    delete form.dataset.patientId;
+    form.reset();
+    
+    hideModal('add-patient-modal');
+};
+
+window.showAddPatientModal = function() {
+    const form = document.getElementById('add-patient-form');
+    const modal = document.getElementById('add-patient-modal');
+    const modalTitle = modal.querySelector('.modal-header h2');
+    const submitButton = form.querySelector('button[type="submit"]');
+    
+    // Ensure we're in add mode
+    modalTitle.textContent = 'Add New Patient';
+    submitButton.innerHTML = '<i class="fas fa-plus"></i> Add Patient';
+    form.dataset.mode = 'create';
+    delete form.dataset.patientId;
+    form.reset();
+    
+    showModal('add-patient-modal');
+};
+
+// =========================================================================
+// END GLOBAL MODAL FUNCTIONS
+// =========================================================================
+
 
 // Prepare for logout: Get the button element
 const logoutButton = document.getElementById('logout-button');

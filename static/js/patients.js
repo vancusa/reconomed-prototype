@@ -11,7 +11,7 @@
 //
 // Assumes HTML structure contains:
 //   - <div id="patients-grid"></div> for patient cards
-//   - <form id="add-patient-form"></form> for adding patients
+//   - <form id="add-patient-form"></form> for adding / editing patients
 //   - <input id="patient-search" /> for live search/filtering
 // -----------------------------------------------------------------------------
 
@@ -46,10 +46,14 @@ export class PatientManager {
     // -------------------------------------------------------------------------
     init() {
         if (this.addForm) {
-            this.addForm.addEventListener('submit', (e) => {
-                e.preventDefault();
-                this.addPatient();
-            });
+            this.addForm.onsubmit = (e) => {
+            e.preventDefault();
+            this.addPatient();
+        };
+        //    this.addForm.addEventListener('submit', (e) => {
+        //        e.preventDefault();
+        //        this.addPatient();
+        //    });
         }
 
         //console.log('PatientManager init called');
@@ -230,6 +234,7 @@ export class PatientManager {
                 <div class="patient-actions">
                     <button class="btn btn-sm btn-primary" data-action="view" data-id="${patient.id}">View</button>
                     <button class="btn btn-sm btn-secondary" data-action="edit" data-id="${patient.id}">Edit</button>
+                    <button class="btn btn-sm btn-tertiary" data-action="gdpr" data-id="${patient.id}">GDPR</button>
                 </div>
             `;
             this.gridContainer.appendChild(card);
@@ -242,34 +247,64 @@ export class PatientManager {
     }
 
     // -------------------------------------------------------------------------
-    // Form Submission / Add Patient
+    // Form Submission / Add or Edit Patient
     // -------------------------------------------------------------------------
     async addPatient() {
         if (!this.addForm) return;
+        
         const formData = new FormData(this.addForm);
         const patientData = Object.fromEntries(formData.entries());
+        
+        // Check if we're editing or creating
+        const mode = this.addForm.dataset.mode || 'create';
+        const patientId = this.addForm.dataset.patientId;
 
         try {
-            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.patients), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(patientData)
-            });
-            if (!response.ok) throw new Error('Failed to add patient');
+            let response;
+            
+            if (mode === 'edit') {
+                // Update existing patient
+                response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.patients, `${patientId}`), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(patientData)
+                });
+            } else {
+                // Create new patient
+                response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.patients, ``), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(patientData)
+                });
+            }
+            console.log(response);
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || `Failed to ${mode} patient`);
+            }
 
-            const newPatient = await response.json();
-            this.patients.push(newPatient);
-            this.renderPatients();
+            // Success - refresh patient list
+            await this.loadPatients(this.currentPage, this.searchInput?.value || '');
+            
+            // Reset form and modal
             this.addForm.reset();
-            showToast('Patient added successfully', 'success');
+            this.addForm.dataset.mode = 'create';
+            delete this.addForm.dataset.patientId;
+            hideModal('add-patient-modal');
+            
+            showToast(
+                mode === 'edit' ? 'Patient updated successfully' : 'Patient added successfully', 
+                'success'
+            );
+            
         } catch (err) {
             console.error(err);
-            showToast('Failed to add patient', 'error');
+            showToast(err.message || 'Failed to save patient', 'error');
         }
     }
 
     // -------------------------------------------------------------------------
-    // Actions: view/edit (placeholder for future)
+    // Actions: view/edit/gdpr
     // -------------------------------------------------------------------------
     handleAction(e) {
         const action = e.target.dataset.action;
@@ -277,13 +312,76 @@ export class PatientManager {
 
         switch (action) {
             case 'view':
-                showToast(`Viewing patient ${id}`, 'info');
+                this.viewPatient(id);
                 break;
             case 'edit':
-                showToast(`Editing patient ${id}`, 'info');
+                this.editPatient(id);
+                break;
+            case 'gdpr':
+                this.manageGDPR(id);
                 break;
             default:
                 console.warn('Unknown patient action:', action);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Edit Patient
+    // -------------------------------------------------------------------------
+    async editPatient(patientId) {
+        try {
+            // Fetch patient details
+            const url = apiUrl(API_CONFIG.ENDPOINTS.patients, `${patientId}`);
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Failed to load patient');
+            
+            const patient = await response.json();
+            
+            // Get the modal and form
+            const modal = document.getElementById('add-patient-modal');
+            const form = document.getElementById('add-patient-form');
+            const modalTitle = modal.querySelector('.modal-header h2');
+            const submitButton = form.querySelector('button[type="submit"]');
+            
+            // Change modal to edit mode
+            modalTitle.textContent = 'Edit Patient';
+            submitButton.textContent = 'Save Changes';
+            submitButton.innerHTML = '<i class="fas fa-save"></i> Save Changes';
+            
+            // Populate form with patient data
+            document.getElementById('patient-given-name').value = patient.given_name || '';
+            document.getElementById('patient-family-name').value = patient.family_name || '';
+            document.getElementById('patient-birth-date').value = patient.birth_date || '';
+            document.getElementById('patient-cnp').value = patient.cnp || '';
+            document.getElementById('patient-phone').value = patient.phone || '';
+            document.getElementById('patient-email').value = patient.email || '';
+            document.getElementById('patient-insurance-number').value = patient.insurance_number || '';
+            document.getElementById('patient-insurance-house').value = patient.insurance_house || '';
+            
+            // Store patient ID in form for submission
+            form.dataset.patientId = patient.id;
+            form.dataset.mode = 'edit';
+            
+            // Show modal
+            showModal('add-patient-modal');
+            
+        } catch (err) {
+            console.error('Failed to load patient for editing:', err);
+            showToast('Failed to load patient details', 'error');
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // View Patient (placeholder for now)
+    // -------------------------------------------------------------------------
+    viewPatient(patientId) {
+        showToast(`View patient ${patientId} - coming soon`, 'info');
+    }
+
+    // -------------------------------------------------------------------------
+    // Manage GDPR (placeholder for now)
+    // -------------------------------------------------------------------------
+    manageGDPR(patientId) {
+        showToast(`GDPR management for ${patientId} - coming soon`, 'info');
     }
 }
