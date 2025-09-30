@@ -1,5 +1,5 @@
 # app/schemas.py
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, conint
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
 
@@ -143,4 +143,55 @@ class UploadResponse(UploadBase):
     original_filename: Optional[str] = None
 
     class Config:
+        from_attributes = True
+
+# ----------------------------
+# Clinic Schemas
+# ----------------------------
+
+class ClinicBase(BaseModel):
+    """
+    Base schema for clinic attributes that can be created or updated.
+    """
+    name: str = Field(..., max_length=255, description="The official name of the clinic.")
+    country: str = Field("RO", max_length=10, description="The two-letter country code.")
+    
+    # GDPR templates and retention policies are JSON fields
+    gdpr_templates: Optional[Dict[str, Any]] = Field(None, description="Custom GDPR consent templates (JSON data).")
+    retention_policies: Optional[Dict[str, Any]] = Field(None, description="Document retention policies (JSON data).")
+    
+    # max_uploads can be set during creation/update
+    # conint is used for constrained integers (must be >= 0)
+    max_uploads: conint(ge=0) = Field(20, description="Maximum number of active documents allowed for the clinic.")
+
+class ClinicCreate(ClinicBase):
+    """
+    Schema for creating a new Clinic. Inherits all fields from ClinicBase.
+    """
+    # No additional fields needed for simple creation over the base fields
+    pass
+
+class ClinicResponse(ClinicBase):
+    """
+    Schema for returning Clinic data from the API.
+    Includes all DB-generated fields and relationship counts/summaries.
+    """
+    id: str = Field(..., description="Unique identifier for the clinic (UUID).")
+    created_at: datetime = Field(..., description="Timestamp of when the clinic was created.")
+    
+    # Fields that track current status (managed by the application logic)
+    current_upload_count: int = Field(0, description="Current number of active uploads/documents.")
+    user_count: int = Field(0, description="Number of users in this clinic")
+    patient_count: int = Field(0, description="Number of patients in this clinic")
+
+    # You typically don't return the full related objects (users, patients, etc.) 
+    # in the main response to prevent huge payloads, but you can include their counts.
+    # If you *did* want to include them, you'd need forward references or separate schema imports.
+    # For a lean schema, we'll just enable ORM mode (or from_attributes)
+    
+    # Pydantic Configuration for mapping to SQLAlchemy model
+    class Config:
+        # For Pydantic v1
+        #orm_mode = True
+        #For Pydantic v2
         from_attributes = True

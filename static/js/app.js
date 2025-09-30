@@ -206,6 +206,39 @@ window.showAddPatientModal = function() {
 // =========================================================================
 
 
+// =========================================================================
+// Global functions for view patient modal
+// =========================================================================
+window.closeViewPatientModal = function() {
+    hideModal('view-patient-modal');
+};
+
+window.app.editPatientFromView = () => app.patientManager.editPatientFromView();
+window.app.manageGDPRFromView = () => app.patientManager.manageGDPRFromView();
+// =========================================================================
+// END Global functions for view patient modal
+// =========================================================================
+
+// =========================================================================
+// GDPR modal functions
+// =========================================================================
+window.closeGDPRModal = function() {
+    hideModal('gdpr-modal');
+};
+
+window.closeWithdrawConsentModal = function() {
+    hideModal('withdraw-consent-modal');
+    document.getElementById('withdraw-consent-form').reset();
+};
+
+window.app.withdrawConsent = (type) => app.patientManager.withdrawConsent(type);
+window.app.grantConsent = (type) => app.patientManager.grantConsent(type);
+window.app.renewConsent = (type) => app.patientManager.renewConsent(type);
+// =========================================================================
+// end GDPR modal
+// =========================================================================
+
+
 // Prepare for logout: Get the button element
 const logoutButton = document.getElementById('logout-button');
 

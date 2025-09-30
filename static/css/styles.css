@@ -216,9 +216,16 @@ body {
 
 .btn-tertiary,
 .action-btn.tertiary {
-    background: var(--warning-bg);
-    color: var(--warning-text);
+    background: var(--success-bg);
+    color: var(--primary-dark);
 }
+
+.btn-tertiary:hover,
+.action-btn.btn-tertiary:hover {
+    background: var(--bg-main);
+}
+
+
 
 /* Dashboard Stats */
 .stats-grid {
@@ -1534,4 +1541,466 @@ body {
 
 .help-icon:hover {
     background-color: #4B5563;
+}
+
+/* View Patient Modal Styles */
+.modal-content.large {
+    max-width: 900px;
+    width: 90%;
+}
+
+.modal-tabs {
+    display: flex;
+    border-bottom: 2px solid var(--border-default);
+    margin-bottom: 1.5rem;
+}
+
+.modal-tabs .tab-button {
+    background: none;
+    border: none;
+    padding: 1rem 2rem;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    transition: var(--transition);
+    color: var(--text-secondary);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.modal-tabs .tab-button.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.modal-tabs .tab-button:hover:not(.active) {
+    background: rgba(8, 145, 178, 0.1);
+}
+
+.modal-body {
+    padding: 0 1.5rem 1.5rem;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+/* Info Sections */
+.info-section {
+    background: var(--bg-main);
+    padding: 1.5rem;
+    border-radius: var(--border-radius);
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border-light);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.info-section h3 {
+    margin: 0 0 1rem 0;
+    color: var(--text-primary);
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+.info-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.info-item.full-width {
+    grid-column: 1 / -1;
+}
+
+.info-item label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.info-item span {
+    color: var(--text-primary);
+    font-size: 1rem;
+    background-color:  var(--bg-content);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    display: block;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* GDPR Consent Status */
+.consent-status-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.consent-status-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: var(--bg-content);
+    border-radius: var(--border-radius);
+}
+
+.consent-status-item.granted {
+    border-left: 4px solid var(--success-text);
+}
+
+.consent-status-item.not-granted {
+    border-left: 4px solid var(--text-secondary);
+}
+
+.consent-status-item.withdrawn {
+    border-left: 4px solid var(--error-text);
+}
+
+.consent-status-item i {
+    font-size: 1.25rem;
+}
+
+.consent-status-item.granted i {
+    color: var(--success-text);
+}
+
+.consent-status-item.not-granted i {
+    color: var(--text-secondary);
+}
+
+.consent-status-item.withdrawn i {
+    color: var(--error-text);
+}
+
+.consent-info {
+    flex: 1;
+}
+
+.consent-info .consent-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.consent-info .consent-date {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+/* Documents Grouped View */
+.documents-grouped {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.document-group {
+    background: var(--bg-main);
+    padding: 1rem;
+    border-radius: var(--border-radius);
+}
+
+.document-group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border-default);
+    margin-bottom: 1rem;
+}
+
+.document-group-header:hover {
+    background: var(--bg-content);
+    border-radius: var(--border-radius);
+}
+
+.document-group-header i {
+    color: var(--primary);
+    transition: transform 0.3s;
+}
+
+.document-group-header.collapsed i {
+    transform: rotate(-90deg);
+}
+
+.document-group-title {
+    flex: 1;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.document-group-count {
+    background: var(--primary);
+    color: white;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.875rem;
+}
+
+.document-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.document-items.collapsed {
+    display: none;
+}
+
+.document-item-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem;
+    background: var(--bg-content);
+    border-radius: var(--border-radius);
+}
+
+.document-item-row:hover {
+    background: rgba(8, 145, 178, 0.1);
+}
+
+.document-date {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    min-width: 100px;
+}
+
+.document-title {
+    flex: 1;
+    color: var(--text-primary);
+}
+
+.document-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Modal Footer */
+.modal-footer {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--border-default);
+    background: var(--bg-content);
+}
+
+/* GDPR Modal Styles */
+.gdpr-patient-banner {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: linear-gradient(135deg, rgba(8, 145, 178, 0.1), rgba(8, 145, 178, 0.05));
+    border-radius: var(--border-radius);
+    border-left: 4px solid var(--primary);
+    margin-bottom: 1.5rem;
+}
+
+.gdpr-patient-banner i {
+    font-size: 2rem;
+    color: var(--primary);
+}
+
+.gdpr-patient-banner strong {
+    display: block;
+    font-size: 1.125rem;
+    color: var(--text-primary);
+}
+
+.gdpr-patient-banner span {
+    display: block;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+.gdpr-section {
+    margin-bottom: 2rem;
+}
+
+.gdpr-section h3 {
+    margin: 0 0 1rem 0;
+    color: var(--text-primary);
+    font-size: 1.125rem;
+    font-weight: 600;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid var(--primary);
+}
+
+.gdpr-consent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.gdpr-consent-card {
+    background: var(--bg-content);
+    padding: 1.25rem;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+    border-left: 4px solid transparent;
+}
+
+.gdpr-consent-card.granted {
+    border-left-color: var(--success-text);
+}
+
+.gdpr-consent-card.not-granted {
+    border-left-color: var(--text-secondary);
+}
+
+.gdpr-consent-card.withdrawn {
+    border-left-color: var(--error-text);
+    background: var(--error-bg);
+}
+
+.gdpr-consent-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.gdpr-consent-title {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.gdpr-consent-title i {
+    font-size: 1.5rem;
+}
+
+.gdpr-consent-card.granted .gdpr-consent-title i {
+    color: var(--success-text);
+}
+
+.gdpr-consent-card.not-granted .gdpr-consent-title i {
+    color: var(--text-secondary);
+}
+
+.gdpr-consent-card.withdrawn .gdpr-consent-title i {
+    color: var(--error-text);
+}
+
+.gdpr-consent-name {
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.gdpr-consent-status {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.gdpr-consent-status.granted {
+    background: var(--success-bg);
+    color: var(--success-text);
+}
+
+.gdpr-consent-status.not-granted {
+    background: var(--bg-main);
+    color: var(--text-secondary);
+}
+
+.gdpr-consent-status.withdrawn {
+    background: var(--error-bg);
+    color: var(--error-text);
+}
+
+.gdpr-consent-details {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+}
+
+.gdpr-consent-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.gdpr-actions {
+    display: flex;
+    gap: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-default);
+}
+
+/* Warning Banner */
+.warning-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--warning-bg);
+    border-left: 4px solid #F59E0B;
+    border-radius: var(--border-radius);
+    margin-bottom: 1.5rem;
+}
+
+.warning-banner i {
+    color: #F59E0B;
+    font-size: 1.5rem;
+    flex-shrink: 0;
+}
+
+.warning-banner p {
+    margin: 0;
+    color: var(--warning-text);
+}
+
+/* Radio Options */
+.radio-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--bg-main);
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    margin-bottom: 0.5rem;
+}
+
+.radio-option:hover {
+    background: rgba(8, 145, 178, 0.1);
+}
+
+.radio-option input[type="radio"] {
+    cursor: pointer;
+}
+
+/* Danger Button */
+.btn-danger {
+    background: var(--critical);
+    color: white;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-weight: 600;
+    transition: var(--transition);
+}
+
+.btn-danger:hover {
+    background: var(--error-text);
 }
