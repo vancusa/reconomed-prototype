@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/static/css/document-manager.css">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body>
     <!-- Navigation Header -->
@@ -127,7 +127,7 @@
                         <h3>Quick Actions</h3>
                     </div>
                     <div class="quick-actions">
-                        <button class="action-btn primary" onclick="showSection('patients')">
+                        <button class="action-btn primary" onclick="showAddPatientModal()">
                             <i class="fas fa-user-plus"></i>
                             Add New Patient
                         </button>
@@ -843,6 +843,41 @@
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Consent History Modal -->
+    <div id="consent-history-modal" class="modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h2>Consent History</h2>
+                <button class="modal-close" onclick="window.closeConsentHistoryModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="modal-body">
+                <!-- Patient Info Banner -->
+                <div class="gdpr-patient-banner">
+                    <i class="fas fa-history"></i>
+                    <div>
+                        <strong id="history-patient-name"></strong>
+                        <span id="history-patient-details"></span>
+                    </div>
+                </div>
+                
+                <!-- Timeline -->
+                <div class="consent-history-timeline" id="consent-history-timeline">
+                    <div class="loading-placeholder">Loading consent history...</div>
+                </div>
+            </div>
+            
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="window.closeConsentHistoryModal()">Close</button>
+                <button class="btn-tertiary" onclick="app.exportConsentHistory()">
+                    <i class="fas fa-download"></i> Export as PDF
+                </button>
             </div>
         </div>
     </div>

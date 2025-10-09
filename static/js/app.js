@@ -123,9 +123,18 @@ class ReconoMedApp {
             // Load patients from backend
             await this.patientManager.loadPatients();
             
-            // Update dashboard with loaded data
-            this.updateDashboardStats();
-            
+            //Fetch consultation stats from backend
+            const statsResponse = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'today/stats'));
+            if (!statsResponse.ok) {
+                throw new Error(`HTTP error! status: ${statsResponse.status}`);
+            }
+            const todayStats = await statsResponse.json(); // Data is: { "patients_today": N }
+
+            this.updateDashboardStats(todayStats); // Pass the new stats to the update function
+
+            // Load consultation tab counts
+            await this.loadConsultationCounts(); 
+
         } catch (err) {
             console.error('Data loading failed:', err);
             showToast('Failed to load initial data', 'error');
@@ -135,14 +144,70 @@ class ReconoMedApp {
         }
     }
 
+    async loadConsultationCounts() {
+        try {
+            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'counts'));
+            if (response.ok) {
+                const counts = await response.json();
+                document.getElementById('active-consultations').textContent = counts.active_consultations || 0;
+                document.getElementById('review-pending').textContent = counts.review_pending || 0;
+                document.getElementById('discharge-ready').textContent = counts.discharge_ready || 0;
+            }
+        } catch (err) {
+            console.error('Failed to load consultation counts:', err);
+        }
+    }
+    
+    async refreshActivity() {
+        try {
+            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'activity/recent'));
+            if (!response.ok) throw new Error('Failed to load activity');
+            
+            const data = await response.json();
+            this.renderRecentActivity(data.activities);
+        } catch (err) {
+            console.error('Failed to refresh activity:', err);
+            showToast('Failed to refresh activity', 'error');
+        }
+    }
+
+    renderRecentActivity(activities) {
+        const container = document.getElementById('recent-activity');
+        if (!container) return;
+        
+        if (activities.length === 0) {
+            container.innerHTML = '<p class="text-secondary">No recent activity</p>';
+            return;
+        }
+        
+        container.innerHTML = activities.map(activity => `
+            <div class="activity-item">
+                <i class="${activity.icon}"></i>
+                <div class="activity-info">
+                    <div class="activity-title">${activity.title}</div>
+                    <div class="activity-time">${new Date(activity.timestamp).toLocaleString('ro-RO')}</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
     // =========================================================================
     // UTILITY METHODS: Application Logic
     // =========================================================================
-    updateDashboardStats() {
-        // Update dashboard counters with current data
+    updateDashboardStats(newStats) {
+        // 1. Update total patients (existing logic)
         const totalPatientsEl = document.getElementById('total-patients');
         if (totalPatientsEl) {
             totalPatientsEl.textContent = this.patients.length;
+        }
+
+        // 2. NEW LOGIC: Update Patients Today
+        const patientsTodayEl = document.getElementById('patients-today');
+        
+        // Check if the element exists AND if the data was passed in
+        if (patientsTodayEl && newStats && newStats.patients_today !== undefined) {
+            // Use the value from the fetched object
+            patientsTodayEl.textContent = newStats.patients_today;
         }
     }
 
@@ -238,6 +303,26 @@ window.app.renewConsent = (type) => app.patientManager.renewConsent(type);
 // end GDPR modal
 // =========================================================================
 
+// ========================================================================
+// Navigation
+// ========================================================================
+window.app.nextPatientsPage = () => app.patientManager.nextPage();
+window.app.previousPatientsPage = () => app.patientManager.previousPage();
+// ========================================================================
+//end Navigation
+// ========================================================================
+
+// ========================================================================
+//Consent History
+// ========================================================================
+window.closeConsentHistoryModal = function() {
+    hideModal('consent-history-modal');
+};
+
+window.app.exportConsentHistory = () => app.patientManager.exportConsentHistory();
+// ========================================================================
+//end Consent History
+// ========================================================================
 
 // Prepare for logout: Get the button element
 const logoutButton = document.getElementById('logout-button');

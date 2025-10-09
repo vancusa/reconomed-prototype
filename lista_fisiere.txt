@@ -1,0 +1,103 @@
+.
+├── README.md
+├── analyze_project.py
+├── app
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── auth.cpython-312.pyc
+│   │   ├── database.cpython-312.pyc
+│   │   ├── main.cpython-312.pyc
+│   │   ├── models.cpython-312.pyc
+│   │   └── schemas.cpython-312.pyc
+│   ├── auth.py
+│   ├── database.py
+│   ├── main.py
+│   ├── models.py
+│   ├── routers
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── auth.cpython-312.pyc
+│   │   │   ├── clinics.cpython-312.pyc
+│   │   │   ├── consultations.cpython-312.pyc
+│   │   │   ├── dashboard.cpython-312.pyc
+│   │   │   ├── documents.cpython-312.pyc
+│   │   │   ├── patients.cpython-312.pyc
+│   │   │   └── search.cpython-312.pyc
+│   │   ├── auth.py
+│   │   ├── clinics.py
+│   │   ├── consultations.py
+│   │   ├── dashboard.py
+│   │   ├── documents.py
+│   │   ├── patients.py
+│   │   └── search.py
+│   ├── schemas.py
+│   ├── services
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── document.cpython-312.pyc
+│   │   │   ├── enhanced_ocr.cpython-312.pyc
+│   │   │   ├── ocr.cpython-312.pyc
+│   │   │   ├── romanian_document_templates.cpython-312.pyc
+│   │   │   └── romanian_id_processor.cpython-312.pyc
+│   │   ├── document.py
+│   │   ├── enhanced_ocr.py
+│   │   ├── ocr.py
+│   │   ├── romanian_document_templates.py
+│   │   └── romanian_id_processor.py
+│   └── utils
+│       ├── __init__.py
+│       ├── __pycache__
+│       │   ├── __init__.cpython-312.pyc
+│       │   ├── file.cpython-312.pyc
+│       │   ├── gdpr_utils.cpython-312.pyc
+│       │   └── romanian_validation.cpython-312.pyc
+│       ├── file.py
+│       ├── gdpr_utils.py
+│       └── romanian_validation.py
+├── audit.log
+├── classes.png
+├── classes.txt
+├── classes_myproject.png
+├── clean_up.py
+├── graph.dot
+├── graph.html
+├── lista_fisiere.txt
+├── packages.png
+├── packages_myproject.png
+├── populate_db.py
+├── reconomed.db
+├── reconomed.log
+├── requirements.txt
+├── setup_clinic.py
+├── static
+│   ├── components
+│   │   └── document-manager.html
+│   ├── css
+│   │   ├── document-manager.css
+│   │   └── styles.css
+│   ├── favicon.ico
+│   ├── images
+│   │   └── reconomed-logo.png
+│   ├── index.html
+│   ├── js
+│   │   ├── app.js
+│   │   ├── auth.js
+│   │   ├── consultations.js
+│   │   ├── document-manager.js
+│   │   ├── documents.js
+│   │   ├── image-compression.js
+│   │   ├── navigation.js
+│   │   ├── old_app.js
+│   │   ├── patients.js
+│   │   ├── ui.js
+│   │   ├── upload-handler.js
+│   │   └── utils.js
+│   ├── login.html
+│   └── templates
+│       └── gdpr_consent_ro.html
+└── uploads
+
+16 directories, 85 files

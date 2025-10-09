@@ -49,7 +49,7 @@ export class PatientManager {
             this.addForm.onsubmit = (e) => {
             e.preventDefault();
             this.addPatient();
-        };
+            };
         //    this.addForm.addEventListener('submit', (e) => {
         //        e.preventDefault();
         //        this.addPatient();
@@ -61,10 +61,7 @@ export class PatientManager {
 
         if (this.searchInput) {
             //console.log('Adding search listener');
-            // Debounced search
-            // Debouncing = Instead of running the search function immediately every time a user types a character 
-            // (which can be resource-intensive, especially for network requests), debouncing ensures the function 
-            // is only executed after a specific period of inactivity has passed since the last event (e.g., the last keypress).
+            // Debounced search - Debouncing = Instead of running the search function immediately every time a user types a character  (which can be resource-intensive, especially for network requests), debouncing ensures the function is only executed after a specific period of inactivity has passed since the last event (e.g., the last keypress).
             let searchTimeout;
         
             this.searchInput.addEventListener('input', (e) => {
@@ -77,7 +74,8 @@ export class PatientManager {
                     //console.log('--- DEBOUNCED SEARCH EXECUTING ---')
                     this.searchPatients(value);
                 }, 300);
-        });
+            });
+        }
         // Sort change handler
         if (this.sortSelect) {
             this.sortSelect.addEventListener('change', (e) => {
@@ -85,20 +83,20 @@ export class PatientManager {
                 this.loadPatients(1, this.searchInput?.value || '');
             });
         }
-    }
-
-    // Pagination button handlers
-    const prevBtn = document.getElementById('patients-prev');
-    const nextBtn = document.getElementById('patients-next');
     
-    if (prevBtn) {
-        prevBtn.addEventListener('click', () => this.previousPage());
-    }
     
-    if (nextBtn) {
-        nextBtn.addEventListener('click', () => this.nextPage());
+        // Pagination button handlers
+        const prevBtn = document.getElementById('patients-prev');
+        const nextBtn = document.getElementById('patients-next');
+        
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => this.previousPage());
+        }
+        
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => this.nextPage());
+        }
     }
-}
 
     // -------------------------------------------------------------------------
     // Data Loading
@@ -115,6 +113,10 @@ export class PatientManager {
             
             if (searchQuery) {
                 params.append('search', searchQuery);
+            }
+
+            if (this.currentSort) {
+            params.append('sort_by', this.currentSort); // <-- Add this
             }
             
             url += `?${params.toString()}`;
@@ -277,7 +279,7 @@ export class PatientManager {
                     body: JSON.stringify(patientData)
                 });
             }
-            console.log(response);
+            //console.log(response);
             if (!response.ok) {
                 const error = await response.json();
                 throw new Error(error.detail || `Failed to ${mode} patient`);
@@ -509,23 +511,45 @@ export class PatientManager {
         container.innerHTML = '<div class="loading-placeholder">Loading documents...</div>';
         
         try {
-            // For now, show placeholder since you don't have documents linked yet
-            // This will be replaced when you implement document-patient linking
-            container.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-icon">📄</div>
-                    <h4>No documents yet</h4>
-                    <p>Documents and consultation history will appear here</p>
-                </div>
-            `;
+            // Fetch consultations for this patient
+            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`));
             
-            // TODO: When documents are implemented, fetch and group them
-            // const docs = await this.fetchPatientDocuments(patientId);
-            // this.renderGroupedDocuments(docs);
+            if (!response.ok) throw new Error('Failed to load consultations');
+            
+            const consultations = await response.json();
+            
+            if (consultations.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">📄</div>
+                        <h4>No consultations yet</h4>
+                        <p>Consultations will appear here once created</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Render consultations
+            container.innerHTML = consultations.map(consultation => `
+                <div class="consultation-history-item">
+                    <div class="consultation-date">
+                        ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
+                        })}
+                    </div>
+                    <div class="consultation-details">
+                        <span class="consultation-type-badge">${consultation.consultation_type}</span>
+                        <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
+                        ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
+                    </div>
+                </div>
+            `).join('');
             
         } catch (err) {
-            console.error('Failed to load documents:', err);
-            container.innerHTML = '<p class="text-error">Failed to load documents</p>';
+            console.error('Failed to load consultations:', err);
+            container.innerHTML = '<p class="text-error">Failed to load consultation history</p>';
         }
     }
 
@@ -577,8 +601,8 @@ export class PatientManager {
 
     manageGDPRFromView() {
         if (this.currentViewPatientId) {
-            showToast('GDPR management coming soon', 'info');
-            // Will implement tomorrow
+            hideModal('view-patient-modal');
+            this.manageGDPR(this.currentViewPatientId);
         }
     }
 
@@ -778,7 +802,14 @@ export class PatientManager {
             showToast('Consent withdrawn successfully', 'success');
             hideModal('withdraw-consent-modal');
             
-            // Reload GDPR modal with updated data
+            // FETCH FRESH PATIENT DATA before reloading modal
+            const patientUrl = apiUrl(API_CONFIG.ENDPOINTS.patients, `${this.currentGDPRPatient.id}`);
+            const patientResponse = await fetch(patientUrl);
+            if (patientResponse.ok) {
+                this.currentGDPRPatient = await patientResponse.json();
+            }
+            
+            // Reload GDPR modal with fresh data
             await this.manageGDPR(this.currentGDPRPatient.id);
             
         } catch (err) {
@@ -787,14 +818,84 @@ export class PatientManager {
         }
     }
 
-    grantConsent(consentType) {
-        showToast(`Grant consent for ${consentType} - requires form generation`, 'info');
-        // In full implementation, would open consent form generation workflow
+    async grantConsent(consentType) {
+        if (!this.currentGDPRPatient) return;
+        
+        try {
+            const url = apiUrl(API_CONFIG.ENDPOINTS.patients, 
+                `${this.currentGDPRPatient.id}/gdpr/grant-consent`);
+            
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    consent_type: consentType,
+                    granted_at: new Date().toISOString(),
+                    expires_at: null // Or set expiration date if needed
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to grant consent');
+            }
+            
+            showToast(`Consent granted: ${consentType}`, 'success');
+            
+            // FETCH FRESH PATIENT DATA before reloading modal
+            const patientUrl = apiUrl(API_CONFIG.ENDPOINTS.patients, `${this.currentGDPRPatient.id}`);
+            const patientResponse = await fetch(patientUrl);
+            if (patientResponse.ok) {
+                this.currentGDPRPatient = await patientResponse.json();
+            }
+            
+            // Reload GDPR modal with fresh data
+            await this.manageGDPR(this.currentGDPRPatient.id);
+            
+        } catch (err) {
+            console.error('Failed to grant consent:', err);
+            showToast(err.message || 'Failed to grant consent', 'error');
+        }
     }
 
-    renewConsent(consentType) {
-        showToast(`Renew consent for ${consentType} - requires new form signature`, 'info');
-        // In full implementation, would open consent renewal workflow
+    async renewConsent(consentType) {
+        if (!this.currentGDPRPatient) return;
+        
+        try {
+            const url = apiUrl(API_CONFIG.ENDPOINTS.patients, 
+                `${this.currentGDPRPatient.id}/gdpr/renew-consent`);
+            
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    consent_type: consentType,
+                    renewed_at: new Date().toISOString(),
+                    expires_at: null // Or set new expiration
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to renew consent');
+            }
+            
+            showToast(`Consent renewed: ${consentType}`, 'success');
+            
+            // FETCH FRESH PATIENT DATA before reloading modal
+            const patientUrl = apiUrl(API_CONFIG.ENDPOINTS.patients, `${this.currentGDPRPatient.id}`);
+            const patientResponse = await fetch(patientUrl);
+            if (patientResponse.ok) {
+                this.currentGDPRPatient = await patientResponse.json();
+            }
+            
+            // Reload GDPR modal with fresh data
+            await this.manageGDPR(this.currentGDPRPatient.id);
+            
+        } catch (err) {
+            console.error('Failed to renew consent:', err);
+            showToast(err.message || 'Failed to renew consent', 'error');
+        }
     }
 
     async generateConsentForms() {
@@ -819,50 +920,131 @@ export class PatientManager {
     }
 
     async createConsentPDF(patient, clinic) {
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF();
+        // Fetch HTML template
+        const response = await fetch('/static/templates/gdpr_consent_ro.html'); //in the future, make it variable by clinic
+        const template = await response.text();
         
-        // Header
-        doc.setFontSize(16);
-        doc.text(clinic.name || 'ReconoMed Clinic', 20, 20);
-        doc.setFontSize(12);
-        doc.text('Formulare Consimțământ GDPR', 20, 30);
+         // --- Extrage textele din DB pentru a evita repetarea ---
+        const templates = clinic.gdpr_templates;
+
+        // Replace variables
+        const html = template
+            .replace(/{{patient_name}}/g, `${patient.given_name} ${patient.family_name}`)
+            .replace(/{{cnp}}/g, patient.cnp || 'N/A')
+            .replace(/{{clinic_name}}/g, clinic.name || 'Demo Clinic')
+            .replace(/{{date}}/g, new Date().toLocaleDateString('ro-RO'))
+            // 1. Text Tratament (Existent)
+            .replace(/{{treatment_text}}/g, templates?.treatment_ro || 'Text implicit: Consimțământ pentru tratament...')
+            
+            // 2. TEXT OBLIGATORIU GDPR (Acest câmp lipsea!)
+            .replace(/{{data_processing_text}}/g, templates?.data_processing_ro || 'Text implicit: Consimțământ pentru prelucrarea datelor.  Categorii de date prelucrate: Date de identificare (nume, prenume, CNP, adresă), Date medicale (diagnostic, tratament, istoric medical), Date de contact (telefon, email), Date de asigurare medicală')
+            
+            // 3. (OPȚIONAL) Înlocuiește textul de cercetare (dacă este variabil)
+            .replace(/{{research_text}}/g, templates?.research_ro || 'Text implicit: Consimțământ pentru cercetare. Prin prezentul, sunt de acord ca datele mele medicale să fie utilizate în scopuri de cercetare medicală, în formă anonimizată, pentru îmbunătățirea serviciilor medicale și avansarea cunoștințelor medicale.')
+            
+            // 4. (OPȚIONAL) Înlocuiește textul de marketing (dacă este variabil)
+            .replace(/{{marketing_text}}/g, templates?.marketing_ro || 'Text implicit: Consimțământ pentru marketing.  Doresc să primesc comunicări informative despre servicii medicale, programe de sănătate, și oferte speciale din partea clinicii.')
+            
+            // 5. (OPȚIONAL) Adaugă adresa de email în Footer (dacă ai o variabilă pentru asta)
+            .replace(/{{clinic_email}}/g, clinic.email || 'info@demo.ro'); // Asigură-te că folosești variabila clinic.email
+
+        // Convert to PDF using html2pdf
+        const opt = {
+            margin: 25,
+            filename: `consimtamant_${patient.family_name}_${Date.now()}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        };
         
-        // Patient info
-        doc.setFontSize(10);
-        doc.text(`Pacient: ${patient.given_name} ${patient.family_name}`, 20, 45);
-        doc.text(`CNP: ${patient.cnp || 'N/A'}`, 20, 52);
-        doc.text(`Data: ${new Date().toLocaleDateString('ro-RO')}`, 20, 59);
-        
-        // Treatment consent
-        doc.setFontSize(11);
-        doc.text('CONSIMȚĂMÂNT PENTRU TRATAMENT MEDICAL', 20, 75);
-        doc.setFontSize(9);
-        const treatmentText = clinic.consent_templates?.treatment_ro || 
-            `Subsemnatul/a ${patient.given_name} ${patient.family_name}, cu CNP ${patient.cnp || 'necunoscut'}, declar că sunt de acord cu efectuarea tratamentului medical la ${clinic.name || 'clinică'}.`;
-        doc.text(doc.splitTextToSize(treatmentText, 170), 20, 85);
-        
-        doc.text('___________________________', 20, 120);
-        doc.text('Semnătura pacient', 20, 127);
-        
-        // New page for data processing
-        doc.addPage();
-        doc.setFontSize(11);
-        doc.text('CONSIMȚĂMÂNT PRELUCRARE DATE PERSONALE', 20, 20);
-        doc.setFontSize(9);
-        const dataProcessingText = clinic.consent_templates?.data_processing_ro || 
-            'Accept ca datele mele personale să fie prelucrate conform GDPR.';
-        doc.text(doc.splitTextToSize(dataProcessingText, 170), 20, 30);
-        
-        doc.text('___________________________', 20, 60);
-        doc.text('Semnătura pacient', 20, 67);
-        
-        // Download
-        doc.save(`consimtamant_${patient.family_name}_${Date.now()}.pdf`);
+        await html2pdf().set(opt).from(html).save();
     }
 
-    viewConsentHistory() {
-        showToast('Consent history view - coming in next version', 'info');
-        // Would show audit log of all consent changes
+    async viewConsentHistory() {
+        if (!this.currentGDPRPatient) return;
+        
+        try {
+            const url = apiUrl(API_CONFIG.ENDPOINTS.patients, 
+                `${this.currentGDPRPatient.id}/gdpr/consent-history`);
+            
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Failed to load history');
+            
+            const history = await response.json();
+            
+            // Populate and show modal
+            this.showConsentHistoryModal(history);
+            
+        } catch (err) {
+            console.error('Failed to load consent history:', err);
+            showToast('Failed to load consent history', 'error');
+        }
+    }
+
+    showConsentHistoryModal(history) {
+        // Update patient info
+        document.getElementById('history-patient-name').textContent = 
+            `${this.currentGDPRPatient.given_name} ${this.currentGDPRPatient.family_name}`;
+        document.getElementById('history-patient-details').textContent = 
+            `CNP: ${this.currentGDPRPatient.cnp || 'N/A'}`;
+        
+        const timeline = document.getElementById('consent-history-timeline');
+        
+        if (!history || history.length === 0) {
+            timeline.innerHTML = `
+                <div class="history-empty">
+                    <i class="fas fa-history"></i>
+                    <h4>No consent history</h4>
+                    <p>No consent changes have been recorded yet</p>
+                </div>
+            `;
+        } else {
+            const historyHTML = history.map(entry => {
+                const action = entry.action.replace('consent_', '');
+                const actionClass = action === 'withdrawn' ? 'withdrawn' : 
+                                action === 'granted' ? 'granted' : 'renewed';
+                
+                const actionText = action === 'withdrawn' ? 'Withdrawn' :
+                                action === 'granted' ? 'Granted' : 'Renewed';
+                
+                return `
+                    <div class="history-entry ${actionClass}">
+                        <div class="history-timestamp">
+                            <i class="fas fa-clock"></i> 
+                            ${new Date(entry.timestamp).toLocaleString('ro-RO', {
+                                year: 'numeric',
+                                month: 'long',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            })}
+                        </div>
+                        <div class="history-action">
+                            <span class="history-consent-type">${entry.details.consent_type?.replace('_', ' ').toUpperCase()}</span>
+                            <span class="history-action-badge ${actionClass}">${actionText}</span>
+                        </div>
+                        <div class="history-details">
+                            <div class="history-performed-by">
+                                <i class="fas fa-user"></i> By: ${entry.details.granted_by || entry.details.withdrawn_by || entry.details.renewed_by || 'Unknown'}
+                            </div>
+                            ${entry.details.reason ? `
+                                <div class="history-reason">
+                                    <strong>Reason:</strong> ${entry.details.reason}
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            timeline.innerHTML = historyHTML;
+        }
+        
+        showModal('consent-history-modal');
+    }
+
+    exportConsentHistory() {
+        showToast('Export to PDF - coming soon', 'info');
+        // Future: Generate PDF report of consent history
     }
 }

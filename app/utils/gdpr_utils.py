@@ -120,7 +120,9 @@ def withdraw_consent(
     reason: Optional[str] = None
 ) -> Dict[str, Any]:
     """Withdraw a consent record"""
+    consent_record["granted"] = False 
     consent_record["withdrawn"] = True
+    consent_record["granted_at"] = None 
     consent_record["withdrawn_at"] = datetime.utcnow().isoformat()
     if reason:
         consent_record["withdrawal_reason"] = reason

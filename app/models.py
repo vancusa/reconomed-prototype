@@ -2,8 +2,11 @@
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.ext.mutable import MutableDict
+from sqlalchemy.dialects.sqlite import JSON 
 from app.database import Base
 import uuid
+from datetime import datetime
 
 # ----------------------------
 # Clinics
@@ -68,7 +71,7 @@ class Patient(Base):
     phone = Column(String(20))
     email = Column(String(255))
     address = Column(JSON)
-    gdpr_consents = Column(JSON)
+    gdpr_consents = Column(MutableDict.as_mutable(JSON))
     consent_withdrawn_at = Column(DateTime)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -92,6 +95,7 @@ class Consultation(Base):
     clinic_id = Column(String, ForeignKey("clinics.id"), nullable=False)
 
     consultation_type = Column(String(100), nullable=False)
+    consultation_date = Column(DateTime, default=datetime.utcnow)
     structured_data = Column(JSON)
     audio_transcript = Column(Text)
     audio_file_path = Column(String(500))

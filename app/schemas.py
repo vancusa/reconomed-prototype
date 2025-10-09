@@ -66,23 +66,36 @@ class UserResponse(BaseModel):
 # ----------------------------
 # Consultation Schemas
 # ----------------------------
-class ConsultationBase(BaseModel):
+class ConsultationCreate(BaseModel):
     patient_id: str
-    consultation_type: str
+    consultation_type: str  # general, followup, emergency, routine
+    consultation_date: Optional[datetime] = None  # Defaults to now if not provided
+    structured_data: Optional[dict] = None
+    audio_file_path: Optional[str] = None
+
+class ConsultationUpdate(BaseModel):
+    consultation_type: Optional[str] = None
+    consultation_date: Optional[datetime] = None
     structured_data: Optional[dict] = None
     audio_transcript: Optional[str] = None
+    status: Optional[str] = None
+    is_signed: Optional[bool] = None
 
-class ConsultationCreate(ConsultationBase):
-    pass
-
-class ConsultationResponse(ConsultationBase):
+class ConsultationResponse(BaseModel):
     id: str
+    patient_id: str
     doctor_id: str
     clinic_id: str
+    consultation_type: str
+    consultation_date: datetime
+    structured_data: Optional[dict]
+    audio_transcript: Optional[str]
+    audio_file_path: Optional[str]
     status: str
     is_signed: bool
+    signed_at: Optional[datetime]
     created_at: datetime
-
+    
     class Config:
         from_attributes = True
 

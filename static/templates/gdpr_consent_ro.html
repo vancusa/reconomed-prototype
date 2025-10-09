@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @page {
+            size: A4;
+            margin: 25mm;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            font-size: 11pt;
+            line-height: 1.6;
+            color: #333;
+            padding: 0 5mm; 
+            margin: 0;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #0891B2;
+            padding-bottom: 15px;
+        }
+        
+        .clinic-name {
+            font-size: 18pt;
+            font-weight: bold;
+            color: #0891B2;
+            margin-bottom: 5px;
+        }
+        
+        .document-title {
+            font-size: 14pt;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        
+        .patient-info {
+            background-color: #F0FCFF;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+        }
+        
+        .patient-info table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .patient-info td {
+            padding: 5px;
+        }
+        
+        .patient-info td:first-child {
+            font-weight: bold;
+            width: 30%;
+        }
+        
+        .consent-section {
+            margin: 30px 0;
+            page-break-inside: avoid;
+        }
+        
+        .consent-title {
+            font-size: 13pt;
+            font-weight: bold;
+            color: #0891B2;
+            text-transform: uppercase;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #0891B2;
+            padding-bottom: 5px;
+        }
+        
+        .consent-text {
+            text-align: justify;
+            margin: 15px 0;
+            line-height: 1.8;
+            padding: 0 5mm; 
+        }
+        
+        .consent-checkbox {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #F9FAFB;
+            border-left: 4px solid #0891B2;
+        }
+        
+        .consent-checkbox label {
+            display: block;
+            margin: 10px 0;
+            cursor: pointer;
+        }
+        
+        .consent-checkbox input[type="checkbox"] {
+            margin-right: 10px;
+            width: 18px;
+            height: 18px;
+            vertical-align: middle;
+        }
+        
+        .signature-section {
+            margin-top: 50px;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .signature-box {
+            width: 45%;
+        }
+        
+        .signature-line {
+            border-top: 2px solid #333;
+            margin-top: 50px;
+            padding-top: 5px;
+            text-align: center;
+        }
+        
+        .signature-label {
+            font-size: 10pt;
+            color: #666;
+        }
+        
+        .footer {
+            margin-top: 40px;
+            padding-top: 15px;
+            border-top: 1px solid #E5E7EB;
+            font-size: 9pt;
+            color: #6B7280;
+            text-align: center;
+        }
+        
+        .page-break {
+            page-break-after: always;
+        }
+        
+        .required-mark {
+            color: #DC2626;
+            font-weight: bold;
+        }
+        
+        .optional-mark {
+            color: #6B7280;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <!-- PAGE 1: Treatment Consent -->
+    <div class="header">
+        <div class="clinic-name">{{clinic_name}}</div>
+        <div class="document-title">Formulare Consimțământ GDPR</div>
+    </div>
+    
+    <div class="patient-info">
+        <table>
+            <tr>
+                <td>Pacient:</td>
+                <td>{{patient_name}}</td>
+            </tr>
+            <tr>
+                <td>CNP:</td>
+                <td>{{cnp}}</td>
+            </tr>
+            <tr>
+                <td>Data:</td>
+                <td>{{date}}</td>
+            </tr>
+        </table>
+    </div>
+    <div class="consent-section">
+        <div class="consent-title">
+            1. Consimțământ pentru Tratament Medical <span class="required-mark">(Obligatoriu)</span>
+        </div>
+        
+        <div class="consent-text">
+            {{treatment_text}}
+        </div>
+        
+        <div class="consent-checkbox">
+            <label>
+                <input type="checkbox" checked disabled>
+                <strong>Sunt de acord</strong> cu efectuarea tratamentului medical și înțeleg că acest consimțământ este necesar pentru acordarea îngrijirilor medicale.
+            </label>
+        </div>
+</div>
+        
+    <!-- Data Processing Consent -->
+    
+    <div class="consent-section">
+        <div class="consent-title">
+            2. Consimțământ Prelucrare Date Personale <span class="required-mark">(Obligatoriu)</span>
+        </div>
+        
+        <div class="consent-text">
+            {{data_processing_text}}
+        </div>
+     </div>
+        
+        <div class="consent-checkbox">
+            <label>
+                <input type="checkbox" checked disabled>
+                <strong>Sunt de acord</strong> cu prelucrarea datelor mele personale conform Regulamentului GDPR și legislației naționale în vigoare.
+            </label>
+        </div>
+        
+        <div class="signature-section">
+            <div class="signature-box">
+                <div class="signature-line">
+                    <div class="signature-label">Semnătura pacient</div>
+                </div>
+            </div>
+            <div class="signature-box">
+                <div class="signature-line">
+                    <div class="signature-label">Data</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- PAGE BREAK -->
+    <div class="page-break"></div>
+    
+    <!-- PAGE: Optional Consents -->
+    <div class="header">
+<div class="document-title">Consimțăminte Opționale</div>
+    </div>
+
+ <div class="patient-info">
+        <table>
+            <tr>
+                <td>Pacient:</td>
+                <td>{{patient_name}}</td>
+            </tr>
+            <tr>
+                <td>CNP:</td>
+                <td>{{cnp}}</td>
+            </tr>
+            <tr>
+                <td>Data:</td>
+                <td>{{date}}</td>
+            </tr>
+        </table>
+    </div>
+<div class="consent-section">
+    <div class="consent-title">
+            3. Consimțământ Cercetare Medicală <span class="optional-mark">(Opțional)</span>
+        </div>
+        
+        <div class="consent-text">
+            {{research_text}}
+        </div>
+        
+        <div class="consent-checkbox">
+            <label>
+                <input type="checkbox">
+                <strong>DA</strong>, sunt de acord cu participarea în studii de cercetare medicală (date anonimizate)
+            </label>
+            <label>
+                <input type="checkbox">
+                <strong>NU</strong>, nu doresc ca datele mele să fie utilizate în cercetare
+            </label>
+        </div>
+    </div>
+    
+    <div class="consent-section">
+        <div class="consent-title">
+            4. Consimțământ Comunicări Marketing <span class="optional-mark">(Opțional)</span>
+        </div>
+        
+        <div class="consent-text">
+           {{marketing_text}}
+        </div>
+        
+        <div class="consent-checkbox">
+            <label>
+                <input type="checkbox">
+                <strong>DA</strong>, doresc să primesc newsletter și informații medicale utile
+            </label>
+            <label>
+                <input type="checkbox">
+                <strong>NU</strong>, nu doresc comunicări marketing
+            </label>
+        </div>
+    </div>
+    
+    <div class="signature-section">
+        <div class="signature-box">
+            <div class="signature-line">
+                <div class="signature-label">Semnătura pacient</div>
+            </div>
+        </div>
+        <div class="signature-box">
+            <div class="signature-line">
+                <div class="signature-label">Data</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="footer">
+        <p><strong>Notă importantă:</strong> Puteți retrage acest consimțământ în orice moment, prin solicitare scrisă către {{clinic_name}}.</p>
+        <p>Drepturile dumneavoastră GDPR: dreptul la acces, rectificare, ștergere, restricționare, portabilitate, și opoziție.</p>
+        <p>Pentru mai multe informații: contact@{{clinic_email}}</p>
+    </div>
+</body>
+</html>

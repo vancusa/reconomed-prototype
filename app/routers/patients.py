@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from sqlalchemy.orm.attributes import flag_modified
 from typing import List, Optional
 import uuid
 
@@ -423,9 +424,24 @@ async def get_patients(
     elif sort_by == "recent":
         query = query.order_by(Patient.created_at.desc())
     elif sort_by == "activity":
-        # For now, same as recent - later can join with consultations table
-        query = query.order_by(Patient.created_at.desc())
-    
+        # Join with consultations and sort by most recent consultation
+        from sqlalchemy import func
+        from app.models import Consultation
+        
+        # Subquery to get latest consultation date per patient
+        latest_consultation = db.query(
+            Consultation.patient_id,
+            func.max(Consultation.consultation_date).label('latest_date')
+        ).group_by(Consultation.patient_id).subquery()
+        
+        # Left join to include patients with no consultations
+        query = query.outerjoin(
+            latest_consultation,
+            Patient.id == latest_consultation.c.patient_id
+        ).order_by(
+            latest_consultation.c.latest_date.desc().nullslast(),
+            Patient.created_at.desc()
+        )
     # Get total count before pagination
     total = query.count()
     
@@ -434,7 +450,7 @@ async def get_patients(
     total_pages = (total + per_page - 1) // per_page
     
     # Apply pagination and ordering
-    patients = query.order_by(Patient.family_name, Patient.given_name).offset(offset).limit(per_page).all()
+    patients = query.offset(offset).limit(per_page).all()
     
     # Convert to response format
     patient_responses = [
@@ -486,15 +502,18 @@ async def validate_cnp_endpoint(cnp: str):
         "gender": extract_gender_from_cnp(cnp)
     }
 
-@router.post("/{patient_id}/gdpr/withdraw-consent")
-async def withdraw_patient_consent(
+@router.post("/{patient_id}/gdpr/grant-consent")
+async def grant_patient_consent(
     patient_id: str,
-    consent_type: str,
-    reason: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
+    consent_data: dict,
     db: Session = Depends(get_db)
 ):
-    """Withdraw specific GDPR consent for patient"""
+    """Grant specific GDPR consent for patient"""
+    
+    # Get demo doctor for testing
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    if not current_user:
+        raise HTTPException(status_code=500, detail="Demo user not found")
     
     patient = db.query(Patient).filter(
         Patient.id == patient_id,
@@ -504,6 +523,139 @@ async def withdraw_patient_consent(
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
     
+    consent_type = consent_data.get('consent_type')
+    
+    if not consent_type:
+        raise HTTPException(status_code=400, detail="consent_type required")
+    
+    # Initialize gdpr_consents if None
+    if patient.gdpr_consents is None:
+        patient.gdpr_consents = {}
+    
+    # Grant consent
+    patient.gdpr_consents[consent_type] = {
+        "granted": True,
+        "granted_at": consent_data.get('granted_at'),
+        "expires_at": consent_data.get('expires_at'),
+        "withdrawn": False,
+        "withdrawn_at": None
+    }
+    
+    # Mark as modified for SQLAlchemy to detect change
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(patient, "gdpr_consents")
+    
+    db.commit()
+    
+    # Audit log
+    audit_log = GDPRAuditLog(
+        clinic_id=current_user.clinic_id,
+        user_id=current_user.id,
+        patient_id=patient.id,
+        action="consent_granted",
+        legal_basis="patient_rights",
+        data_category="consent_management",
+        details={
+            "consent_type": consent_type,
+            "granted_by": current_user.full_name
+        }
+    )
+    db.add(audit_log)
+    db.commit()
+    
+    return {
+        "message": f"Consent '{consent_type}' granted successfully",
+        "consent_status": patient.gdpr_consents[consent_type]
+    }
+
+@router.post("/{patient_id}/gdpr/renew-consent")
+async def renew_patient_consent(
+    patient_id: str,
+    consent_data: dict,
+    db: Session = Depends(get_db)
+):
+    """Renew withdrawn consent for patient"""
+    
+    # Get demo doctor
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    if not current_user:
+        raise HTTPException(status_code=500, detail="Demo user not found")
+    
+    patient = db.query(Patient).filter(
+        Patient.id == patient_id,
+        Patient.clinic_id == current_user.clinic_id
+    ).first()
+    
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    consent_type = consent_data.get('consent_type')
+    
+    if not consent_type or consent_type not in (patient.gdpr_consents or {}):
+        raise HTTPException(status_code=400, detail="Invalid consent_type")
+    
+    # Renew consent (reset withdrawn status)
+    patient.gdpr_consents[consent_type] = {
+        "granted": True,
+        "granted_at": consent_data.get('renewed_at'),
+        "expires_at": consent_data.get('expires_at'),
+        "withdrawn": False,
+        "withdrawn_at": None,
+        "renewed": True,
+        "renewed_at": consent_data.get('renewed_at')
+    }
+    
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(patient, "gdpr_consents")
+    
+    db.commit()
+    
+    # Audit log
+    audit_log = GDPRAuditLog(
+        clinic_id=current_user.clinic_id,
+        user_id=current_user.id,
+        patient_id=patient.id,
+        action="consent_renewed",
+        legal_basis="patient_rights",
+        data_category="consent_management",
+        details={
+            "consent_type": consent_type,
+            "renewed_by": current_user.full_name
+        }
+    )
+    db.add(audit_log)
+    db.commit()
+    
+    return {
+        "message": f"Consent '{consent_type}' renewed successfully",
+        "consent_status": patient.gdpr_consents[consent_type]
+    }
+
+@router.post("/{patient_id}/gdpr/withdraw-consent")
+async def withdraw_patient_consent(
+    patient_id: str,
+    withdrawal_data: dict, 
+    db: Session = Depends(get_db)
+):
+    """Withdraw specific GDPR consent for patient"""
+    
+    # Get demo doctor (same as other endpoints)
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    if not current_user:
+        raise HTTPException(status_code=500, detail="Demo user not found")
+    
+    patient = db.query(Patient).filter(
+        Patient.id == patient_id,
+        Patient.clinic_id == current_user.clinic_id
+    ).first()
+    
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    consent_type = withdrawal_data.get('consent_type')
+    reason = withdrawal_data.get('reason')
+    print(f"consent", consent_type)
+
     # Check if consent type exists
     if consent_type not in (patient.gdpr_consents or {}):
         raise HTTPException(
@@ -517,17 +669,30 @@ async def withdraw_patient_consent(
             status_code=400,
             detail=f"Cannot withdraw required consent: {consent_type}"
         )
-    
+
+    #HERE IT IS THE IFFY PART  -
     # Withdraw consent
     from app.utils.gdpr_utils import withdraw_consent
-    patient.gdpr_consents[consent_type] = withdraw_consent(
-        patient.gdpr_consents[consent_type], 
-        reason
-    )
+    #patient.gdpr_consents[consent_type] = withdraw_consent(
+    #    patient.gdpr_consents[consent_type], 
+    #    reason
+    #)
     
-    db.commit()
-    
-    # Audit log
+    # 1. Create a copy of the dictionary to ensure SQLAlchemy detects the change.
+    #    This pattern is REQUIRED for mutable types (JSON/Dict)
+    gdpr_consents = patient.gdpr_consents.copy() if patient.gdpr_consents else {}
+
+    # 2. Modify the consent record within the new copy.
+    gdpr_consents[consent_type] = withdraw_consent(gdpr_consents[consent_type], reason)
+    print(f"Updated consent before commit: {gdpr_consents[consent_type]}")
+
+    # 3. Explicitly reassign the entire attribute. 
+    #    This is the signal to SQLAlchemy that the value has changed.
+    patient.gdpr_consents = gdpr_consents
+
+    flag_modified(patient, "gdpr_consents")
+
+  # Audit log
     audit_log = GDPRAuditLog(
         clinic_id=current_user.clinic_id,
         user_id=current_user.id,
@@ -542,9 +707,52 @@ async def withdraw_patient_consent(
         }
     )
     db.add(audit_log)
-    db.commit()
+
+    # 4. Commit and Refresh (Keep these two lines)
+    db.commit() # Save changes to the database
+    db.refresh(patient) # Re-fetch data to confirm persistence (good for debugging)
+    print(f"Updated consent after FINAL commit: {patient.gdpr_consents[consent_type]}")
+
+    #db.commit()
     
     return {
         "message": f"Consent '{consent_type}' withdrawn successfully",
         "consent_status": patient.gdpr_consents[consent_type]
     }
+
+@router.get("/{patient_id}/gdpr/consent-history")
+async def get_consent_history(
+    patient_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get audit log of all consent changes"""
+    
+    # Get demo doctor
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    if not current_user:
+        raise HTTPException(status_code=500, detail="Demo user not found")
+    
+    # Verify patient exists and belongs to clinic
+    patient = db.query(Patient).filter(
+        Patient.id == patient_id,
+        Patient.clinic_id == current_user.clinic_id
+    ).first()
+    
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    
+    # Get consent-related audit logs
+    history = db.query(GDPRAuditLog).filter(
+        GDPRAuditLog.patient_id == patient_id,
+        GDPRAuditLog.clinic_id == current_user.clinic_id,
+        GDPRAuditLog.action.in_(['consent_granted', 'consent_withdrawn', 'consent_renewed'])
+    ).order_by(GDPRAuditLog.created_at.desc()).all()
+    
+    return [
+        {
+            "timestamp": log.created_at.isoformat(),
+            "action": log.action,
+            "details": log.details
+        }
+        for log in history
+    ]
