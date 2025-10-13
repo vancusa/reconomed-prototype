@@ -94,15 +94,28 @@ class Consultation(Base):
     doctor_id = Column(String, ForeignKey("users.id"), nullable=False)
     clinic_id = Column(String, ForeignKey("clinics.id"), nullable=False)
 
-    consultation_type = Column(String(100), nullable=False)
+    specialty = Column(String(100), nullable=False)  # internal_medicine, cardiology, respiratory, gynecology
     consultation_date = Column(DateTime, default=datetime.utcnow)
-    structured_data = Column(JSON)
+    structured_data = Column(JSON)  # openEHR template data
+    
+    # Audio fields
     audio_transcript = Column(Text)
     audio_file_path = Column(String(500))
-    status = Column(String(20), default="draft")
+    audio_duration_seconds = Column(Integer)  # Track audio length
+    
+    # Enhanced status workflow
+    status = Column(String(20), default="draft")  # draft, in_progress, completed, discharged, cancelled
+    
+    # Auto-save tracking
+    last_autosave_at = Column(DateTime)  
+    
+    # Signing fields
     is_signed = Column(Boolean, default=False)
     signed_at = Column(DateTime)
+    
+    # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())  # Track updates
 
     # Relationships
     patient = relationship("Patient", back_populates="consultations")

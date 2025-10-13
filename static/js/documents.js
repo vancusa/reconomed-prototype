@@ -185,4 +185,15 @@ export class DocumentManager {
             showToast('Validation failed', 'error');
         }
     }
+
+    uploadDocumentForPatient(patientId) {
+        window.app.goToSection('documents');
+        // Pre-select patient in batch-patient dropdown
+        const patientSelect = document.getElementById('batch-patient');
+        if (patientSelect) {
+            patientSelect.value = patientId;
+        }
+        // Focus upload area
+        document.getElementById('upload-dropzone')?.scrollIntoView({ behavior: 'smooth' });
+    }
 }

@@ -66,34 +66,67 @@ class UserResponse(BaseModel):
 # ----------------------------
 # Consultation Schemas
 # ----------------------------
-class ConsultationCreate(BaseModel):
+
+class ConsultationStart(BaseModel):
+    """Schema for starting a new consultation (creates draft)"""
     patient_id: str
-    consultation_type: str  # general, followup, emergency, routine
-    consultation_date: Optional[datetime] = None  # Defaults to now if not provided
+    specialty: str  # internal_medicine, cardiology, respiratory, gynecology
+    
+class ConsultationAutoSave(BaseModel):
+    """Schema for auto-saving consultation data"""
+    structured_data: Optional[dict] = None
+    audio_file_path: Optional[str] = None
+    audio_duration_seconds: Optional[int] = None
+    
+class ConsultationCreate(BaseModel):
+    """Full consultation creation (for backward compatibility)"""
+    patient_id: str
+    specialty: str
+    consultation_date: Optional[datetime] = None
     structured_data: Optional[dict] = None
     audio_file_path: Optional[str] = None
 
 class ConsultationUpdate(BaseModel):
-    consultation_type: Optional[str] = None
+    """Update existing consultation"""
+    specialty: Optional[str] = None
     consultation_date: Optional[datetime] = None
     structured_data: Optional[dict] = None
     audio_transcript: Optional[str] = None
-    status: Optional[str] = None
+    audio_duration_seconds: Optional[int] = None
+    status: Optional[str] = None  # draft, in_progress, completed, discharged, cancelled
     is_signed: Optional[bool] = None
 
 class ConsultationResponse(BaseModel):
+    """Full consultation response"""
     id: str
     patient_id: str
     doctor_id: str
     clinic_id: str
-    consultation_type: str
+    specialty: str
     consultation_date: datetime
     structured_data: Optional[dict]
     audio_transcript: Optional[str]
     audio_file_path: Optional[str]
+    audio_duration_seconds: Optional[int]
     status: str
     is_signed: bool
     signed_at: Optional[datetime]
+    last_autosave_at: Optional[datetime]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    class Config:
+        from_attributes = True
+
+class ConsultationListItem(BaseModel):
+    """Lightweight consultation for lists"""
+    id: str
+    patient_id: str
+    specialty: str
+    consultation_date: datetime
+    status: str
+    is_signed: bool
+    last_autosave_at: Optional[datetime]
     created_at: datetime
     
     class Config:

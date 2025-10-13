@@ -152,24 +152,6 @@ async def register_user(
         specialties=new_user.specialties or []
     )
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get current user information"""
-    clinic = db.query(Clinic).filter(Clinic.id == current_user.clinic_id).first()
-    
-    return UserResponse(
-        id=current_user.id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        role=current_user.role,
-        clinic_id=current_user.clinic_id,
-        clinic_name=clinic.name if clinic else "Unknown",
-        specialties=current_user.specialties or []
-    )
-
 @router.post("/change-password")
 async def change_password(
     current_password: str = Form(...),
@@ -197,3 +179,21 @@ async def change_password(
     db.commit()
     
     return {"message": "Password updated successfully"}
+
+@router.get("/me")
+async def get_current_user_info(db: Session = Depends(get_db)):
+    """Get current authenticated user info"""
+    # Get demo doctor for MVP
+    user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "specialties": user.specialties or ["internal_medicine", "cardiology", "respiratory", "gynecology"],
+        "clinic_id": user.clinic_id
+    }

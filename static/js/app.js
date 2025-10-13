@@ -3,11 +3,11 @@ import { checkAuthentication, logout } from './auth.js';
 import { Navigation } from './navigation.js';
 import { PatientManager } from './patients.js';
 import { DocumentManager } from './documents.js';
+import { ConsultationManager } from './consultations.js';
 import { showLoading, hideLoading, showToast, showModal, hideModal} from './ui.js';
 import { startLiveClock } from './utils.js';
 import { initDocumentTabs } from './document-manager.js';
-import { initConsultationTabs } from './consultations.js';
-
+//import { initConsultationTabs } from './consultations.js';
 //import { loadPatientDocuments, renderDocuments } from './document-manager.js';
 //import { handleFileSelect, setupUploadArea } from './upload-handler.js';
 //import { compressImage } from './image-compression.js';
@@ -65,6 +65,7 @@ class ReconoMedApp {
         this.navigation = new Navigation(this);
         this.patientManager = new PatientManager(this);
         this.documentManager = new DocumentManager(this);
+        this.consultationManager = new ConsultationManager(this);
     }
 
     // =========================================================================
@@ -92,7 +93,6 @@ class ReconoMedApp {
             this.patientManager.init();    // Set up form submissions, search
             this.documentManager.init();   // Set up upload handlers
             initDocumentTabs();            // Set up document tab switching
-            initConsultationTabs();        // Set up consultation tab switching
         } catch (err) {
             console.error('UI initialization failed:', err);
             showToast('Interface setup failed', 'error');

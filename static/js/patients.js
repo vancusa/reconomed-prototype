@@ -1,4 +1,4 @@
-//Patient CRUD + rendering
+    //Patient CRUD + rendering
 // patients.js
 // -----------------------------------------------------------------------------
 // Handles patient-related functionality for the SPA
@@ -234,9 +234,11 @@ export class PatientManager {
                     <p>${patient.birth_date || ''} ${patient.phone ? '• ' + patient.phone : ''}</p>
                 </div>
                 <div class="patient-actions">
-                    <button class="btn btn-sm btn-primary" data-action="view" data-id="${patient.id}">View</button>
-                    <button class="btn btn-sm btn-secondary" data-action="edit" data-id="${patient.id}">Edit</button>
-                    <button class="btn btn-sm btn-tertiary" data-action="gdpr" data-id="${patient.id}">GDPR</button>
+                    <button class="btn-icon" data-action="view" data-id="${patient.id}" title="View Patient"><i class="fas fa-eye"></i></button>
+                    <button class="btn-icon" data-action="edit" data-id="${patient.id}" title="Edit Patient"><i class="fas fa-edit"></i></button>
+                    <button class="btn-icon" data-action="gdpr" data-id="${patient.id}" title="GDPR Consent"><i class="fas fa-shield-alt"></i></button>
+                    <button class="btn-icon" data-action="consult" data-id="${patient.id}" title="New Consultation"><i class="fas fa-stethoscope"></i></button>
+                    <button class="btn-icon" data-action="upload" data-id="${patient.id}" title="Upload Document"><i class="fas fa-upload"></i></button>
                 </div>
             `;
             this.gridContainer.appendChild(card);
@@ -309,8 +311,17 @@ export class PatientManager {
     // Actions: view/edit/gdpr
     // -------------------------------------------------------------------------
     handleAction(e) {
-        const action = e.target.dataset.action;
-        const id = e.target.dataset.id;
+        // Find the button even if icon was clicked
+        const button = e.target.closest('button');
+        if (!button) return;
+        
+        const action = button.dataset.action;
+        const id = button.dataset.id;
+        
+        if (!action) {
+            console.warn('No action found on button');
+            return;
+        }
 
         switch (action) {
             case 'view':
@@ -321,6 +332,12 @@ export class PatientManager {
                 break;
             case 'gdpr':
                 this.manageGDPR(id);
+                break;
+            case 'consult':
+                window.consultationManager.startFromPatient(id);
+                break;
+            case 'upload':
+                this.app.documentManager.uploadDocumentForPatient(id);
                 break;
             default:
                 console.warn('Unknown patient action:', action);

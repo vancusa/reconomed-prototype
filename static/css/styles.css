@@ -2117,3 +2117,302 @@ body {
     color: #E5E7EB;
     margin-bottom: 20px;
 }
+
+/* Consultation Recorder Split View */
+.consultation-recorder-container {
+    display: flex;
+    gap: 20px;
+    height: calc(100vh - 200px);
+    overflow: hidden;
+}
+
+.consultation-left-panel {
+    flex: 0 0 350px;
+    border-right: 1px solid #E5E7EB;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.consultation-right-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.patient-info-banner {
+    background: #F0FCFF;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.patient-info-banner h3 {
+    margin: 0 0 8px 0;
+    color: #0891B2;
+}
+
+.patient-info-banner span {
+    display: block;
+    font-size: 14px;
+    color: #6B7280;
+}
+
+/* History Tabs */
+.patient-history-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+    border-bottom: 2px solid #E5E7EB;
+}
+
+.history-tab-btn {
+    background: none;
+    border: none;
+    padding: 10px 15px;
+    cursor: pointer;
+    font-weight: 500;
+    color: #6B7280;
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s;
+}
+
+.history-tab-btn.active {
+    color: #0891B2;
+    border-bottom-color: #0891B2;
+}
+
+.history-content {
+    display: none;
+}
+
+.history-content.active {
+    display: block;
+}
+
+/* History Items */
+.history-item {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.history-item:hover {
+    border-color: #0891B2;
+    box-shadow: 0 2px 4px rgba(8, 145, 178, 0.1);
+}
+
+.history-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.history-item-date {
+    font-size: 12px;
+    color: #9CA3AF;
+}
+
+.history-item-preview {
+    font-size: 14px;
+    color: #6B7280;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Consultation Header */
+/* ----------------THIS NEEDS CONGRUENCY ------------------------*/
+
+.consultation-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #E5E7EB;
+}
+
+.specialty-selector-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.specialty-selector {
+    padding: 8px 12px;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #0891B2;
+}
+
+/* Auto-Save Indicator */
+.auto-save-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: #6B7280;
+}
+
+.auto-save-indicator i {
+    font-size: 12px;
+}
+
+/* Audio Recording Section */
+.audio-recording-section {
+    background: #F9FAFB;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+#recording-duration {
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    color: #DC2626;
+}
+
+/* Consultation Form */
+.consultation-form .form-group {
+    margin-bottom: 20px;
+}
+
+.consultation-form label {
+    display: block;
+    font-weight: 500;
+    color: #111827;
+    margin-bottom: 6px;
+}
+
+.consultation-form textarea,
+.consultation-form input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #E5E7EB;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+    transition: border-color 0.2s;
+}
+
+.consultation-form textarea:focus,
+.consultation-form input:focus {
+    outline: none;
+    border-color: #0891B2;
+    box-shadow: 0 0 0 3px rgba(8, 145, 178, 0.1);
+}
+
+/* Consultation Actions */
+.consultation-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 2px solid #E5E7EB;
+}
+
+/* Specialty Selector Modal */
+.specialty-options {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    padding: 20px;
+}
+
+.specialty-option-btn {
+    padding: 20px;
+    border: 2px solid #E5E7EB;
+    border-radius: 8px;
+    background: #FFFFFF;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.specialty-option-btn:hover {
+    border-color: #0891B2;
+    background: #F0FCFF;
+}
+
+.specialty-option-btn i {
+    font-size: 32px;
+    color: #0891B2;
+}
+
+/* Empty States */
+.empty-message {
+    text-align: center;
+    color: #9CA3AF;
+    padding: 30px;
+    font-style: italic;
+}
+
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.badge-success {
+    background: #DCFCE7;
+    color: #166534;
+}
+
+.document-type-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    background: #F3F4F6;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #6B7280;
+    margin-top: 5px;
+}
+
+
+.patient-card-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    justify-content: center;
+}
+
+.btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: #F3F4F6;
+    color: #6B7280;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-icon:hover {
+    background: #0891B2;
+    color: white;
+    transform: translateY(-2px);
+}
+
+.btn-icon i {
+    font-size: 16px;
+}
