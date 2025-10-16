@@ -234,11 +234,11 @@ export class PatientManager {
                     <p>${patient.birth_date || ''} ${patient.phone ? '• ' + patient.phone : ''}</p>
                 </div>
                 <div class="patient-actions">
-                    <button class="btn-icon" data-action="view" data-id="${patient.id}" title="View Patient"><i class="fas fa-eye"></i></button>
-                    <button class="btn-icon" data-action="edit" data-id="${patient.id}" title="Edit Patient"><i class="fas fa-edit"></i></button>
+                    <button class="btn-icon primary" data-action="view" data-id="${patient.id}" title="View Patient"><i class="fas fa-eye"></i></button>
+                    <button class="btn-icon secondary" data-action="edit" data-id="${patient.id}" title="Edit Patient"><i class="fas fa-edit"></i></button>
                     <button class="btn-icon" data-action="gdpr" data-id="${patient.id}" title="GDPR Consent"><i class="fas fa-shield-alt"></i></button>
-                    <button class="btn-icon" data-action="consult" data-id="${patient.id}" title="New Consultation"><i class="fas fa-stethoscope"></i></button>
-                    <button class="btn-icon" data-action="upload" data-id="${patient.id}" title="Upload Document"><i class="fas fa-upload"></i></button>
+                    <button class="btn-icon secondary" data-action="consult" data-id="${patient.id}" title="New Consultation"><i class="fas fa-stethoscope"></i></button>
+                    <button class="btn-icon primary" data-action="upload" data-id="${patient.id}" title="Upload Document"><i class="fas fa-upload"></i></button>
                 </div>
             `;
             this.gridContainer.appendChild(card);
