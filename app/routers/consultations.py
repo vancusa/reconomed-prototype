@@ -1,12 +1,15 @@
 
 """Consultation management endpoints - Phase 4A"""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query,UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import uuid
+import aiofiles
 import logging
 from datetime import datetime
+from pathlib import Path
+import os
 
 from app.database import get_db
 from app.models import Consultation, User, Patient, GDPRAuditLog, Document
@@ -14,12 +17,23 @@ from app.schemas import (
     ConsultationStart, ConsultationAutoSave, ConsultationCreate, 
     ConsultationUpdate, ConsultationResponse, ConsultationListItem
 )
+from app.services.template_service import TemplateService
+from app.services.audio_service import AudioTranscriptionService
+from app.services.llm_extraction_service import LLMExtractionService
+from app.services.template_service import TemplateService
+
 
 router = APIRouter(tags=["consultations"])
 
 # Loggers
 audit_logger = logging.getLogger("reconomed.audit")
 app_logger = logging.getLogger("reconomed.app")
+
+
+# Initialize services (use environment variables in production)
+audio_service = AudioTranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
+llm_service = LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 # ----------------------------
 # Helper: Get Current User
@@ -598,3 +612,311 @@ async def get_today_stats(db: Session = Depends(get_db)):
     ).distinct().count()
     
     return {"patients_today": patients_today}
+
+
+@router.get("/templates/{specialty}")
+async def get_consultation_template(
+    specialty: str,
+    db: Session = Depends(get_db)
+):
+    """Get template definition for specialty"""
+    template_service = TemplateService(db)
+    try:
+        template = template_service.get_template(specialty)
+        return template
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/{consultation_id}/pre-fill")
+async def pre_fill_consultation(
+    consultation_id: str,
+    selected_documents: Optional[List[str]] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Pre-fill consultation with patient history.
+    Called after doctor selects which documents to include.
+    """
+    current_user = get_current_user(db)
+    
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id
+    ).first()
+    
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+    
+    template_service = TemplateService(db)
+    pre_filled_data = template_service.pre_fill_template(
+        consultation.patient_id,
+        consultation.specialty,
+        selected_documents
+    )
+    
+    # Merge with existing data (don't overwrite manual entries)
+    existing_data = consultation.structured_data or {}
+    merged_data = {**pre_filled_data, **existing_data}
+    
+    consultation.structured_data = merged_data
+    consultation.last_autosave_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(consultation)
+    
+    return consultation
+    
+@router.post("/{consultation_id}/audio/upload")
+async def upload_consultation_audio(
+    consultation_id: str,
+    audio_file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload audio file for consultation.
+    Stores file temporarily for processing.
+    """
+    current_user = get_current_user(db)
+    
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id
+    ).first()
+    
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+    
+    # Validate file type
+    allowed_formats = [".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"]
+    file_ext = Path(audio_file.filename).suffix.lower()
+    if file_ext not in allowed_formats:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio format. Allowed: {', '.join(allowed_formats)}"
+        )
+    
+    # Create uploads directory if not exists
+    upload_dir = Path("uploads/audio/temp")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate unique filename
+    audio_filename = f"{consultation_id}_{uuid.uuid4()}{file_ext}"
+    audio_path = upload_dir / audio_filename
+    
+    # Save file
+    async with aiofiles.open(audio_path, 'wb') as f:
+        content = await audio_file.read()
+        await f.write(content)
+    
+    # Get audio duration (if available)
+    audio_duration = None
+    try:
+        import wave
+        if file_ext == ".wav":
+            with wave.open(str(audio_path), 'rb') as wav:
+                frames = wav.getnframes()
+                rate = wav.getframerate()
+                audio_duration = int(frames / rate)
+    except:
+        pass  # Duration optional for now
+    
+    # Update consultation
+    consultation.audio_file_path = str(audio_path)
+    consultation.audio_duration_seconds = audio_duration
+    consultation.last_autosave_at = datetime.utcnow()
+    
+    db.commit()
+    
+    return {
+        "message": "Audio uploaded successfully",
+        "audio_file_path": str(audio_path),
+        "audio_duration_seconds": audio_duration
+    }
+
+@router.post("/{consultation_id}/audio/process")
+async def process_consultation_audio(
+    consultation_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Process uploaded audio: transcribe and extract fields.
+    This is the main endpoint called when doctor clicks "End Recording".
+    
+    Steps:
+    1. Transcribe audio using Whisper API
+    2. Extract structured fields using GPT-4
+    3. Extract ICD-10 codes from diagnosis
+    4. Update consultation with extracted data
+    5. Delete audio file (GDPR requirement)
+    """
+    current_user = get_current_user(db)
+    
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id
+    ).first()
+    
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+    
+    if not consultation.audio_file_path:
+        raise HTTPException(status_code=400, detail="No audio file uploaded")
+    
+    try:
+        # Step 1: Transcribe audio
+        app_logger.info(f"Transcribing audio for consultation {consultation_id}")
+        transcript = await audio_service.transcribe_audio(
+            consultation.audio_file_path,
+            language="ro"
+        )
+        
+        consultation.audio_transcript = transcript
+        db.commit()
+        
+        # Step 2: Get template for field extraction
+        template_service = TemplateService(db)
+        template = template_service.get_template(consultation.specialty)
+        
+        # Step 3: Extract fields from transcript
+        app_logger.info(f"Extracting fields for consultation {consultation_id}")
+        extracted_data = await llm_service.extract_fields_from_transcript(
+            transcript=transcript,
+            template=template,
+            existing_data=consultation.structured_data
+        )
+        
+        # Step 4: Extract ICD-10 codes if diagnosis mentioned
+        if "diagnosis" in extracted_data and extracted_data["diagnosis"].get("diagnoses"):
+            diagnosis_text = extracted_data["diagnosis"]["diagnoses"]
+            app_logger.info(f"Extracting ICD-10 codes for consultation {consultation_id}")
+            
+            icd10_codes = await llm_service.extract_icd10_codes(
+                diagnosis_text=diagnosis_text,
+                icd10_database=""  # Load from CSV or use LLM's knowledge
+            )
+            
+            extracted_data["diagnosis"]["icd10_codes"] = icd10_codes
+        
+        # Step 5: Merge extracted data with existing (don't overwrite manual entries)
+        existing_data = consultation.structured_data or {}
+        
+        # Deep merge: extracted data goes in, but existing manual entries stay
+        merged_data = self._deep_merge_with_confidence(existing_data, extracted_data)
+        
+        consultation.structured_data = merged_data
+        consultation.last_autosave_at = datetime.utcnow()
+        
+        db.commit()
+        
+        # Step 6: Delete audio file (GDPR requirement - keep only transcript)
+        try:
+            audio_path = Path(consultation.audio_file_path)
+            if audio_path.exists():
+                audio_path.unlink()
+                app_logger.info(f"Deleted audio file for consultation {consultation_id}")
+            consultation.audio_file_path = None  # Clear path after deletion
+            db.commit()
+        except Exception as e:
+            app_logger.error(f"Failed to delete audio file: {str(e)}")
+        
+        # Audit log
+        audit_log = GDPRAuditLog(
+            clinic_id=current_user.clinic_id,
+            user_id=current_user.id,
+            patient_id=consultation.patient_id,
+            action="audio_processed_and_deleted",
+            legal_basis="consent",
+            data_category="medical_consultation",
+            details={
+                "consultation_id": consultation_id,
+                "transcript_length": len(transcript),
+                "fields_extracted": list(extracted_data.keys()),
+                "audio_deleted": True
+            }
+        )
+        db.add(audit_log)
+        db.commit()
+        
+        return {
+            "message": "Audio processed successfully",
+            "transcript": transcript,
+            "extracted_data": merged_data,
+            "audio_deleted": True
+        }
+        
+    except Exception as e:
+        app_logger.error(f"Audio processing failed for consultation {consultation_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Audio processing failed: {str(e)}")
+
+def _deep_merge_with_confidence(
+    existing: Dict[str, Any],
+    extracted: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    Deep merge extracted data with existing data.
+    
+    Rules:
+    - If field exists in 'existing' and not in 'extracted': keep existing
+    - If field exists in 'extracted' with high confidence: use extracted
+    - If field exists in both with medium/low confidence: keep existing (doctor manually entered)
+    - If field only in extracted: add it
+    """
+    merged = dict(existing)
+    
+    for section_id, section_data in extracted.items():
+        if section_id not in merged:
+            merged[section_id] = section_data
+        else:
+            # Merge section-level data
+            merged_section = dict(merged[section_id])
+            
+            for field_id, field_value in section_data.items():
+                # Skip confidence fields
+                if field_id.endswith("_confidence"):
+                    continue
+                
+                # Check confidence
+                confidence_key = f"{field_id}_confidence"
+                confidence = section_data.get(confidence_key, "medium")
+                
+                # If field doesn't exist, add it
+                if field_id not in merged_section:
+                    merged_section[field_id] = field_value
+                    if confidence_key in section_data:
+                        merged_section[confidence_key] = section_data[confidence_key]
+                
+                # If field exists and extracted has high confidence, consider updating
+                elif confidence == "high":
+                    # Only update if existing value is empty/null
+                    if not merged_section[field_id]:
+                        merged_section[field_id] = field_value
+                        if confidence_key in section_data:
+                            merged_section[confidence_key] = section_data[confidence_key]
+            
+            merged[section_id] = merged_section
+    
+    return merged
+
+@router.get("/{consultation_id}/audio/transcript")
+async def get_consultation_transcript(
+    consultation_id: str,
+    db: Session = Depends(get_db)
+):
+    """Get audio transcript for consultation (for review/editing)"""
+    current_user = get_current_user(db)
+    
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id
+    ).first()
+    
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+    
+    return {
+        "consultation_id": consultation_id,
+        "transcript": consultation.audio_transcript,
+        "duration_seconds": consultation.audio_duration_seconds
+    }

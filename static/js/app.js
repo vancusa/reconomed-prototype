@@ -7,6 +7,8 @@ import { ConsultationManager } from './consultations.js';
 import { showLoading, hideLoading, showToast, showModal, hideModal} from './ui.js';
 import { startLiveClock } from './utils.js';
 import { initDocumentTabs } from './document-manager.js';
+import { ClinicManager } from './clinics.js';   
+
 //import { initConsultationTabs } from './consultations.js';
 //import { loadPatientDocuments, renderDocuments } from './document-manager.js';
 //import { handleFileSelect, setupUploadArea } from './upload-handler.js';
@@ -29,6 +31,7 @@ const API_CONFIG = {
         patients: '/patients/',
         search: '/search/'
     }
+    
 };
 
 // Helper function to build API URLs
@@ -66,6 +69,7 @@ class ReconoMedApp {
         this.patientManager = new PatientManager(this);
         this.documentManager = new DocumentManager(this);
         this.consultationManager = new ConsultationManager(this);
+        this.clinicManager = new ClinicManager();
     }
 
     // =========================================================================
@@ -84,7 +88,19 @@ class ReconoMedApp {
         }
 
         // =====================================================================
-        // STEP 2: UI Component Initialization (synchronous DOM setup)
+        // STEP 2: Load Clinic Data (needed by all managers)
+        // =====================================================================
+        try {
+            await this.clinicManager.loadClinicData();
+            window.clinicManager = this.clinicManager; // Make globally available
+        } catch (err) {
+            console.error('Clinic data loading failed:', err);
+            showToast('Failed to load clinic information', 'error');
+            return; // Can't proceed without clinic data
+        }
+
+        // =====================================================================
+        // STEP 3: UI Component Initialization (synchronous DOM setup)
         // =====================================================================
         // These methods set up event listeners and find DOM elements
         // They should be fast and not make network calls
@@ -92,6 +108,8 @@ class ReconoMedApp {
             this.navigation.init();        // Set up nav click handlers
             this.patientManager.init();    // Set up form submissions, search
             this.documentManager.init();   // Set up upload handlers
+            this.consultationManager.init(); // Set up consultation event listeners
+            
             initDocumentTabs();            // Set up document tab switching
         } catch (err) {
             console.error('UI initialization failed:', err);
@@ -100,14 +118,14 @@ class ReconoMedApp {
         }
 
         // =====================================================================
-        // STEP 3: Data Loading (asynchronous network calls)
+        // STEP 4: Data Loading (asynchronous network calls)
         // =====================================================================
         // Load initial data from backend
         // This can be slow and might fail, so handle gracefully
         await this.loadInitialData();
 
         // =====================================================================
-        // STEP 4: Make it pretty
+        // STEP 5: Make it pretty
         // =====================================================================
         // Start live clock to have on the dashboard
         startLiveClock('date-time');
@@ -230,6 +248,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Make app available globally for HTML onclick handlers
 window.app = app;
+window.consultationManager = app.consultationManager;
+window.clinicManager = app.clinicManager;
 
 // =========================================================================
 // GLOBAL MODAL FUNCTIONS for HTML onclick handlers

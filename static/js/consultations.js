@@ -1,588 +1,1107 @@
-// static/js/consultations.js - Complete Phase 4A Implementation
+// static/js/consultations.js
+import { showToast } from './ui.js';
 
-import { showToast, showLoading, hideLoading } from './ui.js';
-
-export class ConsultationManager {
+class ConsultationManager {
     constructor() {
         this.currentConsultationId = null;
-        this.currentPatientId = null;
+        this.currentTemplate = null;
         this.autoSaveInterval = null;
-        this.hasUnsavedChanges = false;
-        this.specialtyTemplates = this.initializeTemplates();
+        this.isRecording = false;
+        this.mediaRecorder = null;
+        this.audioChunks = [];
     }
 
-    // ----------------------------
-    // Specialty Templates (Simplified for MVP)
-    // ----------------------------
-    initializeTemplates() {
-        return {
-            internal_medicine: {
-                name: "Internal Medicine",
-                fields: [
-                    { id: "chief_complaint", label: "Chief Complaint", type: "textarea" },
-                    { id: "history_present_illness", label: "History of Present Illness", type: "textarea" },
-                    { id: "review_systems", label: "Review of Systems", type: "textarea" },
-                    { id: "physical_exam", label: "Physical Examination", type: "textarea" },
-                    { id: "assessment", label: "Assessment", type: "textarea" },
-                    { id: "plan", label: "Plan", type: "textarea" }
-                ]
-            },
-            cardiology: {
-                name: "Cardiology",
-                fields: [
-                    { id: "chief_complaint", label: "Chief Complaint", type: "textarea" },
-                    { id: "cardiac_history", label: "Cardiac History", type: "textarea" },
-                    { id: "blood_pressure", label: "Blood Pressure", type: "text", placeholder: "120/80 mmHg" },
-                    { id: "heart_rate", label: "Heart Rate", type: "text", placeholder: "72 bpm" },
-                    { id: "ecg_findings", label: "ECG Findings", type: "textarea" },
-                    { id: "cardiac_exam", label: "Cardiac Examination", type: "textarea" },
-                    { id: "assessment", label: "Assessment", type: "textarea" },
-                    { id: "plan", label: "Treatment Plan", type: "textarea" }
-                ]
-            },
-            respiratory: {
-                name: "Respiratory Medicine",
-                fields: [
-                    { id: "chief_complaint", label: "Chief Complaint", type: "textarea" },
-                    { id: "respiratory_history", label: "Respiratory History", type: "textarea" },
-                    { id: "spo2", label: "SpO2", type: "text", placeholder: "98%" },
-                    { id: "respiratory_rate", label: "Respiratory Rate", type: "text", placeholder: "16/min" },
-                    { id: "lung_sounds", label: "Lung Sounds", type: "textarea" },
-                    { id: "spirometry", label: "Spirometry Results", type: "textarea" },
-                    { id: "assessment", label: "Assessment", type: "textarea" },
-                    { id: "plan", label: "Treatment Plan", type: "textarea" }
-                ]
-            },
-            gynecology: {
-                name: "Gynecology",
-                fields: [
-                    { id: "chief_complaint", label: "Chief Complaint", type: "textarea" },
-                    { id: "menstrual_history", label: "Menstrual History", type: "textarea" },
-                    { id: "pregnancy_history", label: "Pregnancy History", type: "textarea" },
-                    { id: "gynecological_exam", label: "Gynecological Examination", type: "textarea" },
-                    { id: "assessment", label: "Assessment", type: "textarea" },
-                    { id: "plan", label: "Treatment Plan", type: "textarea" }
-                ]
-            }
+    init() {
+        // Start new consultation
+        document.getElementById('start-new-consultation')?.addEventListener('click', 
+            () => this.showPatientSelectionModal()
+        );
+        
+        // Audio recording controls
+        document.getElementById('start-recording')?.addEventListener('click',
+            () => this.startAudioRecording()
+        );
+        
+        document.getElementById('stop-recording')?.addEventListener('click',
+            () => this.stopAudioRecording()
+        );
+        
+        // Save buttons
+        document.getElementById('save-as-draft')?.addEventListener('click',
+            () => this.saveConsultation('draft')
+        );
+        
+        document.getElementById('save-as-completed')?.addEventListener('click',
+            () => this.saveConsultation('completed')
+        );
+    }
+
+    //helper method
+    //TODO make it not hardocoded!
+    async getDoctorSpecialties() {
+        // Get from user profile or hardcode for demo
+        return ['internal_medicine', 'cardiology', 'respiratory', 'gynecology', 'obstetrics'];
+    }
+
+    //helper method
+    formatSpecialtyName(specialty) {
+        const names = {
+            'internal_medicine': 'Internal Medicine',
+            'cardiology': 'Cardiology',
+            'respiratory': 'Respiratory Medicine',
+            'gynecology': 'Gynecology',
+            'obstetrics': 'Obstetrics (pregancy tracker)'
         };
+        return names[specialty] || specialty;
     }
 
-    // ----------------------------
-    // Step 1: Start Consultation from Patient Card
-    // ----------------------------
-    async startFromPatient(patientId) {
-        try {
-            // Get doctor's specialties to show selector
-            const response = await fetch('/api/auth/me');
-            const doctor = await response.json();
-            
-            if (!doctor.specialties || doctor.specialties.length === 0) {
-                showToast('No specialties configured for doctor', 'error');
-                return;
-            }
+    //helper method
+    getClinicId() {
+        return window.clinicManager?.getClinicId() || null;
+    }
 
-            // If doctor has only one specialty, skip selection
-            if (doctor.specialties.length === 1) {
-                await this.createConsultation(patientId, doctor.specialties[0]);
-            } else {
-                // Show specialty selector modal
-                this.showSpecialtySelector(patientId, doctor.specialties);
-            }
+    async startConsultation(patientId, specialty) {
+        try {
+            // Step 1: Create draft consultation
+           const response = await fetch(
+                apiUrl(API_CONFIG.ENDPOINTS.consultations.start),
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ patient_id: patientId, specialty: specialty })
+                }
+            );
+            
+            if (!response.ok) throw new Error('Failed to start consultation');
+            
+            const consultation = await response.json();
+            this.currentConsultationId = consultation.id;
+            
+            // Step 2: Load template
+            await this.loadTemplate(specialty);
+            
+            // Step 3: Show document selection modal for pre-filling
+            await this.showDocumentSelectionModal(patientId);
+            
+            // Step 4: Render split-view consultation interface
+            await this.renderConsultationView();
+            
+            // Step 5: Start auto-save
+            this.startAutoSave();
+            
         } catch (error) {
-            console.error('Error starting consultation:', error);
-            showToast('Failed to start consultation', 'error');
+            showToast('Failed to start consultation: ' + error.message, 'error');
         }
     }
-
-    showSpecialtySelector(patientId, specialties) {
+    
+    async loadTemplate(specialty) {
+        try {
+            const response = await fetch(
+                `/api/v1/${getClinicId()}/consultations/templates/${specialty}`
+            );
+            
+            if (!response.ok) throw new Error('Failed to load template');
+            
+            this.currentTemplate = await response.json();
+            
+        } catch (error) {
+            showToast('Failed to load consultation template', 'error');
+            throw error;
+        }
+    }
+    
+    async showDocumentSelectionModal(patientId) {
+        // Fetch patient documents
+        const response = await fetch(
+            `/api/v1/${getClinicId()}/patients/${patientId}/documents`
+        );
+        const documents = await response.json();
+        
+        // Show modal with document checkboxes
         const modalHTML = `
-            <div class="modal" id="specialty-selector-modal" style="display: block;">
+            <div class="modal" id="document-selection-modal">
                 <div class="modal-content">
-                    <div class="modal-header">
-                        <h2>Select Consultation Specialty</h2>
+                    <h3>Select Documents to Include</h3>
+                    <p>Choose documents to pre-fill consultation data:</p>
+                    <div class="document-list">
+                        ${documents.map(doc => `
+                            <label class="document-checkbox">
+                                <input type="checkbox" value="${doc.id}" 
+                                    data-type="${doc.document_type}">
+                                ${doc.original_filename} (${doc.document_type})
+                            </label>
+                        `).join('')}
                     </div>
-                    <div class="modal-body">
-                        <div class="specialty-options">
-                            ${specialties.map(specialty => `
-                                <button class="specialty-option-btn" data-specialty="${specialty}">
-                                    <i class="fas fa-stethoscope"></i>
-                                    ${this.specialtyTemplates[specialty]?.name || specialty}
-                                </button>
-                            `).join('')}
-                        </div>
+                    <div class="modal-actions">
+                        <button onclick="consultationManager.preFillConsultation()">
+                            Continue with Selected Documents
+                        </button>
+                        <button onclick="consultationManager.skipPreFill()">
+                            Skip - Start Blank
+                        </button>
                     </div>
                 </div>
             </div>
         `;
-
+        
         document.body.insertAdjacentHTML('beforeend', modalHTML);
-
-        // Add click handlers
-        document.querySelectorAll('.specialty-option-btn').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const specialty = btn.dataset.specialty;
-                document.getElementById('specialty-selector-modal').remove();
-                await this.createConsultation(patientId, specialty);
-            });
-        });
     }
-
-    // ----------------------------
-    // Step 2: Create Consultation and Show Recording Interface
-    // ----------------------------
-    async createConsultation(patientId, specialty) {
-        try {
-            showLoading();
-
-            const response = await fetch('/api/consultations/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    patient_id: patientId,
-                    specialty: specialty
-                })
-            });
-
-            if (!response.ok) throw new Error('Failed to start consultation');
-
-            const consultation = await response.json();
-            this.currentConsultationId = consultation.id;
-            this.currentPatientId = patientId;
-
-            // Navigate to consultations section and show recording interface
-            window.app.goToSection('consultations');
-            await this.showConsultationRecorder(consultation);
-
-            // Start auto-save
-            this.startAutoSave();
-
-            hideLoading();
-            showToast('Consultation started', 'success');
-
-        } catch (error) {
-            hideLoading();
-            console.error('Error creating consultation:', error);
-            showToast('Failed to create consultation', 'error');
+    
+    async preFillConsultation() {
+        const selectedDocs = Array.from(
+            document.querySelectorAll('#document-selection-modal input:checked')
+        ).map(cb => cb.value);
+        
+        if (selectedDocs.length > 0) {
+            try {
+                const response = await fetch(
+                    `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/pre-fill`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ selected_documents: selectedDocs })
+                    }
+                );
+                
+                if (!response.ok) throw new Error('Pre-fill failed');
+                
+                const consultation = await response.json();
+                this.currentConsultationData = consultation.structured_data;
+                
+            } catch (error) {
+                showToast('Failed to pre-fill consultation', 'error');
+            }
         }
+        
+        // Close modal and continue
+        document.getElementById('document-selection-modal').remove();
+        await this.renderConsultationView();
     }
+    
+    async renderConsultationView() {
+        const container = document.getElementById('consultation-container');
+        
+        // Get doctor's specialties
+        const doctorSpecialties = await this.getDoctorSpecialties();
+        
+        const specialtyOptions = doctorSpecialties.map(spec => {
+            const selected = spec === this.currentTemplate.specialty ? 'selected' : '';
+            return `<option value="${spec}" ${selected}>${this.formatSpecialtyName(spec)}</option>`;
+        }).join('');
 
-    // ----------------------------
-    // Step 2: Consultation Recording Interface (Split View)
-    // ----------------------------
-    async showConsultationRecorder(consultation) {
-        try {
-            // Get patient history for left panel
-            const historyResponse = await fetch(
-                `/api/consultations/${consultation.id}/patient-history`
-            );
-            const history = await historyResponse.json();
-
-            // Build split-view interface
-            const consultationTab = document.getElementById('new-consultation-tab');
-            consultationTab.innerHTML = `
-                <div class="consultation-recorder-container">
-                    <!-- Left Panel: Patient History -->
-                    <div class="consultation-left-panel">
-                        <div class="patient-info-banner">
-                            <h3>${history.patient.given_name} ${history.patient.family_name}</h3>
-                            <span>CNP: ${history.patient.cnp || 'N/A'}</span>
-                            <span>DOB: ${history.patient.birth_date || 'N/A'}</span>
-                        </div>
-
-                        <div class="patient-history-tabs">
-                            <button class="history-tab-btn active" data-tab="consultations">
-                                Previous Consultations (${history.consultations.length})
-                            </button>
-                            <button class="history-tab-btn" data-tab="documents">
-                                Documents (${history.documents.length})
-                            </button>
-                        </div>
-
-                        <div id="consultations-history-content" class="history-content active">
-                            ${this.renderPreviousConsultations(history.consultations)}
-                        </div>
-
-                        <div id="documents-history-content" class="history-content">
-                            ${this.renderDocumentsHistory(history.documents)}
-                        </div>
-                    </div>
-
-                    <!-- Right Panel: Consultation Form -->
-                    <div class="consultation-right-panel">
-                        <div class="consultation-header">
-                            <div class="specialty-selector-container">
-                                <label>Specialty:</label>
-                                <select id="consultation-specialty" class="specialty-selector">
-                                    ${Object.keys(this.specialtyTemplates).map(key => `
-                                        <option value="${key}" ${key === consultation.specialty ? 'selected' : ''}>
-                                            ${this.specialtyTemplates[key].name}
-                                        </option>
-                                    `).join('')}
-                                </select>
-                            </div>
-
-                            <div class="auto-save-indicator">
-                                <i class="fas fa-circle" id="save-status-icon"></i>
-                                <span id="save-status-text">Draft</span>
-                            </div>
-                        </div>
-
-                        <!-- Audio Recording Controls -->
-                        <div class="audio-recording-section">
-                            <button class="btn-primary" id="start-audio-btn">
+        // Split view: left = template form, right = patient history
+        container.innerHTML = `
+            <div class="consultation-split-view">
+                <!-- Left: Consultation Form -->
+                <div class="consultation-form-panel">
+                    <div class="consultation-header">
+                        <h2>
+                            <select id="specialty-selector" onchange="consultationManager.changeSpecialty(this.value)">
+                                ${specialtyOptions}
+                            </select>
+                            Consultation
+                        </h2>
+                        <div class="audio-controls">
+                            <button id="start-recording" class="btn-record">
                                 <i class="fas fa-microphone"></i> Start Recording
                             </button>
-                            <button class="btn-danger" id="stop-audio-btn" style="display: none;">
+                            <button id="stop-recording" class="btn-stop" style="display:none;">
                                 <i class="fas fa-stop"></i> Stop Recording
                             </button>
-                            <div id="audio-waveform" style="display: none;"></div>
-                            <span id="recording-duration">00:00</span>
-                        </div>
-
-                        <!-- Dynamic Form Fields -->
-                        <form id="consultation-form" class="consultation-form">
-                            ${this.renderConsultationForm(consultation.specialty, consultation.structured_data)}
-                        </form>
-
-                        <!-- Action Buttons -->
-                        <div class="consultation-actions">
-                            <button class="btn-secondary" onclick="consultationManager.saveAsDraft()">
-                                <i class="fas fa-save"></i> Save Draft
-                            </button>
-                            <button class="btn-primary" onclick="consultationManager.markInProgress()">
-                                <i class="fas fa-play"></i> Mark In Progress
-                            </button>
-                            <button class="btn-success" onclick="consultationManager.completeConsultation()">
-                                <i class="fas fa-check"></i> Complete Consultation
-                            </button>
-                            <button class="btn-danger" onclick="consultationManager.cancelConsultation()">
-                                <i class="fas fa-times"></i> Cancel
-                            </button>
+                            <span id="recording-timer" style="display:none;">00:00</span>
                         </div>
                     </div>
+                    
+                    <form id="consultation-form" class="consultation-template-form">
+                        ${this.renderTemplateSections()}
+                    </form>
+                    
+                    <div class="consultation-actions">
+                        <button id="save-as-draft" class="btn-secondary">
+                            Save as Draft
+                        </button>
+                        <button id="save-as-completed" class="btn-primary">
+                            Save as Completed
+                        </button>
+                        <button id="delete-consultation" class="btn-danger">
+                            Delete Consultation
+                        </button>
+                    </div>
                 </div>
-            `;
-
-            // Setup event listeners
-            this.setupConsultationRecorderListeners();
-
-        } catch (error) {
-            console.error('Error showing consultation recorder:', error);
-            showToast('Failed to load consultation interface', 'error');
-        }
+                
+                <!-- Right: Patient History (reused from View Patient modal) -->
+                <div class="patient-context-panel">
+                    <div id="patient-history-container">
+                        <!-- Load View Patient's Documents & History tab -->
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Load patient history in right panel
+        await this.loadPatientHistoryPanel();
+        
+        // Re-attach event listeners
+        this.attachFormEventListeners();
     }
-
-    renderConsultationForm(specialty, structuredData = {}) {
-        const template = this.specialtyTemplates[specialty];
-        if (!template) return '<p>Template not found</p>';
-
-        return template.fields.map(field => {
-            const value = structuredData[field.id] || '';
-            
-            if (field.type === 'textarea') {
+    
+    renderTemplateSections() {
+        return this.currentTemplate.sections.map(section => `
+            <div class="template-section ${section.collapsible ? 'collapsible' : ''}">
+                <div class="section-header">
+                    <h3>${section.section_name}</h3>
+                    ${section.section_description ? 
+                        `<p class="section-description">${section.section_description}</p>` 
+                        : ''}
+                    ${section.collapsible ? 
+                        `<button class="collapse-toggle"><i class="fas fa-chevron-down"></i></button>` 
+                        : ''}
+                </div>
+                <div class="section-fields">
+                    ${section.fields.map(field => this.renderTemplateField(field, section.section_id)).join('')}
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    renderTemplateField(field, sectionId) {
+        const fieldId = `${sectionId}_${field.field_id}`;
+        const value = this.getFieldValue(sectionId, field.field_id);
+        const confidence = this.getFieldValue(sectionId, `${field.field_id}_confidence`);
+        
+        const confidenceBadge = confidence ? 
+            `<span class="confidence-badge confidence-${confidence}">${confidence}</span>` 
+            : '';
+        
+        switch (field.field_type) {
+            case 'text':
+            case 'number':
                 return `
-                    <div class="form-group">
-                        <label for="${field.id}">${field.label}</label>
+                    <div class="form-field">
+                        <label for="${fieldId}">
+                            ${field.field_name} 
+                            ${field.required ? '<span class="required">*</span>' : ''}
+                            ${confidenceBadge}
+                        </label>
+                        <input 
+                            type="${field.field_type}" 
+                            id="${fieldId}"
+                            name="${fieldId}"
+                            value="${value || ''}"
+                            placeholder="${field.placeholder || ''}"
+                            ${field.required ? 'required' : ''}
+                            ${field.units ? `data-units="${field.units}"` : ''}
+                        >
+                        ${field.units ? `<span class="field-units">${field.units}</span>` : ''}
+                    </div>
+                `;
+            
+            case 'textarea':
+                return `
+                    <div class="form-field">
+                        <label for="${fieldId}">
+                            ${field.field_name}
+                            ${field.required ? '<span class="required">*</span>' : ''}
+                            ${confidenceBadge}
+                        </label>
                         <textarea 
-                            id="${field.id}" 
-                            name="${field.id}" 
+                            id="${fieldId}"
+                            name="${fieldId}"
                             rows="4"
                             placeholder="${field.placeholder || ''}"
-                            class="form-control"
-                        >${value}</textarea>
+                            ${field.required ? 'required' : ''}
+                        >${value || ''}</textarea>
                     </div>
                 `;
-            } else {
+            
+            case 'select':
                 return `
-                    <div class="form-group">
-                        <label for="${field.id}">${field.label}</label>
-                        <input 
-                            type="${field.type}" 
-                            id="${field.id}" 
-                            name="${field.id}" 
-                            value="${value}"
-                            placeholder="${field.placeholder || ''}"
-                            class="form-control"
-                        />
+                    <div class="form-field">
+                        <label for="${fieldId}">
+                            ${field.field_name}
+                            ${field.required ? '<span class="required">*</span>' : ''}
+                        </label>
+                        <select id="${fieldId}" name="${fieldId}" ${field.required ? 'required' : ''}>
+                            <option value="">Select...</option>
+                            ${field.options.map(opt => `
+                                <option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>
+                                    ${opt.label}
+                                </option>
+                            `).join('')}
+                        </select>
                     </div>
                 `;
-            }
-        }).join('');
-    }
-
-    renderPreviousConsultations(consultations) {
-        if (consultations.length === 0) {
-            return '<p class="empty-message">No previous consultations</p>';
+            
+            case 'icd10':
+                return `
+                    <div class="form-field icd10-field">
+                        <label for="${fieldId}">
+                            ${field.field_name}
+                            ${field.required ? '<span class="required">*</span>' : ''}
+                        </label>
+                        <textarea 
+                            id="${fieldId}"
+                            name="${fieldId}"
+                            rows="3"
+                            placeholder="${field.placeholder || 'Describe diagnoses...'}"
+                            ${field.required ? 'required' : ''}
+                        >${value || ''}</textarea>
+                        <div id="${fieldId}_codes" class="icd10-codes">
+                            ${this.renderICD10Codes(sectionId, field.field_id)}
+                        </div>
+                    </div>
+                `;
+            
+            default:
+                return `<p>Unsupported field type: ${field.field_type}</p>`;
         }
-
-        return consultations.map(c => `
-            <div class="history-item consultation-item" data-consultation-id="${c.id}">
-                <div class="history-item-header">
-                    <strong>${this.specialtyTemplates[c.specialty]?.name || c.specialty}</strong>
-                    <span class="history-item-date">${new Date(c.consultation_date).toLocaleDateString()}</span>
-                </div>
-                <div class="history-item-preview">
-                    ${c.structured_data?.chief_complaint || c.structured_data?.assessment || 'No details'}
-                </div>
-                ${c.is_signed ? '<span class="badge badge-success">Signed</span>' : ''}
-            </div>
-        `).join('');
     }
+    
+    renderICD10Codes(sectionId, fieldId) {
+		const codes = this.getFieldValue(sectionId, 'icd10_codes') || [];
+		
+		if (codes.length === 0) {
+			return `
+				<p class="no-codes">
+					Describe diagnoses above, then click "Extract ICD-10 Codes" button
+				</p>
+			`;
+		}
+		
+		return `
+			<div class="icd10-suggestions">
+				<p class="suggestion-note">
+					<i class="fas fa-info-circle"></i>
+					Suggested codes - please review and modify as needed
+				</p>
+				${codes.map((code, index) => `
+					<div class="icd10-code-item suggestion">
+						<div class="code-header">
+							<strong>${code.icd10_code}</strong>
+							<span class="confidence-badge confidence-${code.confidence}">
+								${code.confidence}
+							</span>
+						</div>
+						<div class="code-description">
+							<div class="romanian">${code.diagnosis_romanian}</div>
+							<div class="icd-full">${code.icd10_description}</div>
+							${code.notes ? `
+								<div class="code-notes">
+									<i class="fas fa-exclamation-triangle"></i>
+									${code.notes}
+								</div>
+							` : ''}
+						</div>
+						<div class="code-actions">
+							<button onclick="consultationManager.editICD10Code(${index})" 
+									class="btn-icon" title="Edit Code">
+								<i class="fas fa-edit"></i>
+							</button>
+							<button onclick="consultationManager.approveICD10Code(${index})" 
+									class="btn-icon btn-approve" title="Approve">
+								<i class="fas fa-check"></i>
+							</button>
+							<button onclick="consultationManager.removeICD10Code(${index})" 
+									class="btn-icon" title="Remove">
+								<i class="fas fa-times"></i>
+							</button>
+						</div>
+					</div>
+				`).join('')}
+			</div>
+			
+			<button class="btn-secondary btn-add-manual" 
+					onclick="consultationManager.addManualICD10Code()">
+				<i class="fas fa-plus"></i> Add Code Manually
+			</button>
+		`;
+	}
 
-    renderDocumentsHistory(documents) {
-        if (documents.length === 0) {
-            return '<p class="empty-message">No documents</p>';
-        }
+	// Allow doctor to manually add/edit codes
+	addManualICD10Code() {
+		const modal = document.createElement('div');
+		modal.className = 'modal';
+		modal.innerHTML = `
+			<div class="modal-content">
+				<div class="modal-header">
+					<h3>Add ICD-10 Code Manually</h3>
+					<button class="modal-close" onclick="this.closest('.modal').remove()">
+						<i class="fas fa-times"></i>
+					</button>
+				</div>
+				<div class="modal-body">
+					<div class="form-field">
+						<label>ICD-10 Code *</label>
+						<input type="text" id="manual-icd-code" 
+							   placeholder="e.g., A16.1" 
+							   pattern="[A-Z][0-9]{2}\.?[0-9]?.*">
+					</div>
+					<div class="form-field">
+						<label>Diagnosis (Romanian) *</label>
+						<input type="text" id="manual-diagnosis-ro" 
+							   placeholder="e.g., Tuberculoza pulmonară">
+					</div>
+					<div class="form-field">
+						<label>Notes (optional)</label>
+						<textarea id="manual-notes" rows="2" 
+								  placeholder="Additional codes required, special considerations..."></textarea>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button class="btn-secondary" onclick="this.closest('.modal').remove()">
+						Cancel
+					</button>
+					<button class="btn-primary" onclick="consultationManager.saveManualICD10Code()">
+						Add Code
+					</button>
+				</div>
+			</div>
+		`;
+		
+		document.body.appendChild(modal);
+	}
 
-        return documents.map(d => `
-            <div class="history-item document-item" data-document-id="${d.id}">
-                <div class="history-item-header">
-                    <i class="fas fa-file-medical"></i>
-                    <strong>${d.filename}</strong>
-                    <span class="history-item-date">${new Date(d.created_at).toLocaleDateString()}</span>
-                </div>
-                <div class="document-type-badge">${d.document_type || 'Unknown'}</div>
-            </div>
-        `).join('');
+	saveManualICD10Code() {
+		const code = document.getElementById('manual-icd-code').value.trim();
+		const diagnosis = document.getElementById('manual-diagnosis-ro').value.trim();
+		const notes = document.getElementById('manual-notes').value.trim();
+		
+		if (!code || !diagnosis) {
+			showToast('Code and diagnosis are required', 'error');
+			return;
+		}
+		
+		// Get current codes
+		const currentCodes = this.getFieldValue('diagnosis', 'icd10_codes') || [];
+		
+		// Add new code
+		currentCodes.push({
+			icd10_code: code,
+			diagnosis_romanian: diagnosis,
+			icd10_description: diagnosis, // Same for manual entry
+			confidence: "manual",
+			notes: notes,
+			approved: true
+		});
+		
+		// Update consultation data
+		if (!this.currentConsultationData.diagnosis) {
+			this.currentConsultationData.diagnosis = {};
+		}
+		this.currentConsultationData.diagnosis.icd10_codes = currentCodes;
+		
+		// Re-render
+		this.updateICD10Display(currentCodes);
+		
+		// Close modal
+		document.querySelector('.modal').remove();
+		
+		showToast('Code added', 'success');
+	}
+   
+    getFieldValue(sectionId, fieldId) {
+        if (!this.currentConsultationData) return null;
+        if (!this.currentConsultationData[sectionId]) return null;
+        return this.currentConsultationData[sectionId][fieldId];
     }
-
-    setupConsultationRecorderListeners() {
-        // Specialty change listener
-        const specialtySelect = document.getElementById('consultation-specialty');
-        if (specialtySelect) {
-            specialtySelect.addEventListener('change', async (e) => {
-                await this.changeSpecialty(e.target.value);
-            });
-        }
-
-        // Form change listeners for unsaved changes tracking
-        const form = document.getElementById('consultation-form');
-        if (form) {
-            form.addEventListener('input', () => {
-                this.hasUnsavedChanges = true;
-                this.updateSaveIndicator('unsaved');
-            });
-        }
-
-        // History tab switching
-        document.querySelectorAll('.history-tab-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                document.querySelectorAll('.history-tab-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.history-content').forEach(c => c.classList.remove('active'));
-                
-                btn.classList.add('active');
-                const tabName = btn.dataset.tab;
-                document.getElementById(`${tabName}-history-content`).classList.add('active');
-            });
-        });
-
-        // Audio recording (placeholder for Phase 4B)
-        document.getElementById('start-audio-btn')?.addEventListener('click', () => {
-            showToast('Audio recording coming in Phase 4B', 'info');
-        });
-    }
-
-    // ----------------------------
-    // Auto-Save Every 60 Seconds
-    // ----------------------------
+    
+    // Auto-save functionality
     startAutoSave() {
-        this.stopAutoSave(); // Clear any existing interval
-        
+        // Auto-save every 60 seconds
         this.autoSaveInterval = setInterval(async () => {
-            if (this.hasUnsavedChanges) {
-                await this.performAutoSave();
-            }
-        }, 60000); // 60 seconds
+            await this.autoSaveConsultation();
+        }, 60000);
     }
-
-    stopAutoSave() {
-        if (this.autoSaveInterval) {
-            clearInterval(this.autoSaveInterval);
-            this.autoSaveInterval = null;
-        }
-    }
-
-    async performAutoSave() {
+    
+    async autoSaveConsultation() {
+        if (!this.currentConsultationId) return;
+        
         try {
-            this.updateSaveIndicator('saving');
-
             const formData = this.collectFormData();
-
+            
             const response = await fetch(
-                `/api/consultations/${this.currentConsultationId}/auto-save`,
+                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/auto-save`,
                 {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        structured_data: formData
-                    })
+                    body: JSON.stringify({ structured_data: formData })
                 }
             );
-
+            
             if (!response.ok) throw new Error('Auto-save failed');
-
-            this.hasUnsavedChanges = false;
-            this.updateSaveIndicator('saved');
-
+            
+            // Show subtle notification
+            this.showAutoSaveIndicator();
+            
         } catch (error) {
             console.error('Auto-save error:', error);
-            this.updateSaveIndicator('error');
+            // Don't show error toast - silent failure for auto-save
+        }
+    }
+    
+    collectFormData() {
+        const formData = {};
+        
+        this.currentTemplate.sections.forEach(section => {
+            const sectionData = {};
+            
+            section.fields.forEach(field => {
+                const fieldId = `${section.section_id}_${field.field_id}`;
+                const element = document.getElementById(fieldId);
+                
+                if (element) {
+                    sectionData[field.field_id] = element.value;
+                }
+            });
+            
+            formData[section.section_id] = sectionData;
+        });
+        
+        return formData;
+    }
+    
+    showAutoSaveIndicator() {
+        const indicator = document.createElement('div');
+        indicator.className = 'auto-save-indicator';
+        indicator.innerHTML = '<i class="fas fa-check"></i> Auto-saved';
+        document.body.appendChild(indicator);
+        
+        setTimeout(() => indicator.remove(), 2000);
+    }
+    
+    // Audio recording functionality
+    async startAudioRecording() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            
+            this.mediaRecorder = new MediaRecorder(stream);
+            this.audioChunks = [];
+            
+            this.mediaRecorder.ondataavailable = (event) => {
+                this.audioChunks.push(event.data);
+            };
+            
+            this.mediaRecorder.onstop = async () => {
+                await this.processRecordedAudio();
+            };
+            
+            this.mediaRecorder.start();
+            this.isRecording = true;
+            
+            // Update UI
+            document.getElementById('start-recording').style.display = 'none';
+            document.getElementById('stop-recording').style.display = 'inline-block';
+            document.getElementById('recording-timer').style.display = 'inline-block';
+            
+            // Start recording timer
+            this.startRecordingTimer();
+            
+            showToast('Recording started', 'success');
+            
+        } catch (error) {
+            showToast('Microphone access denied: ' + error.message, 'error');
+        }
+    }
+    
+    startRecordingTimer() {
+        let seconds = 0;
+        this.recordingTimerInterval = setInterval(() => {
+            seconds++;
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            document.getElementById('recording-timer').textContent = 
+                `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }, 1000);
+    }
+    
+    stopAudioRecording() {
+        if (this.mediaRecorder && this.isRecording) {
+            this.mediaRecorder.stop();
+            this.isRecording = false;
+            
+            // Stop all tracks
+            this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            
+            // Clear timer
+            clearInterval(this.recordingTimerInterval);
+            
+            // Update UI
+            document.getElementById('start-recording').style.display = 'inline-block';
+            document.getElementById('stop-recording').style.display = 'none';
+            document.getElementById('recording-timer').style.display = 'none';
+            
+            showToast('Processing audio...', 'info');
+        }
+    }
+    
+    async processRecordedAudio() {
+        try {
+            // Create audio blob
+            const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+            
+            // Upload to server
+            const formData = new FormData();
+            formData.append('audio_file', audioBlob, 'consultation_audio.webm');
+            
+            const uploadResponse = await fetch(
+                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/audio/upload`,
+                {
+                    method: 'POST',
+                    body: formData
+                }
+            );
+            
+            if (!uploadResponse.ok) throw new Error('Audio upload failed');
+            
+            // Process audio (transcribe + extract fields)
+            showToast('Transcribing and extracting data...', 'info');
+            
+            const processResponse = await fetch(
+                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/audio/process`,
+                {
+                    method: 'POST'
+                }
+            );
+            
+            if (!processResponse.ok) throw new Error('Audio processing failed');
+            
+            const result = await processResponse.json();
+            
+            // Update form with extracted data
+            this.currentConsultationData = result.extracted_data;
+            await this.updateFormWithExtractedData(result.extracted_data);
+            
+            // Show transcript in modal for review
+            this.showTranscriptModal(result.transcript, result.extracted_data);
+            
+            showToast('Audio processed successfully', 'success');
+            
+        } catch (error) {
+            showToast('Audio processing failed: ' + error.message, 'error');
+            console.error('Audio processing error:', error);
+        }
+    }
+    
+    async updateFormWithExtractedData(extractedData) {
+        // Update form fields with extracted data
+        for (const [sectionId, sectionData] of Object.entries(extractedData)) {
+            for (const [fieldId, fieldValue] of Object.entries(sectionData)) {
+                // Skip confidence fields
+                if (fieldId.endsWith('_confidence')) continue;
+                
+                const element = document.getElementById(`${sectionId}_${fieldId}`);
+                if (element && fieldValue) {
+                    // Highlight auto-filled fields
+                    element.value = fieldValue;
+                    element.classList.add('auto-filled');
+                    
+                    // Add confidence indicator
+                    const confidence = sectionData[`${fieldId}_confidence`];
+                    if (confidence) {
+                        this.addConfidenceBadge(element, confidence);
+                    }
+                }
+            }
+        }
+        
+        // Special handling for ICD-10 codes
+        if (extractedData.diagnosis?.icd10_codes) {
+            this.updateICD10Display(extractedData.diagnosis.icd10_codes);
+        }
+    }
+    
+    addConfidenceBadge(element, confidence) {
+        const badge = document.createElement('span');
+        badge.className = `confidence-badge confidence-${confidence}`;
+        badge.textContent = confidence;
+        
+        // Insert after the input element
+        element.parentNode.insertBefore(badge, element.nextSibling);
+    }
+    
+    updateICD10Display(codes) {
+        const container = document.getElementById('diagnosis_diagnoses_codes');
+        if (!container) return;
+        
+        container.innerHTML = codes.map((code, index) => `
+            <div class="icd10-code-item">
+                <div class="code-header">
+                    <strong>${code.icd10_code}</strong>
+                    <span class="confidence-badge confidence-${code.confidence}">
+                        ${code.confidence}
+                    </span>
+                </div>
+                <div class="code-description">
+                    <div class="romanian">${code.condition_romanian}</div>
+                    <div class="english">${code.condition_english}</div>
+                    <div class="icd-description">${code.icd10_description}</div>
+                </div>
+                <div class="code-actions">
+                    <button onclick="consultationManager.editICD10Code(${index})" 
+                            class="btn-icon" title="Edit">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="consultationManager.removeICD10Code(${index})" 
+                            class="btn-icon" title="Remove">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    showTranscriptModal(transcript, extractedData) {
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.id = 'transcript-review-modal';
+        
+        modal.innerHTML = `
+            <div class="modal-content large">
+                <div class="modal-header">
+                    <h2>Audio Transcript Review</h2>
+                    <button class="modal-close" onclick="this.closest('.modal').remove()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="transcript-container">
+                        <h3>Full Transcript</h3>
+                        <div class="transcript-text">
+                            ${transcript}
+                        </div>
+                    </div>
+                    <div class="extracted-summary">
+                        <h3>Extracted Data Summary</h3>
+                        <div class="extraction-summary">
+                            ${this.renderExtractionSummary(extractedData)}
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-primary" onclick="this.closest('.modal').remove()">
+                        Continue Editing Form
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+    }
+    
+    renderExtractionSummary(extractedData) {
+        let summary = '';
+        
+        for (const [sectionId, sectionData] of Object.entries(extractedData)) {
+            const section = this.currentTemplate.sections.find(s => s.section_id === sectionId);
+            if (!section) continue;
+            
+            summary += `<div class="section-summary">
+                <h4>${section.section_name}</h4>
+                <ul>`;
+            
+            for (const [fieldId, fieldValue] of Object.entries(sectionData)) {
+                if (fieldId.endsWith('_confidence') || !fieldValue) continue;
+                
+                const field = section.fields.find(f => f.field_id === fieldId);
+                if (!field) continue;
+                
+                const confidence = sectionData[`${fieldId}_confidence`] || 'unknown';
+                
+                summary += `
+                    <li>
+                        <strong>${field.field_name}:</strong> ${fieldValue}
+                        <span class="confidence-badge confidence-${confidence}">${confidence}</span>
+                    </li>
+                `;
+            }
+            
+            summary += `</ul></div>`;
+        }
+        
+        return summary;
+    }
+    
+    // Patient history panel (right side)
+    async loadPatientHistoryPanel() {
+        try {
+            const response = await fetch(
+                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/patient-history`
+            );
+            
+            if (!response.ok) throw new Error('Failed to load patient history');
+            
+            const historyData = await response.json();
+            
+            // Render using the same component as View Patient modal's Documents & History tab
+            this.renderPatientHistory(historyData);
+            
+        } catch (error) {
+            console.error('Failed to load patient history:', error);
+        }
+    }
+    
+    renderPatientHistory(historyData) {
+        const container = document.getElementById('patient-history-container');
+        
+        container.innerHTML = `
+            <div class="patient-history-panel">
+                <div class="patient-header">
+                    <h3>${historyData.patient.given_name} ${historyData.patient.family_name}</h3>
+                    <p>CNP: ${historyData.patient.cnp}</p>
+                    <p>Birth Date: ${historyData.patient.birth_date}</p>
+                </div>
+                
+                <div class="history-tabs">
+                    <button class="tab-btn active" data-tab="consultations">
+                        Consultations (${historyData.consultations.length})
+                    </button>
+                    <button class="tab-btn" data-tab="documents">
+                        Documents (${historyData.documents.length})
+                    </button>
+                </div>
+                
+                <div class="history-content">
+                    <div id="consultations-history" class="tab-content active">
+                        ${this.renderConsultationsHistory(historyData.consultations)}
+                    </div>
+                    <div id="documents-history" class="tab-content">
+                        ${this.renderDocumentsHistory(historyData.documents)}
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Attach tab switching
+        container.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const tab = e.target.dataset.tab;
+                
+                container.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                container.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                e.target.classList.add('active');
+                container.querySelector(`#${tab}-history`).classList.add('active');
+            });
+        });
+    }
+    
+    renderConsultationsHistory(consultations) {
+        if (consultations.length === 0) {
+            return '<p class="empty-state">No previous consultations</p>';
+        }
+        
+        return `
+            <div class="consultations-timeline">
+                ${consultations.map(consult => `
+                    <div class="consultation-item">
+                        <div class="consultation-header">
+                            <strong>${consult.specialty}</strong>
+                            <span class="date">${new Date(consult.consultation_date).toLocaleDateString('ro-RO')}</span>
+                        </div>
+                        <button class="btn-link" onclick="consultationManager.viewConsultationDetails('${consult.id}')">
+                            View Details
+                        </button>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    renderDocumentsHistory(documents) {
+        if (documents.length === 0) {
+            return '<p class="empty-state">No documents</p>';
+        }
+        
+        // Group by document type
+        const grouped = documents.reduce((acc, doc) => {
+            const type = doc.document_type || 'Other';
+            if (!acc[type]) acc[type] = [];
+            acc[type].push(doc);
+            return acc;
+        }, {});
+        
+        return Object.entries(grouped).map(([type, docs]) => `
+            <div class="document-group">
+                <h4>${type}</h4>
+                <div class="documents-list">
+                    ${docs.map(doc => `
+                        <div class="document-item">
+                            <i class="fas fa-file-alt"></i>
+                            <span>${doc.filename}</span>
+                            <button onclick="consultationManager.viewDocument('${doc.id}')" 
+                                    class="btn-icon">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    // Save consultation
+    async saveConsultation(status) {
+        try {
+            // Collect form data
+            const formData = this.collectFormData();
+            
+            // Validate required fields
+            if (status === 'completed' && !this.validateForm()) {
+                showToast('Please fill all required fields', 'error');
+                return;
+            }
+            
+            // Save data
+            const saveResponse = await fetch(
+                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/auto-save`,
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ structured_data: formData })
+                }
+            );
+            
+            if (!saveResponse.ok) throw new Error('Save failed');
+            
+            // Update status
+            const statusResponse = await fetch(
+                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/status`,
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: status })
+                }
+            );
+            
+            if (!statusResponse.ok) throw new Error('Status update failed');
+            
+            // Clear auto-save interval
+            if (this.autoSaveInterval) {
+                clearInterval(this.autoSaveInterval);
+            }
+            
+            showToast(
+                status === 'completed' 
+                    ? 'Consultation completed successfully' 
+                    : 'Consultation saved as draft',
+                'success'
+            );
+            
+            // Navigate back to consultations list
+            setTimeout(() => {
+                window.location.href = '#consultations';
+                app.loadConsultationsList();
+            }, 1500);
+            
+        } catch (error) {
+            showToast('Failed to save consultation: ' + error.message, 'error');
+        }
+    }
+    
+    validateForm() {
+        let isValid = true;
+        
+        this.currentTemplate.sections.forEach(section => {
+            section.fields.forEach(field => {
+                if (field.required) {
+                    const fieldId = `${section.section_id}_${field.field_id}`;
+                    const element = document.getElementById(fieldId);
+                    
+                    if (!element || !element.value.trim()) {
+                        element?.classList.add('error');
+                        isValid = false;
+                    } else {
+                        element?.classList.remove('error');
+                    }
+                }
+            });
+        });
+        
+        return isValid;
+    }
+    
+    attachFormEventListeners() {
+        // Re-attach all event listeners after rendering
+        document.getElementById('start-recording')?.addEventListener('click',
+            () => this.startAudioRecording()
+        );
+        
+        document.getElementById('stop-recording')?.addEventListener('click',
+            () => this.stopAudioRecording()
+        );
+        
+        document.getElementById('save-as-draft')?.addEventListener('click',
+            () => this.saveConsultation('draft')
+        );
+        
+        document.getElementById('save-as-completed')?.addEventListener('click',
+            () => this.saveConsultation('completed')
+        );
+        
+        document.getElementById('delete-consultation')?.addEventListener('click',
+            () => this.deleteConsultation()
+        );
+    }
+    
+    async deleteConsultation() {
+        if (!confirm('Are you sure you want to delete this consultation?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(
+                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/cancel`,
+                { method: 'DELETE' }
+            );
+            
+            if (!response.ok) throw new Error('Delete failed');
+            
+            // Clear auto-save
+            if (this.autoSaveInterval) {
+                clearInterval(this.autoSaveInterval);
+            }
+            
+            showToast('Consultation deleted', 'success');
+            
+            // Navigate back
+            window.location.href = '#consultations';
+            app.loadConsultationsList();
+            
+        } catch (error) {
+            showToast('Failed to delete consultation: ' + error.message, 'error');
         }
     }
 
-    collectFormData() {
-        const form = document.getElementById('consultation-form');
-        if (!form) return {};
-
-        const formData = {};
-        const inputs = form.querySelectorAll('input, textarea, select');
+    async startFromPatient(patientId) {
+        // Get doctor's default specialty (or show selection modal if multiple)
+        const defaultSpecialty = 'internal_medicine'; // You can make this configurable
         
-        inputs.forEach(input => {
-            if (input.name) {
-                formData[input.name] = input.value;
-            }
-        });
-
-        return formData;
+        await this.startConsultation(patientId, defaultSpecialty);
     }
 
-    updateSaveIndicator(status) {
-        const icon = document.getElementById('save-status-icon');
-        const text = document.getElementById('save-status-text');
-        
-        if (!icon || !text) return;
-
-        const states = {
-            unsaved: { icon: 'fa-circle text-warning', text: 'Unsaved changes' },
-            saving: { icon: 'fa-spinner fa-spin text-info', text: 'Saving...' },
-            saved: { icon: 'fa-check-circle text-success', text: 'Saved' },
-            error: { icon: 'fa-exclamation-circle text-danger', text: 'Save failed' }
-        };
-
-        const state = states[status] || states.unsaved;
-        icon.className = `fas ${state.icon}`;
-        text.textContent = state.text;
-    }
-
-    // ----------------------------
-    // Specialty Change
-    // ----------------------------
     async changeSpecialty(newSpecialty) {
         try {
             const response = await fetch(
-                `/api/consultations/${this.currentConsultationId}/specialty?specialty=${newSpecialty}`,
-                { method: 'PUT' }
+                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/specialty`,
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ specialty: newSpecialty })
+                }
             );
-
+            
             if (!response.ok) throw new Error('Failed to change specialty');
-
-            // Reload form with new template
-            const consultation = await response.json();
-            const form = document.getElementById('consultation-form');
-            form.innerHTML = this.renderConsultationForm(newSpecialty, consultation.structured_data);
-
-            showToast(`Specialty changed to ${this.specialtyTemplates[newSpecialty].name}`, 'success');
-
-        } catch (error) {
-            console.error('Error changing specialty:', error);
-            showToast('Failed to change specialty', 'error');
-        }
-    }
-
-    // ----------------------------
-    // Action Buttons
-    // ----------------------------
-    async saveAsDraft() {
-        await this.performAutoSave();
-        showToast('Consultation saved as draft', 'success');
-    }
-
-    async markInProgress() {
-        try {
-            await this.performAutoSave();
-
-            const response = await fetch(
-                `/api/consultations/${this.currentConsultationId}/status?status=in_progress`,
-                { method: 'PUT' }
-            );
-
-            if (!response.ok) throw new Error('Failed to update status');
-
-            showToast('Consultation marked as in progress', 'success');
-
-        } catch (error) {
-            console.error('Error updating status:', error);
-            showToast('Failed to update status', 'error');
-        }
-    }
-
-    async completeConsultation() {
-        try {
-            await this.performAutoSave();
-
-            const response = await fetch(
-                `/api/consultations/${this.currentConsultationId}/status?status=completed`,
-                { method: 'PUT' }
-            );
-
-            if (!response.ok) throw new Error('Failed to complete consultation');
-
-            this.stopAutoSave();
-            showToast('Consultation completed successfully', 'success');
             
-            // Navigate to dashboard
-            window.app.goToSection('dashboard');
-
-        } catch (error) {
-            console.error('Error completing consultation:', error);
-            showToast('Failed to complete consultation', 'error');
-        }
-    }
-
-    async cancelConsultation() {
-        if (!confirm('Are you sure you want to cancel this consultation? This action cannot be undone.')) {
-            return;
-        }
-
-        try {
-            const response = await fetch(
-                `/api/consultations/${this.currentConsultationId}/cancel`,
-                { method: 'DELETE' }
-            );
-
-            if (!response.ok) throw new Error('Failed to cancel consultation');
-
-            this.stopAutoSave();
-            showToast('Consultation cancelled', 'info');
+            // Reload template
+            await this.loadTemplate(newSpecialty);
+            await this.renderConsultationView();
             
-            // Navigate to dashboard
-            window.app.goToSection('dashboard');
-
+            showToast('Specialty changed to ' + newSpecialty, 'success');
         } catch (error) {
-            console.error('Error cancelling consultation:', error);
-            showToast('Failed to cancel consultation', 'error');
+            showToast('Failed to change specialty: ' + error.message, 'error');
         }
     }
 
-    // ----------------------------
-    // Navigation Guard
-    // ----------------------------
-    checkUnsavedChanges() {
-        if (this.hasUnsavedChanges) {
-            return confirm(
-                'You have unsaved changes. Do you want to save as draft before leaving?'
-            );
-        }
-        return true;
-    }
-
-    cleanup() {
-        this.stopAutoSave();
-        this.currentConsultationId = null;
-        this.currentPatientId = null;
-        this.hasUnsavedChanges = false;
-    }
 }
 
-// Initialize global instance
-window.consultationManager = new ConsultationManager();
+export { ConsultationManager };
