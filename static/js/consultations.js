@@ -63,8 +63,8 @@ class ConsultationManager {
     async startConsultation(patientId, specialty) {
         try {
             // Step 1: Create draft consultation
-           const response = await fetch(
-                apiUrl(API_CONFIG.ENDPOINTS.consultations.start),
+            const response = await fetch(
+                apiUrl(API_CONFIG.ENDPOINTS.consultations,'start'),
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -96,10 +96,16 @@ class ConsultationManager {
     
     async loadTemplate(specialty) {
         try {
-            const response = await fetch(
-                `/api/v1/${getClinicId()}/consultations/templates/${specialty}`
-            );
+            // --- Construct the dynamic parts ---
+            const templatePath = `templates/${specialty}`; 
+            const url = window.apiUrl(window.API_CONFIG.ENDPOINTS.consultations,templatePath);
+
+            // Example URL result: /api/v1/consultations/templates/{specialty}
             
+            console.log(`Fetching template from URL: ${url}`); 
+            
+            const response = await fetch(url);
+
             if (!response.ok) throw new Error('Failed to load template');
             
             this.currentTemplate = await response.json();
@@ -112,39 +118,47 @@ class ConsultationManager {
     
     async showDocumentSelectionModal(patientId) {
         // Fetch patient documents
-        const response = await fetch(
-            `/api/v1/${getClinicId()}/patients/${patientId}/documents`
-        );
-        const documents = await response.json();
-        
-        // Show modal with document checkboxes
-        const modalHTML = `
-            <div class="modal" id="document-selection-modal">
-                <div class="modal-content">
-                    <h3>Select Documents to Include</h3>
-                    <p>Choose documents to pre-fill consultation data:</p>
-                    <div class="document-list">
-                        ${documents.map(doc => `
-                            <label class="document-checkbox">
-                                <input type="checkbox" value="${doc.id}" 
-                                    data-type="${doc.document_type}">
-                                ${doc.original_filename} (${doc.document_type})
-                            </label>
-                        `).join('')}
-                    </div>
-                    <div class="modal-actions">
-                        <button onclick="consultationManager.preFillConsultation()">
-                            Continue with Selected Documents
-                        </button>
-                        <button onclick="consultationManager.skipPreFill()">
-                            Skip - Start Blank
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
-        
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
+        try{
+                const url = window.apiUrl(window.API_CONFIG.ENDPOINTS.documents,`patients/${patientId}/documents`);
+                //console.log(url);
+                const response = await fetch(url);
+                const documents = await response.json();
+                if (documents!=null)
+                {
+                    // Show modal with document checkboxes
+                    const modalHTML = `
+                        <div class="modal" id="document-selection-modal">
+                            <div class="modal-content">
+                                <h3>Select Documents to Include</h3>
+                                <p>Choose documents to pre-fill consultation data:</p>
+                                <div class="document-list">
+                                    ${documents.map(doc => `
+                                        <label class="document-checkbox">
+                                            <input type="checkbox" value="${doc.id}" 
+                                                data-type="${doc.document_type}">
+                                            ${doc.original_filename} (${doc.document_type})
+                                        </label>
+                                    `).join('')}
+                                </div>
+                                <div class="modal-actions">
+                                    <button onclick="consultationManager.preFillConsultation()">
+                                        Continue with Selected Documents
+                                    </button>
+                                    <button onclick="consultationManager.skipPreFill()">
+                                        Skip - Start Blank
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    
+                    document.body.insertAdjacentHTML('beforeend', modalHTML);
+                }
+        }
+        catch (error) {
+            showToast('Failed to show document selection', 'error');
+            throw error;
+        }
     }
     
     async preFillConsultation() {

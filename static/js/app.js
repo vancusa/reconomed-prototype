@@ -26,17 +26,31 @@ const API_CONFIG = {
         auth: '/auth/',
         clinics:'/clinics/',
         consultations: '/consultations/',
+        //clinicConsultations: '/:clinicId/consultations/',
         dashboard: '/dashboard/',
         documents: '/documents/', 
         patients: '/patients/',
         search: '/search/'
-    }
-    
+    }  
 };
 
 // Helper function to build API URLs
-function apiUrl(endpoint, path = '') {
-    return `${API_CONFIG.BASE_URL}${endpoint}${path}`;
+function apiUrl(endpoint, path = '',params = {}) {
+    let url = `${API_CONFIG.BASE_URL}${endpoint}`;
+    
+    // 1. Substitute Path Parameters (like :clinicId)
+    // We explicitly check for :clinicId
+    if (params.clinicId) {
+        url = url.replace(':clinicId', params.clinicId);
+    }
+
+    // 2. Append the rest of the path
+    url = `${url}${path}`; 
+
+    // 3. Handle Query Parameters (if you ever need them)
+    // (Omitted for brevity, but a complete helper would handle them here)
+    
+    return url;
 }
 
 // Export for use in other modules
@@ -109,7 +123,6 @@ class ReconoMedApp {
             this.patientManager.init();    // Set up form submissions, search
             this.documentManager.init();   // Set up upload handlers
             this.consultationManager.init(); // Set up consultation event listeners
-            
             initDocumentTabs();            // Set up document tab switching
         } catch (err) {
             console.error('UI initialization failed:', err);
