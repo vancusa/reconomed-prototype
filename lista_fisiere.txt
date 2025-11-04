@@ -37,16 +37,38 @@
 │   │   ├── __init__.py
 │   │   ├── __pycache__
 │   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── audio_service.cpython-312.pyc
 │   │   │   ├── document.cpython-312.pyc
 │   │   │   ├── enhanced_ocr.cpython-312.pyc
+│   │   │   ├── llm_extraction_service.cpython-312.pyc
 │   │   │   ├── ocr.cpython-312.pyc
 │   │   │   ├── romanian_document_templates.cpython-312.pyc
-│   │   │   └── romanian_id_processor.cpython-312.pyc
+│   │   │   ├── romanian_id_processor.cpython-312.pyc
+│   │   │   └── template_service.cpython-312.pyc
+│   │   ├── audio_service.py
 │   │   ├── document.py
 │   │   ├── enhanced_ocr.py
+│   │   ├── llm_extraction_service.py
 │   │   ├── ocr.py
 │   │   ├── romanian_document_templates.py
-│   │   └── romanian_id_processor.py
+│   │   ├── romanian_id_processor.py
+│   │   ├── template_service.py
+│   │   └── templates
+│   │       ├── __pycache__
+│   │       │   ├── base_template.cpython-312.pyc
+│   │       │   ├── cardiology_template.cpython-312.pyc
+│   │       │   ├── core_sections.cpython-312.pyc
+│   │       │   ├── gynecology_template.cpython-312.pyc
+│   │       │   ├── internal_medicine_template.cpython-312.pyc
+│   │       │   ├── obstetrics_template.cpython-312.pyc
+│   │       │   └── respiratory_template.cpython-312.pyc
+│   │       ├── base_template.py
+│   │       ├── cardiology_template.py
+│   │       ├── core_sections.py
+│   │       ├── gynecology_template.py
+│   │       ├── internal_medicine_template.py
+│   │       ├── obstetrics_template.py
+│   │       └── respiratory_template.py
 │   └── utils
 │       ├── __init__.py
 │       ├── __pycache__
@@ -85,6 +107,7 @@
 │   ├── js
 │   │   ├── app.js
 │   │   ├── auth.js
+│   │   ├── clinics.js
 │   │   ├── consultations.js
 │   │   ├── document-manager.js
 │   │   ├── documents.js
@@ -100,4 +123,4 @@
 │       └── gdpr_consent_ro.html
 └── uploads
 
-16 directories, 85 files
+18 directories, 106 files

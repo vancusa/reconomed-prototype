@@ -241,11 +241,6 @@ class ReconoMedApp {
             patientsTodayEl.textContent = newStats.patients_today;
         }
     }
-
-    // Method to programmatically navigate (called by HTML buttons)
-    goToSection(sectionId) {
-        this.navigation.navigateTo(sectionId);
-    }
 }
 
 // =========================================================================

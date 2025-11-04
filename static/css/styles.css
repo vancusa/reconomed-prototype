@@ -2788,3 +2788,72 @@ body {
         right: 0;
     }
 }
+
+.patient-result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-light);
+  transition: var(--transition-fast);
+}
+
+.patient-result-row:hover {
+  background-color: var(--primary-light);
+  cursor: pointer;
+}
+
+.patient-result-row .name {
+  font-weight: 600;
+  flex: 0 1 30%;
+}
+
+.patient-result-row .demographics {
+  flex: 0 1 20%;
+  color: var(--text-secondary);
+}
+
+.patient-result-row .cnp {
+  flex: 0 1 30%;
+  color: var(--text-tertiary);
+  font-size: 0.85rem;
+}
+
+.patient-result-row .phone {
+  flex: 0 1 20%;
+  text-align: right;
+  color: var(--text-disabled);
+  font-size: 0.85rem;
+}
+
+.patient-result-row {
+  position: relative;
+}
+
+/* Tooltip inside row, centered above */
+.patient-result-row::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translate(-50%, -0.4rem);
+  background: var(--primary-dark);
+  color: var(--bg-content);
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--border-radius-sm);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s var(--transition-fast), transform 0.3s var(--transition-fast);
+  z-index: 1000; /* ensure it overlays text rows */
+}
+
+/* Fade in with delay */
+.patient-result-row:hover::after {
+  opacity: 1;
+  transform: translate(-50%, -0.6rem);
+  transition-delay: 0.6s;
+}

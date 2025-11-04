@@ -6,7 +6,6 @@
 // Responsibilities:
 //  - Listen to clicks on navigation links
 //  - Switch visible sections dynamically (hide others)
-//  - Support programmatic navigation (app.goToSection(...))
 //  - Highlight the active nav link for better UX
 //  - Allow role-based restrictions (nav items may be hidden in auth.js)
 //
@@ -53,7 +52,7 @@ export class Navigation {
     // -------------------------------------------------------------------------
     // Core Navigation
     // -------------------------------------------------------------------------
-    navigateTo(sectionId) {
+    navigateTo(sectionId, subSection = null) {
         // Hide all sections
         this.sections.forEach(sec => sec.style.display = 'none');
 
@@ -76,14 +75,13 @@ export class Navigation {
             }
         });
 
+        // Handle sub-sections (tabs)
+        if (subSection && sectionId === 'documents') {
+            const tab = document.querySelector(`[data-tab="${subSection}"]`);
+            if (tab) tab.click();
+        }
+        
         // Let the app know the active section changed
         this.app.activeSection = sectionId;
-    }
-
-    // -------------------------------------------------------------------------
-    // Programmatic Navigation
-    // -------------------------------------------------------------------------
-    goToSection(sectionId) {
-        this.navigateTo(sectionId);
     }
 }

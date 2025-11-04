@@ -1,7 +1,7 @@
 """Enhanced patient management with Romanian fields and GDPR compliance"""
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, and_, func
 from sqlalchemy.orm.attributes import flag_modified
 from typing import List, Optional
 import uuid
@@ -407,16 +407,47 @@ async def get_patients(
     query = db.query(Patient).filter(Patient.clinic_id == current_user.clinic_id)
     
     # Add search filter
+    #OLD VERSION
+    #if search:
+    #    search_term = f"%{search.strip().lower()}%"
+    #    query = query.filter(
+    #        or_(
+    #            Patient.family_name.ilike(search_term),
+    #            Patient.given_name.ilike(search_term),
+    #            Patient.cnp.like(f"%{search.strip()}%"),
+    #            Patient.phone.like(f"%{search.strip()}%")
+    #        )
+    #    )
+
     if search:
-        search_term = f"%{search.strip().lower()}%"
-        query = query.filter(
-            or_(
-                Patient.family_name.ilike(search_term),
-                Patient.given_name.ilike(search_term),
-                Patient.cnp.like(f"%{search.strip()}%"),
-                Patient.phone.like(f"%{search.strip()}%")
-            )
+        # Normalize and split by spaces
+        terms = [t.strip().lower() for t in search.split() if t.strip()]
+        base_term = f"%{search.strip().lower()}%"
+
+        # Start with default single-field matching
+        combined_filter = or_(
+            func.lower(Patient.given_name).ilike(base_term),
+            func.lower(Patient.family_name).ilike(base_term),
+            Patient.cnp.like(f"%{search.strip()}%"),
+            Patient.phone.like(f"%{search.strip()}%")
         )
+
+        # If two terms: try "given_name + family_name" and reversed
+        if len(terms) == 2:
+            first, second = terms
+            combined_filter = or_(
+                combined_filter,
+                and_(
+                    func.lower(Patient.given_name).ilike(f"%{first}%"),
+                    func.lower(Patient.family_name).ilike(f"%{second}%")
+                ),
+                and_(
+                    func.lower(Patient.given_name).ilike(f"%{second}%"),
+                    func.lower(Patient.family_name).ilike(f"%{first}%")
+                ),
+            )
+
+        query = query.filter(combined_filter)
 
     # Apply sorting
     if sort_by == "name":
@@ -425,7 +456,6 @@ async def get_patients(
         query = query.order_by(Patient.created_at.desc())
     elif sort_by == "activity":
         # Join with consultations and sort by most recent consultation
-        from sqlalchemy import func
         from app.models import Consultation
         
         # Subquery to get latest consultation date per patient

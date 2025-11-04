@@ -1,1121 +1,1086 @@
 // static/js/consultations.js
+// ConsultationManager - v1: navigation inside, automatic transcription upload, autosave, visual indicator,
+// error handling, auto-retry, debounced saves.
+// Dependencies expected from the app: apiUrl, API_CONFIG, and showToast (imported from ./ui.js)
+
 import { showToast } from './ui.js';
 
+/**
+ * ConsultationManager
+ * Handles consultation lifecycle, audio recording + transcription upload, autosave, and navigation.
+ *
+ * Design notes:
+ * - Navigation is implemented inside (consistent with other modules).
+ * - Backend operations use async/await and expect apiUrl & API_CONFIG to exist globally.
+ * - Logic is DOM-agnostic where possible; bind/unbind methods are provided for cleanup.
+ */
 class ConsultationManager {
-    constructor() {
-        this.currentConsultationId = null;
-        this.currentTemplate = null;
-        this.autoSaveInterval = null;
-        this.isRecording = false;
-        this.mediaRecorder = null;
-        this.audioChunks = [];
+  /**
+   * Create a ConsultationManager.
+   * @param {Object} options
+   * @param {boolean} options.autoBindDom - If true, manager will immediately attach DOM handlers.
+   * @param {number} options.autosaveIntervalMs - Periodic autosave interval in ms (default 60000).
+   */
+  constructor({ autoBindDom = true, autosaveIntervalMs = 60000 } = {}) {
+    // core state
+    this.currentConsultationId = null;
+    this.currentTemplate = null;
+    this.currentPatientId = null;
+    this.currentNotes = '';
+    this.isRecording = false;
+    this.mediaRecorder = null;
+    this.audioChunks = [];
+    this.audioStream = null;
+
+    // UI / timers
+    this._domHandlers = [];
+    this._autosaveIntervalMs = autosaveIntervalMs;
+    this._autosaveTimer = null; // periodic
+    this._debounceSaveTimer = null; // debounced
+    this._debounceDelay = 1500; // save after pause
+    this._maxTranscriptionRetries = 3;
+
+    // visual recording indicator element (created if missing)
+    this._recordingIndicator = null;
+    this._recordingTimer = null;
+    this._recordingSeconds = 0;
+
+    if (autoBindDom && typeof document !== 'undefined') {
+      // safe to call on construction in v1
+      this.bindUIEvents();
+      this.startPeriodicAutosave();
+    }
+  }
+
+  /* ============================ Initialization & DOM binding ============================ */
+
+  /**
+   * Initialize manager; optionally bind DOM handlers.
+   * @param {boolean} bindDom
+   */
+  init(bindDom = true) {
+    if (bindDom) {
+      this.bindUIEvents();
+      this.startPeriodicAutosave();
+    }
+  }
+
+  /**
+   * Attach DOM event listeners (idempotent: avoids double-binding).
+   * Binds: tab buttons, new-consultation form submit, start-audio-recording,
+   * consultation-notes input (debounced save), discharge patient select change,
+   * review patient search input (debounced).
+   */
+  bindUIEvents() {
+    if (this._domHandlers.length > 0) return; // already bound
+
+    // --- Tabs ---
+    const tabButtons = Array.from(document.querySelectorAll('.consultation-tabs__header .tab-button'));
+    const tabHandler = (e) => {
+      const tab = e.currentTarget.dataset.tab;
+      if (tab) this.switchConsultationTab(tab);
+    };
+    tabButtons.forEach(btn => {
+      btn.addEventListener('click', tabHandler);
+      this._domHandlers.push({ el: btn, type: 'click', handler: tabHandler });
+    });
+
+    // ensure initial visibility matches HTML active button if present
+    const activeBtn = document.querySelector('.consultation-tabs__header .tab-button.active');
+    const initialTab = activeBtn?.dataset?.tab ?? 'new-consultation';
+    this.switchConsultationTab(initialTab);
+
+    // Handle "Add New Patient" button
+    const newPatientBtn = document.getElementById('new-patient-btn');
+    if (newPatientBtn) {
+      const openAddPatientModal = (e) => {
+        e.preventDefault();
+        if (typeof window.showAddPatientModal === 'function') {
+          window.showAddPatientModal(); // reuse existing modal from patients.js
+        } else {
+          showToast('Add Patient modal not found', 'warning');
+        }
+      };
+      newPatientBtn.addEventListener('click', openAddPatientModal);
+      this._domHandlers.push({ el: newPatientBtn, type: 'click', handler: openAddPatientModal });
     }
 
-    init() {
-        // Start new consultation
-        document.getElementById('start-new-consultation')?.addEventListener('click', 
-            () => this.showPatientSelectionModal()
-        );
-        
-        // Audio recording controls
-        document.getElementById('start-recording')?.addEventListener('click',
-            () => this.startAudioRecording()
-        );
-        
-        document.getElementById('stop-recording')?.addEventListener('click',
-            () => this.stopAudioRecording()
-        );
-        
-        // Save buttons
-        document.getElementById('save-as-draft')?.addEventListener('click',
-            () => this.saveConsultation('draft')
-        );
-        
-        document.getElementById('save-as-completed')?.addEventListener('click',
-            () => this.saveConsultation('completed')
-        );
+    // Patient search in Consultation tab
+    const consultSearchInput = document.getElementById('consult-patient-search');
+    if (consultSearchInput) {
+      const onSearch = this._debounce(async (ev) => {
+        const q = ev.target.value.trim();
+
+        console.log('Consultations search fired with:', q);
+
+        const resultsContainer = document.getElementById('consult-patient-search-results');
+
+        if (!q) {
+          resultsContainer.innerHTML = `
+            <div class="empty-state">
+              <div class="empty-icon">🔍</div>
+              <h4>Search for a patient to begin</h4>
+              <p>Results will appear here</p>
+            </div>`;
+          return;
+        }
+
+        try {
+          const results = await app.patientManager.searchPatients(q); // ✅ reuse existing logic
+          this._renderPatientResultsForConsult(results);
+        } catch (err) {
+          console.error('Patient search error', err);
+          showToast('Error searching patients', 'error');
+        }
+      }, 400);
+
+      consultSearchInput.addEventListener('input', onSearch);
+      this._domHandlers.push({ el: consultSearchInput, type: 'input', handler: onSearch });
     }
 
-    //helper method
-    //TODO make it not hardocoded!
-    async getDoctorSpecialties() {
-        // Get from user profile or hardcode for demo
-        return ['internal_medicine', 'cardiology', 'respiratory', 'gynecology', 'obstetrics'];
+    // --- Ensure tab switching once you have a selected patient
+    const changePatientBtn = document.getElementById('change-patient');
+    if (changePatientBtn) {
+      changePatientBtn.addEventListener('click', () => {
+        this.selectedPatient = null;
+        document.getElementById('patient-header').classList.add('hidden');
+        this.switchConsultationTab('patient-selection'); // 👈 Go back to first tab
+      });
     }
 
-    //helper method
-    formatSpecialtyName(specialty) {
-        const names = {
-            'internal_medicine': 'Internal Medicine',
-            'cardiology': 'Cardiology',
-            'respiratory': 'Respiratory Medicine',
-            'gynecology': 'Gynecology',
-            'obstetrics': 'Obstetrics (pregancy tracker)'
+    // --- New consultation form submit ---
+    const newForm = document.getElementById('new-consultation-form');
+    if (newForm) {
+      const submitHandler = async (e) => {
+        e.preventDefault();
+        const form = e.currentTarget;
+        const formData = new FormData(form);
+        const payload = {
+          patient_id: formData.get('patient_id') || this.currentPatientId,
+          consultation_type: formData.get('consultation_type'),
+          notes: (formData.get('notes') || '').trim(),
         };
-        return names[specialty] || specialty;
+        await this.startNewConsultation(payload);
+      };
+      newForm.addEventListener('submit', submitHandler);
+      this._domHandlers.push({ el: newForm, type: 'submit', handler: submitHandler });
     }
 
-    //helper method
-    getClinicId() {
-        return window.clinicManager?.getClinicId() || null;
+    // --- Start audio recording button ---
+    const startAudioBtn = document.getElementById('start-audio-recording');
+    if (startAudioBtn) {
+      const startHandler = (e) => {
+        e.preventDefault();
+        this.switchConsultationTab('patient-review'); // optional UX: move to review/record section if desired
+        this.startAudioRecording();
+      };
+      startAudioBtn.addEventListener('click', startHandler);
+      this._domHandlers.push({ el: startAudioBtn, type: 'click', handler: startHandler });
     }
 
-    async startConsultation(patientId, specialty) {
-        try {
-            // Step 1: Create draft consultation
-            const response = await fetch(
-                apiUrl(API_CONFIG.ENDPOINTS.consultations,'start'),
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ patient_id: patientId, specialty: specialty })
-                }
-            );
-            
-            if (!response.ok) throw new Error('Failed to start consultation');
-            
-            const consultation = await response.json();
-            this.currentConsultationId = consultation.id;
-            
-            // Step 2: Load template
-            await this.loadTemplate(specialty);
-            
-            // Step 3: Show document selection modal for pre-filling
-            await this.showDocumentSelectionModal(patientId);
-            
-            // Step 4: Render split-view consultation interface
-            await this.renderConsultationView();
-            
-            // Step 5: Start auto-save
-            this.startAutoSave();
-            
-        } catch (error) {
-            showToast('Failed to start consultation: ' + error.message, 'error');
-        }
+    // --- Consultation notes input (debounced autosave) ---
+    const notesEl = document.getElementById('consultation-notes');
+    if (notesEl) {
+      const inputHandler = (e) => {
+        this.currentNotes = e.target.value;
+        this._debouncedSaveDraft();
+      };
+      notesEl.addEventListener('input', inputHandler);
+      this._domHandlers.push({ el: notesEl, type: 'input', handler: inputHandler });
     }
-    
-    async loadTemplate(specialty) {
-        try {
-            // --- Construct the dynamic parts ---
-            const templatePath = `templates/${specialty}`; 
-            const url = window.apiUrl(window.API_CONFIG.ENDPOINTS.consultations,templatePath);
 
-            // Example URL result: /api/v1/consultations/templates/{specialty}
-            
-            console.log(`Fetching template from URL: ${url}`); 
-            
-            const response = await fetch(url);
+    // --- Discharge patient select: load consultations for patient when changed ---
+    const dischargeSelect = document.getElementById('discharge-patient');
+    if (dischargeSelect) {
+      const changeHandler = async (e) => {
+        const pid = e.target.value;
+        if (pid) {
+          await this.loadConsultationsForPatient(pid);
+        } else {
+          this._clearElementById('patient-consultations');
+        }
+      };
+      dischargeSelect.addEventListener('change', changeHandler);
+      this._domHandlers.push({ el: dischargeSelect, type: 'change', handler: changeHandler });
+    }
 
-            if (!response.ok) throw new Error('Failed to load template');
-            
-            this.currentTemplate = await response.json();
-            
-        } catch (error) {
-            showToast('Failed to load consultation template', 'error');
-            throw error;
-        }
+    // --- Review patient search (debounced) ---
+    const reviewSearch = document.getElementById('review-patient-search');
+    if (reviewSearch) {
+      const debouncedSearch = this._debounce(async (ev) => {
+        const q = ev.target.value.trim();
+        if (!q) return;
+        const results = await app.patientManager.searchPatients(q);
+        // transitional behavior: render results to #review-results (lightweight)
+        this._renderReviewResults(results);
+      }, 400);
+      reviewSearch.addEventListener('input', debouncedSearch);
+      this._domHandlers.push({ el: reviewSearch, type: 'input', handler: debouncedSearch });
     }
-    
-    async showDocumentSelectionModal(patientId) {
-        // Fetch patient documents
-        try{
-                const url = window.apiUrl(window.API_CONFIG.ENDPOINTS.documents,`patients/${patientId}/documents`);
-                //console.log(url);
-                const response = await fetch(url);
-                const documents = await response.json();
-                if (documents!=null)
-                {
-                    // Show modal with document checkboxes
-                    const modalHTML = `
-                        <div class="modal" id="document-selection-modal">
-                            <div class="modal-content">
-                                <h3>Select Documents to Include</h3>
-                                <p>Choose documents to pre-fill consultation data:</p>
-                                <div class="document-list">
-                                    ${documents.map(doc => `
-                                        <label class="document-checkbox">
-                                            <input type="checkbox" value="${doc.id}" 
-                                                data-type="${doc.document_type}">
-                                            ${doc.original_filename} (${doc.document_type})
-                                        </label>
-                                    `).join('')}
-                                </div>
-                                <div class="modal-actions">
-                                    <button onclick="consultationManager.preFillConsultation()">
-                                        Continue with Selected Documents
-                                    </button>
-                                    <button onclick="consultationManager.skipPreFill()">
-                                        Skip - Start Blank
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    
-                    document.body.insertAdjacentHTML('beforeend', modalHTML);
-                }
+
+    // --- Page unload cleanup (autosave, streams) ---
+    const beforeUnloadHandler = async () => {
+      try {
+        // synchronous: best-effort draft save (navigator.sendBeacon alternative could be used)
+        if (this.currentConsultationId || this.currentNotes) {
+          await this.saveConsultationDraftImmediately();
         }
-        catch (error) {
-            showToast('Failed to show document selection', 'error');
-            throw error;
-        }
+      } catch (e) {
+        // swallow; this is best-effort
+      }
+      this.cleanup();
+    };
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+    this._domHandlers.push({ el: window, type: 'beforeunload', handler: beforeUnloadHandler });
+  }
+
+  /**
+   * Remove attached DOM handlers and stop periodic tasks.
+   */
+  unbindUIEvents() {
+    for (const { el, type, handler } of this._domHandlers) {
+      try {
+        el.removeEventListener(type, handler);
+      } catch (err) {
+        // ignore removal errors
+      }
     }
-    
-    async preFillConsultation() {
-        const selectedDocs = Array.from(
-            document.querySelectorAll('#document-selection-modal input:checked')
-        ).map(cb => cb.value);
+    this._domHandlers = [];
+    this.clearPeriodicAutosave();
+  }
+
+  /* ============================ Navigation inside manager ============================ */
+
+  /**
+   * Switch consultation tab. Buttons with data-tab="name" map to content with id="name-tab".
+   * Sets button.active and content.active & inline display.
+   * @param {string} tabName
+   */
+  switchConsultationTab(tabName) {
+    if (!tabName) return;
+    const headerButtons = document.querySelectorAll('.consultation-tabs__header .tab-button');
+    headerButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabName));
+
+    const contents = document.querySelectorAll('.consultation-tabs__content .tab-content');
+    contents.forEach(content => {
+      const expectedId = `${tabName}-tab`;
+      const isTarget = content.id === expectedId;
+      content.classList.toggle('active', isTarget);
+      content.style.display = isTarget ? 'block' : 'none';
+    });
+
+    showToast(`Switched to "${tabName}"`, 'info');
+    // If switching to certain tabs requires loading data, do it here:
+    if (tabName === 'discharge') {
+      // populate discharge patient select if empty
+      const dischargeSelect = document.getElementById('discharge-patient');
+      if (dischargeSelect && dischargeSelect.options.length <= 1) {
+        this.loadPatientsList().catch(() => { /* ignore */ });
+      }
+    }
+  }
+
+  /* ============================ Patient & consultation lists ============================ */
+
+  /**
+   * Fetch patients and populate the two selects: consultation-patient and discharge-patient.
+   * @returns {Promise<Array>} list of patients
+   */
+  async loadPatientsList() {
+    try {
+        const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.patients) + '?page=1&per_page=100');
+        if (!res.ok) throw new Error(`Failed to fetch patients (${res.status})`);
+        const data = await res.json();
+        const patients = data.patients || [];
         
-        if (selectedDocs.length > 0) {
-            try {
-                const response = await fetch(
-                    `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/pre-fill`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ selected_documents: selectedDocs })
-                    }
-                );
-                
-                if (!response.ok) throw new Error('Pre-fill failed');
-                
-                const consultation = await response.json();
-                this.currentConsultationData = consultation.structured_data;
-                
-            } catch (error) {
-                showToast('Failed to pre-fill consultation', 'error');
-            }
-        }
-        
-        // Close modal and continue
-        document.getElementById('document-selection-modal').remove();
-        await this.renderConsultationView();
-    }
-    
-    async renderConsultationView() {
-        const container = document.getElementById('consultation-container');
-        
-        // Get doctor's specialties
-        const doctorSpecialties = await this.getDoctorSpecialties();
-        
-        const specialtyOptions = doctorSpecialties.map(spec => {
-            const selected = spec === this.currentTemplate.specialty ? 'selected' : '';
-            return `<option value="${spec}" ${selected}>${this.formatSpecialtyName(spec)}</option>`;
-        }).join('');
 
-        // Split view: left = template form, right = patient history
-        container.innerHTML = `
-            <div class="consultation-split-view">
-                <!-- Left: Consultation Form -->
-                <div class="consultation-form-panel">
-                    <div class="consultation-header">
-                        <h2>
-                            <select id="specialty-selector" onchange="consultationManager.changeSpecialty(this.value)">
-                                ${specialtyOptions}
-                            </select>
-                            Consultation
-                        </h2>
-                        <div class="audio-controls">
-                            <button id="start-recording" class="btn-record">
-                                <i class="fas fa-microphone"></i> Start Recording
-                            </button>
-                            <button id="stop-recording" class="btn-stop" style="display:none;">
-                                <i class="fas fa-stop"></i> Stop Recording
-                            </button>
-                            <span id="recording-timer" style="display:none;">00:00</span>
-                        </div>
-                    </div>
-                    
-                    <form id="consultation-form" class="consultation-template-form">
-                        ${this.renderTemplateSections()}
-                    </form>
-                    
-                    <div class="consultation-actions">
-                        <button id="save-as-draft" class="btn-secondary">
-                            Save as Draft
-                        </button>
-                        <button id="save-as-completed" class="btn-primary">
-                            Save as Completed
-                        </button>
-                        <button id="delete-consultation" class="btn-danger">
-                            Delete Consultation
-                        </button>
-                    </div>
-                </div>
-                
-                <!-- Right: Patient History (reused from View Patient modal) -->
-                <div class="patient-context-panel">
-                    <div id="patient-history-container">
-                        <!-- Load View Patient's Documents & History tab -->
-                    </div>
-                </div>
-            </div>
+        // populate selects
+        this._populateSelect('consultation-patient', patients);
+        this._populateSelect('discharge-patient', patients);
+
+        showToast('Patients loaded', 'success');
+        return patients;
+    } catch (err) {
+      console.error('loadPatientsList error', err);
+      showToast('Could not load patients', 'error');
+      return [];
+    }
+  }
+
+  /**
+   * Populate a select element by id with patient options.
+   * @param {string} selectId
+   * @param {Array} patients - objects: { id, name, cnp? }
+   * @private
+   */
+  _populateSelect(selectId, patients = []) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    // keep the placeholder option and clear the rest
+    const placeholder = sel.querySelector('option[value=""]') ?? sel.options[0];
+    sel.innerHTML = '';
+    if (placeholder) sel.appendChild(placeholder.cloneNode(true));
+    patients.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name || `${p.id}`;
+      sel.appendChild(opt);
+    });
+  }
+
+  /**
+   * Load consultations for a given patient and render them in #patient-consultations.
+   * @param {string} patientId
+   */
+  async loadConsultationsForPatient(patientId) {
+    if (!patientId) return;
+    try {
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${encodeURIComponent(patientId)}`));
+      if (!res.ok) throw new Error('Failed to load consultations');
+      const consultations = await res.json();
+
+      const container = document.getElementById('patient-consultations');
+      if (!container) return;
+      container.innerHTML = '';
+      if (!consultations.length) {
+        container.innerHTML = '<div class="empty-state">No completed consultations for this patient.</div>';
+        return;
+      }
+      consultations.forEach(c => {
+        const card = document.createElement('div');
+        card.className = 'consultation-item';
+        card.innerHTML = `
+          <div class="consultation-meta">
+            <strong>${c.consultation_type || 'Consultation'}</strong>
+            <div class="muted">${new Date(c.timestamp).toLocaleString()}</div>
+          </div>
+          <div class="consultation-notes-snippet">${(c.notes || '').slice(0, 200)}</div>
+          <div class="consultation-actions">
+            <button data-id="${c.id}" class="btn-secondary btn-generate-discharge">Generate Discharge</button>
+          </div>
         `;
-        
-        // Load patient history in right panel
-        await this.loadPatientHistoryPanel();
-        
-        // Re-attach event listeners
-        this.attachFormEventListeners();
-    }
-    
-    renderTemplateSections() {
-        return this.currentTemplate.sections.map(section => `
-            <div class="template-section ${section.collapsible ? 'collapsible' : ''}">
-                <div class="section-header">
-                    <h3>${section.section_name}</h3>
-                    ${section.section_description ? 
-                        `<p class="section-description">${section.section_description}</p>` 
-                        : ''}
-                    ${section.collapsible ? 
-                        `<button class="collapse-toggle"><i class="fas fa-chevron-down"></i></button>` 
-                        : ''}
-                </div>
-                <div class="section-fields">
-                    ${section.fields.map(field => this.renderTemplateField(field, section.section_id)).join('')}
-                </div>
-            </div>
-        `).join('');
-    }
-    
-    renderTemplateField(field, sectionId) {
-        const fieldId = `${sectionId}_${field.field_id}`;
-        const value = this.getFieldValue(sectionId, field.field_id);
-        const confidence = this.getFieldValue(sectionId, `${field.field_id}_confidence`);
-        
-        const confidenceBadge = confidence ? 
-            `<span class="confidence-badge confidence-${confidence}">${confidence}</span>` 
-            : '';
-        
-        switch (field.field_type) {
-            case 'text':
-            case 'number':
-                return `
-                    <div class="form-field">
-                        <label for="${fieldId}">
-                            ${field.field_name} 
-                            ${field.required ? '<span class="required">*</span>' : ''}
-                            ${confidenceBadge}
-                        </label>
-                        <input 
-                            type="${field.field_type}" 
-                            id="${fieldId}"
-                            name="${fieldId}"
-                            value="${value || ''}"
-                            placeholder="${field.placeholder || ''}"
-                            ${field.required ? 'required' : ''}
-                            ${field.units ? `data-units="${field.units}"` : ''}
-                        >
-                        ${field.units ? `<span class="field-units">${field.units}</span>` : ''}
-                    </div>
-                `;
-            
-            case 'textarea':
-                return `
-                    <div class="form-field">
-                        <label for="${fieldId}">
-                            ${field.field_name}
-                            ${field.required ? '<span class="required">*</span>' : ''}
-                            ${confidenceBadge}
-                        </label>
-                        <textarea 
-                            id="${fieldId}"
-                            name="${fieldId}"
-                            rows="4"
-                            placeholder="${field.placeholder || ''}"
-                            ${field.required ? 'required' : ''}
-                        >${value || ''}</textarea>
-                    </div>
-                `;
-            
-            case 'select':
-                return `
-                    <div class="form-field">
-                        <label for="${fieldId}">
-                            ${field.field_name}
-                            ${field.required ? '<span class="required">*</span>' : ''}
-                        </label>
-                        <select id="${fieldId}" name="${fieldId}" ${field.required ? 'required' : ''}>
-                            <option value="">Select...</option>
-                            ${field.options.map(opt => `
-                                <option value="${opt.value}" ${value === opt.value ? 'selected' : ''}>
-                                    ${opt.label}
-                                </option>
-                            `).join('')}
-                        </select>
-                    </div>
-                `;
-            
-            case 'icd10':
-                return `
-                    <div class="form-field icd10-field">
-                        <label for="${fieldId}">
-                            ${field.field_name}
-                            ${field.required ? '<span class="required">*</span>' : ''}
-                        </label>
-                        <textarea 
-                            id="${fieldId}"
-                            name="${fieldId}"
-                            rows="3"
-                            placeholder="${field.placeholder || 'Describe diagnoses...'}"
-                            ${field.required ? 'required' : ''}
-                        >${value || ''}</textarea>
-                        <div id="${fieldId}_codes" class="icd10-codes">
-                            ${this.renderICD10Codes(sectionId, field.field_id)}
-                        </div>
-                    </div>
-                `;
-            
-            default:
-                return `<p>Unsupported field type: ${field.field_type}</p>`;
-        }
-    }
-    
-    renderICD10Codes(sectionId, fieldId) {
-		const codes = this.getFieldValue(sectionId, 'icd10_codes') || [];
-		
-		if (codes.length === 0) {
-			return `
-				<p class="no-codes">
-					Describe diagnoses above, then click "Extract ICD-10 Codes" button
-				</p>
-			`;
-		}
-		
-		return `
-			<div class="icd10-suggestions">
-				<p class="suggestion-note">
-					<i class="fas fa-info-circle"></i>
-					Suggested codes - please review and modify as needed
-				</p>
-				${codes.map((code, index) => `
-					<div class="icd10-code-item suggestion">
-						<div class="code-header">
-							<strong>${code.icd10_code}</strong>
-							<span class="confidence-badge confidence-${code.confidence}">
-								${code.confidence}
-							</span>
-						</div>
-						<div class="code-description">
-							<div class="romanian">${code.diagnosis_romanian}</div>
-							<div class="icd-full">${code.icd10_description}</div>
-							${code.notes ? `
-								<div class="code-notes">
-									<i class="fas fa-exclamation-triangle"></i>
-									${code.notes}
-								</div>
-							` : ''}
-						</div>
-						<div class="code-actions">
-							<button onclick="consultationManager.editICD10Code(${index})" 
-									class="btn-icon" title="Edit Code">
-								<i class="fas fa-edit"></i>
-							</button>
-							<button onclick="consultationManager.approveICD10Code(${index})" 
-									class="btn-icon btn-approve" title="Approve">
-								<i class="fas fa-check"></i>
-							</button>
-							<button onclick="consultationManager.removeICD10Code(${index})" 
-									class="btn-icon" title="Remove">
-								<i class="fas fa-times"></i>
-							</button>
-						</div>
-					</div>
-				`).join('')}
-			</div>
-			
-			<button class="btn-secondary btn-add-manual" 
-					onclick="consultationManager.addManualICD10Code()">
-				<i class="fas fa-plus"></i> Add Code Manually
-			</button>
-		`;
-	}
+        container.appendChild(card);
+      });
 
-	// Allow doctor to manually add/edit codes
-	addManualICD10Code() {
-		const modal = document.createElement('div');
-		modal.className = 'modal';
-		modal.innerHTML = `
-			<div class="modal-content">
-				<div class="modal-header">
-					<h3>Add ICD-10 Code Manually</h3>
-					<button class="modal-close" onclick="this.closest('.modal').remove()">
-						<i class="fas fa-times"></i>
-					</button>
-				</div>
-				<div class="modal-body">
-					<div class="form-field">
-						<label>ICD-10 Code *</label>
-						<input type="text" id="manual-icd-code" 
-							   placeholder="e.g., A16.1" 
-							   pattern="[A-Z][0-9]{2}\.?[0-9]?.*">
-					</div>
-					<div class="form-field">
-						<label>Diagnosis (Romanian) *</label>
-						<input type="text" id="manual-diagnosis-ro" 
-							   placeholder="e.g., Tuberculoza pulmonară">
-					</div>
-					<div class="form-field">
-						<label>Notes (optional)</label>
-						<textarea id="manual-notes" rows="2" 
-								  placeholder="Additional codes required, special considerations..."></textarea>
-					</div>
-				</div>
-				<div class="modal-footer">
-					<button class="btn-secondary" onclick="this.closest('.modal').remove()">
-						Cancel
-					</button>
-					<button class="btn-primary" onclick="consultationManager.saveManualICD10Code()">
-						Add Code
-					</button>
-				</div>
-			</div>
-		`;
-		
-		document.body.appendChild(modal);
-	}
-
-	saveManualICD10Code() {
-		const code = document.getElementById('manual-icd-code').value.trim();
-		const diagnosis = document.getElementById('manual-diagnosis-ro').value.trim();
-		const notes = document.getElementById('manual-notes').value.trim();
-		
-		if (!code || !diagnosis) {
-			showToast('Code and diagnosis are required', 'error');
-			return;
-		}
-		
-		// Get current codes
-		const currentCodes = this.getFieldValue('diagnosis', 'icd10_codes') || [];
-		
-		// Add new code
-		currentCodes.push({
-			icd10_code: code,
-			diagnosis_romanian: diagnosis,
-			icd10_description: diagnosis, // Same for manual entry
-			confidence: "manual",
-			notes: notes,
-			approved: true
-		});
-		
-		// Update consultation data
-		if (!this.currentConsultationData.diagnosis) {
-			this.currentConsultationData.diagnosis = {};
-		}
-		this.currentConsultationData.diagnosis.icd10_codes = currentCodes;
-		
-		// Re-render
-		this.updateICD10Display(currentCodes);
-		
-		// Close modal
-		document.querySelector('.modal').remove();
-		
-		showToast('Code added', 'success');
-	}
-   
-    getFieldValue(sectionId, fieldId) {
-        if (!this.currentConsultationData) return null;
-        if (!this.currentConsultationData[sectionId]) return null;
-        return this.currentConsultationData[sectionId][fieldId];
-    }
-    
-    // Auto-save functionality
-    startAutoSave() {
-        // Auto-save every 60 seconds
-        this.autoSaveInterval = setInterval(async () => {
-            await this.autoSaveConsultation();
-        }, 60000);
-    }
-    
-    async autoSaveConsultation() {
-        if (!this.currentConsultationId) return;
-        
-        try {
-            const formData = this.collectFormData();
-            
-            const response = await fetch(
-                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/auto-save`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ structured_data: formData })
-                }
-            );
-            
-            if (!response.ok) throw new Error('Auto-save failed');
-            
-            // Show subtle notification
-            this.showAutoSaveIndicator();
-            
-        } catch (error) {
-            console.error('Auto-save error:', error);
-            // Don't show error toast - silent failure for auto-save
-        }
-    }
-    
-    collectFormData() {
-        const formData = {};
-        
-        this.currentTemplate.sections.forEach(section => {
-            const sectionData = {};
-            
-            section.fields.forEach(field => {
-                const fieldId = `${section.section_id}_${field.field_id}`;
-                const element = document.getElementById(fieldId);
-                
-                if (element) {
-                    sectionData[field.field_id] = element.value;
-                }
-            });
-            
-            formData[section.section_id] = sectionData;
+      // attach handlers for "Generate Discharge" buttons
+      container.querySelectorAll('.btn-generate-discharge').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const cid = e.currentTarget.dataset.id;
+          await this.generateDischargeSummaryByConsultation(cid);
         });
-        
-        return formData;
+      });
+
+      showToast('Consultations loaded', 'success');
+    } catch (err) {
+      console.error('loadConsultationsForPatient', err);
+      showToast('Failed to load consultations', 'error');
     }
-    
-    showAutoSaveIndicator() {
-        const indicator = document.createElement('div');
-        indicator.className = 'auto-save-indicator';
-        indicator.innerHTML = '<i class="fas fa-check"></i> Auto-saved';
-        document.body.appendChild(indicator);
-        
-        setTimeout(() => indicator.remove(), 2000);
+  }
+
+  /**
+   * Render search results in Consultation → Patient Selection tab
+   */
+  _renderPatientResultsForConsult(results = []) {
+    const container = document.getElementById('consult-patient-results') 
+      || document.getElementById('patient-search-results');
+    if (!container) return;
+
+    if (!results.length) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <h4>No patients found</h4>
+          <p>Try another name, CNP, or phone</p>
+        </div>`;
+      return;
     }
-    
-    // Audio recording functionality
-    async startAudioRecording() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            
-            this.mediaRecorder = new MediaRecorder(stream);
-            this.audioChunks = [];
-            
-            this.mediaRecorder.ondataavailable = (event) => {
-                this.audioChunks.push(event.data);
-            };
-            
-            this.mediaRecorder.onstop = async () => {
-                await this.processRecordedAudio();
-            };
-            
-            this.mediaRecorder.start();
-            this.isRecording = true;
-            
-            // Update UI
-            document.getElementById('start-recording').style.display = 'none';
-            document.getElementById('stop-recording').style.display = 'inline-block';
-            document.getElementById('recording-timer').style.display = 'inline-block';
-            
-            // Start recording timer
-            this.startRecordingTimer();
-            
-            showToast('Recording started', 'success');
-            
-        } catch (error) {
-            showToast('Microphone access denied: ' + error.message, 'error');
-        }
+
+    container.innerHTML = results.map(p => {
+      const name = this._escapeHtml(`${p.given_name || ''} ${p.family_name || ''}`.trim());
+      const age = p.age ? `${p.age}y` : '';
+      const gender = p.gender ? (p.gender.toLowerCase().startsWith('f') ? '♀' : '♂') : '';
+      const cnp = p.cnp ? `CNP ${p.cnp}` : '';
+      const phone = p.phone ? `📞 ${p.phone}` : '';
+
+      return `
+        <div class="patient-result-row" data-id="${p.id}" data-tooltip="Click to select">
+          <span class="name">${name}</span>
+          <span class="demographics">${gender} ${age}</span>
+          <span class="cnp">${cnp}</span>
+          <span class="phone">${phone}</span>
+        </div>`;
+    }).join('');
+
+    container.querySelectorAll('.patient-result-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const id = row.dataset.id;
+        const name = row.querySelector('.name').innerText;
+        this.selectPatient(id, { name });
+        this.switchConsultationTab('patient-review');
+      });
+    });
+  }
+
+  /**
+   * Select a patient, update header, and set context
+   */
+  selectPatient(id, data = {}) {
+    this.currentPatientId = id;
+    const header = document.getElementById('patient-header');
+    const nameEl = document.getElementById('patient-name');
+    const detailsEl = document.getElementById('patient-details');
+
+    if (header) header.classList.remove('hidden');
+    if (nameEl) nameEl.textContent = data.name || 'Selected Patient';
+    if (detailsEl) detailsEl.textContent = data.details || '';
+
+    showToast(`Patient selected: ${data.name}`, 'success');
+  }
+
+
+  
+  /* ============================ Consultation lifecycle: create/save/finalize ============================ */
+
+  /**
+   * Start a new consultation (creates it in backend and sets currentConsultationId).
+   * @param {Object} payload - { patient_id, consultation_type, notes }
+   */
+  async startNewConsultation(payload = {}) {
+    try {
+      if (!payload.patient_id) {
+        showToast('Please select a patient', 'warning');
+        return null;
+      }
+      const body = {
+        patient_id: payload.patient_id,
+        consultation_type: payload.consultation_type || 'general',
+        notes: payload.notes || '',
+        status: 'in_progress',
+        timestamp: new Date().toISOString(),
+      };
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`Failed to create consultation (${res.status})`);
+      const created = await res.json();
+      this.currentConsultationId = created.id;
+      this.currentPatientId = payload.patient_id;
+      this.currentNotes = body.notes;
+      showToast('New consultation started', 'success');
+
+      // start autosave only after a consultation exists
+      this.startPeriodicAutosave();
+      return created;
+    } catch (err) {
+      console.error('startNewConsultation', err);
+      showToast('Failed to start consultation', 'error');
+      return null;
     }
-    
-    startRecordingTimer() {
-        let seconds = 0;
-        this.recordingTimerInterval = setInterval(() => {
-            seconds++;
-            const minutes = Math.floor(seconds / 60);
-            const secs = seconds % 60;
-            document.getElementById('recording-timer').textContent = 
-                `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-        }, 1000);
-    }
-    
-    stopAudioRecording() {
-        if (this.mediaRecorder && this.isRecording) {
-            this.mediaRecorder.stop();
-            this.isRecording = false;
-            
-            // Stop all tracks
-            this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
-            
-            // Clear timer
-            clearInterval(this.recordingTimerInterval);
-            
-            // Update UI
-            document.getElementById('start-recording').style.display = 'inline-block';
-            document.getElementById('stop-recording').style.display = 'none';
-            document.getElementById('recording-timer').style.display = 'none';
-            
-            showToast('Processing audio...', 'info');
-        }
-    }
-    
-    async processRecordedAudio() {
-        try {
-            // Create audio blob
-            const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
-            
-            // Upload to server
-            const formData = new FormData();
-            formData.append('audio_file', audioBlob, 'consultation_audio.webm');
-            
-            const uploadResponse = await fetch(
-                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/audio/upload`,
-                {
-                    method: 'POST',
-                    body: formData
-                }
-            );
-            
-            if (!uploadResponse.ok) throw new Error('Audio upload failed');
-            
-            // Process audio (transcribe + extract fields)
-            showToast('Transcribing and extracting data...', 'info');
-            
-            const processResponse = await fetch(
-                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/audio/process`,
-                {
-                    method: 'POST'
-                }
-            );
-            
-            if (!processResponse.ok) throw new Error('Audio processing failed');
-            
-            const result = await processResponse.json();
-            
-            // Update form with extracted data
-            this.currentConsultationData = result.extracted_data;
-            await this.updateFormWithExtractedData(result.extracted_data);
-            
-            // Show transcript in modal for review
-            this.showTranscriptModal(result.transcript, result.extracted_data);
-            
-            showToast('Audio processed successfully', 'success');
-            
-        } catch (error) {
-            showToast('Audio processing failed: ' + error.message, 'error');
-            console.error('Audio processing error:', error);
-        }
-    }
-    
-    async updateFormWithExtractedData(extractedData) {
-        // Update form fields with extracted data
-        for (const [sectionId, sectionData] of Object.entries(extractedData)) {
-            for (const [fieldId, fieldValue] of Object.entries(sectionData)) {
-                // Skip confidence fields
-                if (fieldId.endsWith('_confidence')) continue;
-                
-                const element = document.getElementById(`${sectionId}_${fieldId}`);
-                if (element && fieldValue) {
-                    // Highlight auto-filled fields
-                    element.value = fieldValue;
-                    element.classList.add('auto-filled');
-                    
-                    // Add confidence indicator
-                    const confidence = sectionData[`${fieldId}_confidence`];
-                    if (confidence) {
-                        this.addConfidenceBadge(element, confidence);
-                    }
-                }
-            }
-        }
-        
-        // Special handling for ICD-10 codes
-        if (extractedData.diagnosis?.icd10_codes) {
-            this.updateICD10Display(extractedData.diagnosis.icd10_codes);
-        }
-    }
-    
-    addConfidenceBadge(element, confidence) {
-        const badge = document.createElement('span');
-        badge.className = `confidence-badge confidence-${confidence}`;
-        badge.textContent = confidence;
-        
-        // Insert after the input element
-        element.parentNode.insertBefore(badge, element.nextSibling);
-    }
-    
-    updateICD10Display(codes) {
-        const container = document.getElementById('diagnosis_diagnoses_codes');
-        if (!container) return;
-        
-        container.innerHTML = codes.map((code, index) => `
-            <div class="icd10-code-item">
-                <div class="code-header">
-                    <strong>${code.icd10_code}</strong>
-                    <span class="confidence-badge confidence-${code.confidence}">
-                        ${code.confidence}
-                    </span>
-                </div>
-                <div class="code-description">
-                    <div class="romanian">${code.condition_romanian}</div>
-                    <div class="english">${code.condition_english}</div>
-                    <div class="icd-description">${code.icd10_description}</div>
-                </div>
-                <div class="code-actions">
-                    <button onclick="consultationManager.editICD10Code(${index})" 
-                            class="btn-icon" title="Edit">
-                        <i class="fas fa-edit"></i>
-                    </button>
-                    <button onclick="consultationManager.removeICD10Code(${index})" 
-                            class="btn-icon" title="Remove">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            </div>
-        `).join('');
-    }
-    
-    showTranscriptModal(transcript, extractedData) {
-        const modal = document.createElement('div');
-        modal.className = 'modal';
-        modal.id = 'transcript-review-modal';
-        
-        modal.innerHTML = `
-            <div class="modal-content large">
-                <div class="modal-header">
-                    <h2>Audio Transcript Review</h2>
-                    <button class="modal-close" onclick="this.closest('.modal').remove()">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <div class="transcript-container">
-                        <h3>Full Transcript</h3>
-                        <div class="transcript-text">
-                            ${transcript}
-                        </div>
-                    </div>
-                    <div class="extracted-summary">
-                        <h3>Extracted Data Summary</h3>
-                        <div class="extraction-summary">
-                            ${this.renderExtractionSummary(extractedData)}
-                        </div>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn-primary" onclick="this.closest('.modal').remove()">
-                        Continue Editing Form
-                    </button>
-                </div>
-            </div>
-        `;
-        
-        document.body.appendChild(modal);
-    }
-    
-    renderExtractionSummary(extractedData) {
-        let summary = '';
-        
-        for (const [sectionId, sectionData] of Object.entries(extractedData)) {
-            const section = this.currentTemplate.sections.find(s => s.section_id === sectionId);
-            if (!section) continue;
-            
-            summary += `<div class="section-summary">
-                <h4>${section.section_name}</h4>
-                <ul>`;
-            
-            for (const [fieldId, fieldValue] of Object.entries(sectionData)) {
-                if (fieldId.endsWith('_confidence') || !fieldValue) continue;
-                
-                const field = section.fields.find(f => f.field_id === fieldId);
-                if (!field) continue;
-                
-                const confidence = sectionData[`${fieldId}_confidence`] || 'unknown';
-                
-                summary += `
-                    <li>
-                        <strong>${field.field_name}:</strong> ${fieldValue}
-                        <span class="confidence-badge confidence-${confidence}">${confidence}</span>
-                    </li>
-                `;
-            }
-            
-            summary += `</ul></div>`;
-        }
-        
-        return summary;
-    }
-    
-    // Patient history panel (right side)
-    async loadPatientHistoryPanel() {
-        try {
-            const response = await fetch(
-                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/patient-history`
-            );
-            
-            if (!response.ok) throw new Error('Failed to load patient history');
-            
-            const historyData = await response.json();
-            
-            // Render using the same component as View Patient modal's Documents & History tab
-            this.renderPatientHistory(historyData);
-            
-        } catch (error) {
-            console.error('Failed to load patient history:', error);
-        }
-    }
-    
-    renderPatientHistory(historyData) {
-        const container = document.getElementById('patient-history-container');
-        
-        container.innerHTML = `
-            <div class="patient-history-panel">
-                <div class="patient-header">
-                    <h3>${historyData.patient.given_name} ${historyData.patient.family_name}</h3>
-                    <p>CNP: ${historyData.patient.cnp}</p>
-                    <p>Birth Date: ${historyData.patient.birth_date}</p>
-                </div>
-                
-                <div class="history-tabs">
-                    <button class="tab-btn active" data-tab="consultations">
-                        Consultations (${historyData.consultations.length})
-                    </button>
-                    <button class="tab-btn" data-tab="documents">
-                        Documents (${historyData.documents.length})
-                    </button>
-                </div>
-                
-                <div class="history-content">
-                    <div id="consultations-history" class="tab-content active">
-                        ${this.renderConsultationsHistory(historyData.consultations)}
-                    </div>
-                    <div id="documents-history" class="tab-content">
-                        ${this.renderDocumentsHistory(historyData.documents)}
-                    </div>
-                </div>
-            </div>
-        `;
-        
-        // Attach tab switching
-        container.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const tab = e.target.dataset.tab;
-                
-                container.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                container.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-                
-                e.target.classList.add('active');
-                container.querySelector(`#${tab}-history`).classList.add('active');
-            });
+  }
+
+  /**
+   * Debounced draft save: called on input events. Waits for user to pause to avoid hammering backend.
+   * Uses this._debounceDelay.
+   * @private
+   */
+  _debouncedSaveDraft() {
+    if (this._debounceSaveTimer) clearTimeout(this._debounceSaveTimer);
+    this._debounceSaveTimer = setTimeout(() => {
+      this.saveConsultationDraft().catch(() => { /* ignore */ });
+    }, this._debounceDelay);
+  }
+
+  /**
+   * Save current consultation as draft (non-blocking; awaited where necessary).
+   * If no consultation exists yet (no id), creates one in draft mode.
+   */
+  async saveConsultationDraft() {
+    try {
+      const payload = {
+        patient_id: this.currentPatientId,
+        notes: this.currentNotes,
+        status: 'draft',
+        timestamp: new Date().toISOString(),
+      };
+      let res;
+      if (this.currentConsultationId) {
+        res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, this.currentConsultationId), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
         });
-    }
-    
-    renderConsultationsHistory(consultations) {
-        if (consultations.length === 0) {
-            return '<p class="empty-state">No previous consultations</p>';
-        }
-        
-        return `
-            <div class="consultations-timeline">
-                ${consultations.map(consult => `
-                    <div class="consultation-item">
-                        <div class="consultation-header">
-                            <strong>${consult.specialty}</strong>
-                            <span class="date">${new Date(consult.consultation_date).toLocaleDateString('ro-RO')}</span>
-                        </div>
-                        <button class="btn-link" onclick="consultationManager.viewConsultationDetails('${consult.id}')">
-                            View Details
-                        </button>
-                    </div>
-                `).join('')}
-            </div>
-        `;
-    }
-    
-    renderDocumentsHistory(documents) {
-        if (documents.length === 0) {
-            return '<p class="empty-state">No documents</p>';
-        }
-        
-        // Group by document type
-        const grouped = documents.reduce((acc, doc) => {
-            const type = doc.document_type || 'Other';
-            if (!acc[type]) acc[type] = [];
-            acc[type].push(doc);
-            return acc;
-        }, {});
-        
-        return Object.entries(grouped).map(([type, docs]) => `
-            <div class="document-group">
-                <h4>${type}</h4>
-                <div class="documents-list">
-                    ${docs.map(doc => `
-                        <div class="document-item">
-                            <i class="fas fa-file-alt"></i>
-                            <span>${doc.filename}</span>
-                            <button onclick="consultationManager.viewDocument('${doc.id}')" 
-                                    class="btn-icon">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>
-        `).join('');
-    }
-    
-    // Save consultation
-    async saveConsultation(status) {
-        try {
-            // Collect form data
-            const formData = this.collectFormData();
-            
-            // Validate required fields
-            if (status === 'completed' && !this.validateForm()) {
-                showToast('Please fill all required fields', 'error');
-                return;
-            }
-            
-            // Save data
-            const saveResponse = await fetch(
-                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/auto-save`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ structured_data: formData })
-                }
-            );
-            
-            if (!saveResponse.ok) throw new Error('Save failed');
-            
-            // Update status
-            const statusResponse = await fetch(
-                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/status`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ status: status })
-                }
-            );
-            
-            if (!statusResponse.ok) throw new Error('Status update failed');
-            
-            // Clear auto-save interval
-            if (this.autoSaveInterval) {
-                clearInterval(this.autoSaveInterval);
-            }
-            
-            showToast(
-                status === 'completed' 
-                    ? 'Consultation completed successfully' 
-                    : 'Consultation saved as draft',
-                'success'
-            );
-            
-            // Navigate back to consultations list
-            setTimeout(() => {
-                window.location.href = '#consultations';
-                app.loadConsultationsList();
-            }, 1500);
-            
-        } catch (error) {
-            showToast('Failed to save consultation: ' + error.message, 'error');
-        }
-    }
-    
-    validateForm() {
-        let isValid = true;
-        
-        this.currentTemplate.sections.forEach(section => {
-            section.fields.forEach(field => {
-                if (field.required) {
-                    const fieldId = `${section.section_id}_${field.field_id}`;
-                    const element = document.getElementById(fieldId);
-                    
-                    if (!element || !element.value.trim()) {
-                        element?.classList.add('error');
-                        isValid = false;
-                    } else {
-                        element?.classList.remove('error');
-                    }
-                }
-            });
+      } else {
+        res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
         });
-        
-        return isValid;
+      }
+      if (!res.ok) throw new Error('Draft save failed');
+      const saved = await res.json();
+      this.currentConsultationId = saved.id || this.currentConsultationId;
+      showToast('Draft saved', 'success');
+      return saved;
+    } catch (err) {
+      console.error('saveConsultationDraft', err);
+      showToast('Failed to save draft', 'error');
+      return null;
     }
-    
-    attachFormEventListeners() {
-        // Re-attach all event listeners after rendering
-        document.getElementById('start-recording')?.addEventListener('click',
-            () => this.startAudioRecording()
-        );
-        
-        document.getElementById('stop-recording')?.addEventListener('click',
-            () => this.stopAudioRecording()
-        );
-        
-        document.getElementById('save-as-draft')?.addEventListener('click',
-            () => this.saveConsultation('draft')
-        );
-        
-        document.getElementById('save-as-completed')?.addEventListener('click',
-            () => this.saveConsultation('completed')
-        );
-        
-        document.getElementById('delete-consultation')?.addEventListener('click',
-            () => this.deleteConsultation()
-        );
+  }
+
+  /**
+   * Synchronous attempt to save draft immediately (for beforeunload best-effort).
+   * Uses fetch but does not block page unload reliably; it's best-effort.
+   */
+  async saveConsultationDraftImmediately() {
+    try {
+      // minimal payload to avoid long operations
+      const payload = {
+        patient_id: this.currentPatientId,
+        notes: this.currentNotes,
+        status: 'draft',
+        timestamp: new Date().toISOString(),
+      };
+      await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations), {
+        method: this.currentConsultationId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      // ignore errors here
     }
-    
-    async deleteConsultation() {
-        if (!confirm('Are you sure you want to delete this consultation?')) {
-            return;
-        }
-        
-        try {
-            const response = await fetch(
-                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/cancel`,
-                { method: 'DELETE' }
-            );
-            
-            if (!response.ok) throw new Error('Delete failed');
-            
-            // Clear auto-save
-            if (this.autoSaveInterval) {
-                clearInterval(this.autoSaveInterval);
-            }
-            
-            showToast('Consultation deleted', 'success');
-            
-            // Navigate back
-            window.location.href = '#consultations';
-            app.loadConsultationsList();
-            
-        } catch (error) {
-            showToast('Failed to delete consultation: ' + error.message, 'error');
-        }
+  }
+
+  /**
+   * Update consultation status via /status endpoint.
+   * @param {string} consultationId - consultation UUID or numeric ID
+   * @param {string} newStatus - e.g. "in_progress", "paused", "completed", "cancelled"
+   * @returns {Promise<Object|null>} updated consultation or null on failure
+   */
+  async updateConsultationStatus(consultationId, newStatus) {
+    if (!consultationId || !newStatus) {
+      showToast('Missing consultation id or status', 'warning');
+      return null;
     }
 
-    async startFromPatient(patientId) {
-        // Get doctor's default specialty (or show selection modal if multiple)
-        const defaultSpecialty = 'internal_medicine'; // You can make this configurable
-        
-        await this.startConsultation(patientId, defaultSpecialty);
+    try {
+      const endpoint = apiUrl(API_CONFIG.ENDPOINTS.consultationStatus);
+      const res = await fetch(`${endpoint}?id=${encodeURIComponent(consultationId)}&status=${encodeURIComponent(newStatus)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error(`Status update failed (${res.status})`);
+      const updated = await res.json();
+      showToast(`Status changed to "${newStatus}"`, 'success');
+      await this.updateCounters();
+      return updated;
+    } catch (err) {
+      console.error('updateConsultationStatus', err);
+      showToast('Failed to update consultation status', 'error');
+      return null;
+    }
+  }
+
+  /**
+   * Finalize consultation: mark 'completed' and optionally generate discharge.
+   * @param {string} [consultationId] - defaults to currentConsultationId
+   */
+  async finalizeConsultation(consultationId = null) {
+    const id = consultationId || this.currentConsultationId;
+    if (!id) {
+        showToast('No consultation to finalize', 'warning');
+        return null;
+    }
+    return await this.updateConsultationStatus(id, 'completed');
     }
 
-    async changeSpecialty(newSpecialty) {
-        try {
-            const response = await fetch(
-                `/api/v1/${getClinicId()}/consultations/${this.currentConsultationId}/specialty`,
-                {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ specialty: newSpecialty })
-                }
-            );
-            
-            if (!response.ok) throw new Error('Failed to change specialty');
-            
-            // Reload template
-            await this.loadTemplate(newSpecialty);
-            await this.renderConsultationView();
-            
-            showToast('Specialty changed to ' + newSpecialty, 'success');
-        } catch (error) {
-            showToast('Failed to change specialty: ' + error.message, 'error');
+
+  /* ============================ Audio recording & transcription ============================ */
+
+  /**
+   * Start audio recording. Requests microphone permissions and creates MediaRecorder.
+   * Creates a visual recording indicator.
+   */
+  async startAudioRecording() {
+    if (this.isRecording) {
+      showToast('Already recording', 'warning');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.audioStream = stream;
+      this.mediaRecorder = new MediaRecorder(stream);
+      this.audioChunks = [];
+
+      this.mediaRecorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) this.audioChunks.push(ev.data);
+      };
+
+      this.mediaRecorder.onstop = async () => {
+        // create blob and upload automatically with retry
+        const blob = new Blob(this.audioChunks, { type: 'audio/webm' });
+        await this._uploadTranscriptionWithRetry(blob);
+        // cleanup stream tracks after stop
+        this._stopAudioStream();
+      };
+
+      this.mediaRecorder.onerror = (e) => {
+        console.error('MediaRecorder error', e);
+        showToast('Recording error', 'error');
+        this.stopAudioRecording();
+      };
+
+      this.mediaRecorder.start();
+      this.isRecording = true;
+      this._showRecordingIndicator();
+      showToast('Recording started', 'info');
+    } catch (err) {
+      console.error('startAudioRecording', err);
+      showToast('Microphone access denied or unavailable', 'error');
+    }
+  }
+
+  /**
+   * Stop audio recording if active.
+   */
+  stopAudioRecording() {
+    if (!this.isRecording || !this.mediaRecorder) return;
+    try {
+      this.mediaRecorder.stop();
+    } catch (err) {
+      console.error('stopAudioRecording', err);
+    }
+    this.isRecording = false;
+    this._hideRecordingIndicator();
+    showToast('Recording stopped', 'info');
+  }
+
+  /**
+   * Internal: stop all tracks on the audio stream.
+   * @private
+   */
+  _stopAudioStream() {
+    if (!this.audioStream) return;
+    try {
+      this.audioStream.getTracks().forEach(track => track.stop());
+    } catch (e) { /* ignore */ }
+    this.audioStream = null;
+  }
+
+  /**
+   * Upload the audio blob to backend for transcription, with auto-retry and exponential backoff.
+   * On success, appends transcription to notes and saves draft.
+   * @param {Blob} blob
+   * @private
+   */
+  async _uploadTranscriptionWithRetry(blob) {
+    let attempt = 0;
+    let lastErr = null;
+    while (attempt < this._maxTranscriptionRetries) {
+      try {
+        const res = await this._uploadTranscription(blob);
+        if (!res) throw new Error('Empty transcription response');
+        // append transcription text to notes and save draft
+        if (res.transcript && res.transcript.trim()) {
+          this.appendTranscriptionToNotes(res.transcript);
         }
+        showToast('Audio transcribed successfully', 'success');
+        return res;
+      } catch (err) {
+        lastErr = err;
+        attempt += 1;
+        const waitMs = 500 * Math.pow(2, attempt); // exponential backoff: 1000ms, 2000ms, etc.
+        console.warn(`Transcription attempt ${attempt} failed, retrying in ${waitMs}ms`, err);
+        await this._sleep(waitMs);
+      }
     }
+    console.error('Transcription failed after retries', lastErr);
+    showToast('Audio transcription failed after multiple attempts', 'error');
+    return null;
+  }
 
+  /**
+   * Performs the actual upload of audio blob to transcription endpoint.
+   * Returns parsed JSON with at least { transcript: '...' }.
+   * @param {Blob} blob
+   * @returns {Promise<Object>}
+   * @private
+   */
+  async _uploadTranscription(blob) {
+    if (!blob) throw new Error('No audio blob provided');
+    try {
+      const fd = new FormData();
+      fd.append('file', blob, 'consultation_audio.webm');
+      fd.append('consultation_id', this.currentConsultationId || '');
+
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.audioUpload), {
+        method: 'POST',
+        body: fd,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Upload failed (${res.status}): ${text}`);
+      }
+      const data = await res.json();
+      return data;
+    } catch (err) {
+      console.error('_uploadTranscription', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Append transcribed text to notes and trigger a draft save.
+   * @param {string} text
+   */
+  appendTranscriptionToNotes(text = '') {
+    if (!text) return;
+    const notesEl = document.getElementById('consultation-notes');
+    if (notesEl) {
+      // insert at cursor if possible, else append
+      try {
+        const start = notesEl.selectionStart ?? notesEl.value.length;
+        const before = notesEl.value.slice(0, start);
+        const after = notesEl.value.slice(start);
+        notesEl.value = `${before}${text}\n${after}`;
+        notesEl.focus();
+        notesEl.selectionStart = notesEl.selectionEnd = before.length + text.length + 1;
+        this.currentNotes = notesEl.value;
+      } catch (err) {
+        // fallback: append
+        notesEl.value = `${notesEl.value}\n${text}`;
+        this.currentNotes = notesEl.value;
+      }
+    } else {
+      // no textarea in DOM; append to internal state
+      this.currentNotes = `${this.currentNotes}\n${text}`;
+    }
+    // immediately save draft
+    this.saveConsultationDraft().catch(() => { /* ignore */ });
+  }
+
+  /* ============================ Discharge & summaries ============================ */
+
+  /**
+   * Generate discharge summary by consultation id (fetches consultation details and calls backend summary endpoint).
+   * @param {string} consultationId
+   */
+  async generateDischargeSummaryByConsultation(consultationId) {
+    if (!consultationId) {
+      showToast('No consultation specified', 'warning');
+      return;
+    }
+    try {
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, consultationId));
+      if (!res.ok) throw new Error('Failed to fetch consultation for discharge');
+      const consultation = await res.json();
+
+      // Optionally, call an endpoint that generates a discharge summary (if available)
+      const summaryRes = await fetch(apiUrl(API_CONFIG.ENDPOINTS.generateDischarge), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ consultation }),
+      });
+      if (!summaryRes.ok) throw new Error('Generate discharge failed');
+      const summaryData = await summaryRes.json();
+      this.displayDischargeSummary(summaryData.summary || 'No summary returned');
+    } catch (err) {
+      console.error('generateDischargeSummaryByConsultation', err);
+      showToast('Failed to generate discharge summary', 'error');
+    }
+  }
+
+  /**
+   * Render the discharge summary in the discharge tab (simple render).
+   * @param {string} summaryHtmlOrText
+   */
+  displayDischargeSummary(summaryHtmlOrText) {
+    const container = document.getElementById('patient-consultations');
+    if (!container) {
+      showToast('Discharge container missing', 'warning');
+      return;
+    }
+    container.innerHTML = `
+      <div class="discharge-summary">
+        <h4>Discharge Summary</h4>
+        <div class="discharge-body">${this._escapeHtml(summaryHtmlOrText)}</div>
+        <div class="discharge-actions">
+          <button class="btn-primary btn-download-discharge">Download</button>
+        </div>
+      </div>
+    `;
+    // download handler (simple text file)
+    const dlBtn = container.querySelector('.btn-download-discharge');
+    if (dlBtn) {
+      dlBtn.addEventListener('click', () => {
+        const blob = new Blob([summaryHtmlOrText], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `discharge_${Date.now()}.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+    }
+  }
+
+  /**
+   * Search patients by query (used in review tab).
+   * @param {string} query
+   * @returns {Promise<Array>}
+   */
+  async searchPatient(query) {
+    if (!query || !query.trim()) return [];
+    try {
+        const url = apiUrl(API_CONFIG.ENDPOINTS.patients) + `?search=${encodeURIComponent(query)}&per_page=10&page=1`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('Patient search failed');
+        const results = await res.json();
+        return results;
+    } catch (err) {
+        console.error('searchPatient', err);
+        showToast('Patient search error', 'error');
+        return [];
+    }
+  }
+
+  /* ============================ UI helpers & indicators ============================ */
+
+  /**
+   * Create and show a recording indicator if not present. Starts a simple seconds timer.
+   * @private
+   */
+  _showRecordingIndicator() {
+    // create element inside new-consultation-tab if available
+    const parent = document.getElementById('new-consultation-tab') ?? document.body;
+    if (!this._recordingIndicator) {
+      const el = document.createElement('div');
+      el.id = 'recording-indicator';
+      el.className = 'recording-indicator';
+      el.innerHTML = `<span class="dot"></span> Recording <span class="time">00:00</span>`;
+      // minimal inline styles to ensure visible in most themes
+      el.style.position = 'fixed';
+      el.style.right = '20px';
+      el.style.bottom = '20px';
+      el.style.padding = '8px 12px';
+      el.style.background = '#b71c1c';
+      el.style.color = '#fff';
+      el.style.borderRadius = '8px';
+      el.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+      el.style.zIndex = 9999;
+      el.style.display = 'flex';
+      el.style.alignItems = 'center';
+      el.style.gap = '8px';
+      parent.appendChild(el);
+      this._recordingIndicator = el;
+    }
+    this._recordingSeconds = 0;
+    this._updateRecordingTime();
+    this._recordingTimer = setInterval(() => {
+      this._recordingSeconds += 1;
+      this._updateRecordingTime();
+    }, 1000);
+    this._recordingIndicator.style.display = 'flex';
+  }
+
+  /**
+   * Hide and remove the recording indicator.
+   * @private
+   */
+  _hideRecordingIndicator() {
+    if (this._recordingTimer) clearInterval(this._recordingTimer);
+    this._recordingTimer = null;
+    if (this._recordingIndicator) {
+      this._recordingIndicator.style.display = 'none';
+      // keep element in DOM for re-use rather than removing to avoid layout shifts
+    }
+  }
+
+  /**
+   * Update the time label inside the recording indicator.
+   * @private
+   */
+  _updateRecordingTime() {
+    if (!this._recordingIndicator) return;
+    const timeEl = this._recordingIndicator.querySelector('.time');
+    if (!timeEl) return;
+    const mm = String(Math.floor(this._recordingSeconds / 60)).padStart(2, '0');
+    const ss = String(this._recordingSeconds % 60).padStart(2, '0');
+    timeEl.textContent = `${mm}:${ss}`;
+  }
+
+  /**
+   * Simple utility to sleep.
+   * @param {number} ms
+   * @returns {Promise<void>}
+   * @private
+   */
+  _sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Escape HTML for insert into text containers (very small helper).
+   * @param {string} s
+   * @private
+   */
+  _escapeHtml(s = '') {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\n/g, '<br/>');
+  }
+
+  /* ============================ Autosave: periodic + debounced ============================ */
+
+  /**
+   * Start periodic autosave (every this._autosaveIntervalMs).
+   */
+  startPeriodicAutosave() {
+    this.clearPeriodicAutosave();
+    this._autosaveTimer = setInterval(() => {
+      if (this.currentConsultationId || this.currentNotes) {
+        this.saveConsultationDraft().catch(() => { /* ignore */ });
+      }
+    }, this._autosaveIntervalMs);
+  }
+
+  /**
+   * Stop periodic autosave.
+   */
+  clearPeriodicAutosave() {
+    if (this._autosaveTimer) {
+      clearInterval(this._autosaveTimer);
+      this._autosaveTimer = null;
+    }
+  }
+
+  /* ============================ Counters & simple UI updates ============================ */
+
+/**
+   * Update tab counters using backend /counts endpoint (MVP-optimized).
+   * Falls back to zero if unavailable.
+   */
+  async updateCounters() {
+    try {
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultationCounts));
+      if (!res.ok) throw new Error('Failed to fetch counts');
+      const counts = await res.json();
+
+      this._setCount('active-consultations', counts.active || 0);
+      this._setCount('review-pending', counts.review_pending || 0);
+      this._setCount('discharge-ready', counts.discharge_ready || 0);
+    } catch (err) {
+      console.warn('updateCounters error', err);
+      // gracefully fallback to zero
+      this._setCount('active-consultations', 0);
+      this._setCount('review-pending', 0);
+      this._setCount('discharge-ready', 0);
+    }
+  }
+
+  /**
+   * Helper to set the small count by element id.
+   * @param {string} id
+   * @param {number} value
+   * @private
+   */
+  _setCount(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(value);
+  }
+
+  /* ============================ Utility helpers ============================ */
+
+  /**
+   * Forget current consultation state and reset UI.
+   */
+  resetConsultationState() {
+    this.currentConsultationId = null;
+    this.currentTemplate = null;
+    this.currentPatientId = null;
+    this.currentNotes = '';
+    // clear notes textarea if present
+    const notesEl = document.getElementById('consultation-notes');
+    if (notesEl) notesEl.value = '';
+    this.clearPeriodicAutosave();
+    this._hideRecordingIndicator();
+    showToast('Consultation state reset', 'info');
+  }
+
+  /**
+   * Simple element clearing helper.
+   * @param {string} id
+   * @private
+   */
+  _clearElementById(id) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
+  }
+
+  /**
+   * Debounce helper.
+   * @param {Function} fn
+   * @param {number} wait
+   * @returns {Function}
+   * @private
+   */
+  _debounce(fn, wait = 250) {
+    let timer = null;
+    return function debounced(...args) {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(this, args), wait);
+    }.bind(this);
+  }
+
+  /**
+   * Render review results in the review-results container (simple transitional renderer).
+   * @param {Array} results
+   * @private
+   */
+  _renderReviewResults(results = []) {
+    const container = document.getElementById('review-results');
+    if (!container) return;
+    if (!results.length) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <h4>No results</h4>
+          <p>Try a different search</p>
+        </div>
+      `;
+      return;
+    }
+    container.innerHTML = '';
+    results.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'review-row';
+      row.innerHTML = `<strong>${p.name}</strong> <div class="muted">${p.cnp ?? ''} ${p.phone ?? ''}</div>`;
+      container.appendChild(row);
+    });
+  }
+
+  /* ============================ Cleanup ============================ */
+
+  /**
+   * Clean up timers, streams and UI handlers.
+   */
+  cleanup() {
+    this.clearPeriodicAutosave();
+    this.unbindUIEvents();
+    if (this.isRecording) {
+      try { this.stopAudioRecording(); } catch (e) { /* ignore */ }
+    }
+    this._hideRecordingIndicator();
+    // stop any leftover stream tracks
+    this._stopAudioStream();
+  }
 }
 
+/* ============================ Export ============================ */
 export { ConsultationManager };

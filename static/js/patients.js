@@ -72,7 +72,7 @@ export class PatientManager {
                 //console.log('Setting new timeout...');
                 searchTimeout = setTimeout(() => {
                     //console.log('--- DEBOUNCED SEARCH EXECUTING ---')
-                    this.searchPatients(value);
+                    this.loadPatients(value);
                 }, 300);
             });
         }
@@ -101,51 +101,34 @@ export class PatientManager {
     // -------------------------------------------------------------------------
     // Data Loading
     // -------------------------------------------------------------------------
-    async loadPatients(page = 1, searchQuery = '') {
+    /**
+     * Load patients into Patients tab with pagination and rendering.
+     */
+    async loadPatients(searchQuery = '',page = 1) {
         try {
-            //console.log('loadPatients called - page:', page, 'search:', searchQuery);
-            // Build URL with pagination parameters
-            let url = apiUrl(API_CONFIG.ENDPOINTS.patients, ``);
-            const params = new URLSearchParams({
-                page: page,
-                per_page: this.perPage
-            });
-            
-            if (searchQuery) {
-                params.append('search', searchQuery);
-            }
+            const data = await this.fetchPatientsRaw(searchQuery,page);
 
-            if (this.currentSort) {
-            params.append('sort_by', this.currentSort); // <-- Add this
-            }
-            
-            url += `?${params.toString()}`;
-            
-            //console.log('Fetching URL:', url);
-
-            const response = await fetch(url);
-            if (!response.ok) throw new Error('Failed to load patients');
-
-            const data = await response.json();
-            
-            // Update state from paginated response
             this.patients = data.patients;
             this.currentPage = data.page;
             this.totalPages = data.total_pages;
             this.totalPatients = data.total;
             this.hasNext = data.has_next;
             this.hasPrev = data.has_prev;
-            
-            // Update UI
+
+            // UI updates
             this.renderPatients();
             this.updatePaginationControls();
             this.updatePatientCount();
 
+            return data;
+
         } catch (err) {
             console.error(err);
             showToast('Could not load patients', 'error');
+            return { patients: [] };
         }
     }
+
 
     // -------------------------------------------------------------------------
     // Pagination Controls
@@ -205,11 +188,10 @@ export class PatientManager {
     // -------------------------------------------------------------------------
     async searchPatients(query) {
         // Reset to page 1 when searching
-        
-        //console.log('searchPatients called with:', query);
-        
-        await this.loadPatients(1, query);
+        const data = await this.fetchPatientsRaw(query,1);
+        return data.patients || [];
     }
+
 
 
     // -------------------------------------------------------------------------
@@ -343,6 +325,36 @@ export class PatientManager {
                 console.warn('Unknown patient action:', action);
         }
     }
+
+    /** -------------------------------------------------
+     * Fetch patients from backend without touching UI.
+     * Returns raw JSON data for reuse in other modules (e.g., Consultations).
+     * ---------------------------------------------------
+     */
+    async fetchPatientsRaw(searchQuery = '',page = 1) {
+        try {
+            let url = apiUrl(API_CONFIG.ENDPOINTS.patients);
+            const params = new URLSearchParams({
+            page,
+            per_page: this.perPage
+            });
+
+            if (searchQuery) params.append('search', searchQuery);
+            if (this.currentSort) params.append('sort_by', this.currentSort);
+            url += `?${params.toString()}`;
+            
+            console.log("URL",url);
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Failed to fetch patients');
+            const data = await response.json();
+            return data; // ✅ no DOM updates, just data
+        } catch (err) {
+            console.error('fetchPatientsRaw error:', err);
+            showToast('Error fetching patients', 'error');
+            return { patients: [], total: 0, total_pages: 1 };
+        }
+    }
+
 
     // -------------------------------------------------------------------------
     // Edit Patient
