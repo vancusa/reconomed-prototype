@@ -307,6 +307,46 @@ class ConsultationManager {
     }
   }
 
+/**
+     * Initiates a new consultation directly from a patient card.
+     * Fetches full patient details, sets the selected patient,
+     * updates the consultation header, and switches to the
+     * consultation form tab for immediate use.
+     */
+    async startFromPatient(patientId) {
+      try {
+        // 1. Fetch full patient details (using your patientManager)
+        const patient = await app.patientManager.getPatientById(patientId);
+        if (!patient) {
+          showToast('Patient not found', 'error');
+          return;
+        }
+
+        // 2. Set as current patient
+        this.selectedPatient = patient;
+
+        // 3. Show the patient header in consultations
+        this.selectPatient(patient.id, {
+          name: `${patient.family_name} ${patient.given_name}`,
+          details: `Age ${patient.age ? patient.age + 'y' : '—'} / ID ${patient.id.slice(0, 8)} / Gender ${patient.gender ? (patient.gender.toLowerCase().startsWith('f') ? '♀' : '♂') : '—'}`
+        });
+
+        // 4. Jump straight to the consultation tab
+        if (app.navigation) {
+          app.navigation.navigateTo('consultations');
+        } else {
+          console.warn('Navigation manager not available');
+        }
+        this.switchConsultationTab('patient-review');
+
+        showToast(`Starting consultation for ${patient.given_name} ${patient.family_name}`, 'info');
+      } catch (err) {
+        console.error('Error starting consultation from patient:', err);
+        showToast('Could not start consultation', 'error');
+      }
+    }
+
+
   /**
    * Populate a select element by id with patient options.
    * @param {string} selectId

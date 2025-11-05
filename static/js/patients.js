@@ -106,6 +106,7 @@ export class PatientManager {
      */
     async loadPatients(searchQuery = '',page = 1) {
         try {
+            page = page || this.currentPage || 1;
             const data = await this.fetchPatientsRaw(searchQuery,page);
 
             this.patients = data.patients;
@@ -173,13 +174,13 @@ export class PatientManager {
     // -------------------------------------------------------------------------
     async nextPage() {
         if (this.hasNext) {
-            await this.loadPatients(this.currentPage + 1, this.searchInput?.value || '');
+            await this.loadPatients(this.searchInput?.value || '',this.currentPage + 1);
         }
     }
 
     async previousPage() {
         if (this.hasPrev) {
-            await this.loadPatients(this.currentPage - 1, this.searchInput?.value || '');
+            await this.loadPatients(this.searchInput?.value || '', this.currentPage - 1);
         }
     }
 
@@ -316,7 +317,11 @@ export class PatientManager {
                 this.manageGDPR(id);
                 break;
             case 'consult':
-                window.consultationManager.startFromPatient(id);
+                if (window.consultationManager) {
+                    window.consultationManager.startFromPatient(id);
+                } else {
+                    console.warn('ConsultationManager not initialized');
+                }
                 break;
             case 'upload':
                 this.app.documentManager.uploadDocumentForPatient(id);
@@ -325,6 +330,24 @@ export class PatientManager {
                 console.warn('Unknown patient action:', action);
         }
     }
+
+    /**
+     * Retrieves full patient details by ID from the backend.
+     * Used when launching a consultation or displaying patient info
+     * outside the main patient list context.
+     */
+    async getPatientById(id) {
+        try {
+            const url = apiUrl(API_CONFIG.ENDPOINTS.patients, `${id}`);
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Patient not found');
+            return await response.json();
+        } catch (err) {
+            console.error('getPatientById error:', err);
+            return null;
+        }
+    }
+
 
     /** -------------------------------------------------
      * Fetch patients from backend without touching UI.
@@ -343,7 +366,7 @@ export class PatientManager {
             if (this.currentSort) params.append('sort_by', this.currentSort);
             url += `?${params.toString()}`;
             
-            console.log("URL",url);
+            //console.log("URL",url);
             const response = await fetch(url);
             if (!response.ok) throw new Error('Failed to fetch patients');
             const data = await response.json();
