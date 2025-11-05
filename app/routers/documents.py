@@ -99,6 +99,7 @@ async def upload_file(
 # ------------------------------------
 # Get Unprocessed Uploads
 # ------------------------------------
+# ------------------------------------
 @router.get("/uploads/unprocessed", response_model=List[UploadResponse])
 async def get_unprocessed_uploads(
     request: Request,
@@ -110,15 +111,39 @@ async def get_unprocessed_uploads(
     audit_logger.info(f"user={user} action=list_unprocessed patient_id={patient_id}")
 
     try:
-        query = db.query(Upload).filter(Upload.ocr_status == "pending")
+        query = (
+            db.query(Upload)
+            .outerjoin(Patient, Upload.patient_id == Patient.id)
+            .filter(Upload.ocr_status == "pending")
+            .add_columns(
+                Patient.family_name.label("patient_family_name"),
+                Patient.given_name.label("patient_given_name"),
+            )
+        )
 
         if patient_id:
             query = query.filter(Upload.patient_id == patient_id)
 
-        uploads = query.all()
-        app_logger.info(f"Found {len(uploads)} unprocessed uploads")
+        results = query.all()
+        app_logger.info(f"Found {len(results)} unprocessed uploads")
 
-        return uploads
+        enriched_uploads = []
+        for upload, fam_name, given_name in results:
+            patient_name = f"{fam_name or ''} {given_name or ''}".strip() or None
+            enriched_uploads.append({
+                "id": upload.id,
+                "filename": upload.filename,
+                "file_path": upload.file_path,
+                "clinic_id": upload.clinic_id,
+                "uploaded_at": upload.uploaded_at.isoformat() if upload.uploaded_at else None,
+                "ocr_status": upload.ocr_status,
+                "patient_id": upload.patient_id,
+                "patient_name": patient_name,
+                "preview_url": getattr(upload, "preview_url", None),
+                "document_type": getattr(upload, "document_type", None),
+            })
+
+        return enriched_uploads
 
     except Exception as e:
         app_logger.error(f"Error fetching unprocessed uploads: {str(e)}", exc_info=True)

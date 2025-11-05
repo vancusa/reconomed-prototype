@@ -2857,3 +2857,13 @@ body {
   transform: translate(-50%, -0.6rem);
   transition-delay: 0.6s;
 }
+
+.file-badge {
+  display: inline-block;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  font-size: 0.75rem;
+  border-radius: var(--border-radius-sm);
+  padding: 2px 6px;
+  margin-top: 4px;
+}

@@ -6,7 +6,7 @@ import { DocumentManager } from './documents.js';
 import { ConsultationManager } from './consultations.js';
 import { showLoading, hideLoading, showToast, showModal, hideModal} from './ui.js';
 import { startLiveClock } from './utils.js';
-import { initDocumentTabs } from './document-manager.js';
+//import { initDocumentTabs } from './document-manager.js';
 import { ClinicManager } from './clinics.js';   
 
 //import { initConsultationTabs } from './consultations.js';
@@ -53,9 +53,14 @@ function apiUrl(endpoint, path = '',params = {}) {
     return url;
 }
 
-// Export for use in other modules
-window.API_CONFIG = API_CONFIG;
-window.apiUrl = apiUrl;
+// Export for ES modules
+export { API_CONFIG, apiUrl };
+
+// Keep backward compatibility for legacy scripts
+if (typeof window !== 'undefined') {
+  window.API_CONFIG = API_CONFIG;
+  window.apiUrl = apiUrl;
+}
 // =========================================================================
 // END API CONFIGURATION
 // =========================================================================
@@ -123,7 +128,7 @@ class ReconoMedApp {
             this.patientManager.init();    // Set up form submissions, search
             this.documentManager.init();   // Set up upload handlers
             this.consultationManager.init(); // Set up consultation event listeners
-            initDocumentTabs();            // Set up document tab switching
+            //initDocumentTabs();            // Set up document tab switching
         } catch (err) {
             console.error('UI initialization failed:', err);
             showToast('Interface setup failed', 'error');
@@ -258,6 +263,8 @@ document.addEventListener('DOMContentLoaded', () => {
 window.app = app;
 window.consultationManager = app.consultationManager;
 window.clinicManager = app.clinicManager;
+window.documentManager = app.DocumentManager;
+
 
 // =========================================================================
 // GLOBAL MODAL FUNCTIONS for HTML onclick handlers
