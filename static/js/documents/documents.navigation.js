@@ -54,7 +54,7 @@ export const DocumentNavigation = {
     }
 
     // ---- Upload drag & drop ----
-    const dropzone = document.getElementById('upload-dropzone');
+    const dropzone = document.getElementById('upload-area');
     const fileInput = document.getElementById('file-input');
 
     if (dropzone && fileInput) {
@@ -79,7 +79,9 @@ export const DocumentNavigation = {
         e.preventDefault();
         const files = e.dataTransfer.files;
         if (!files.length) return;
-        await DocumentActions.uploadFiles(files);
+        
+        const patientId = window.app?.documents?.currentUploadPatientId || null;
+        await DocumentActions.uploadFiles(files, patientId);
         await this.refreshUnprocessedList();
     });
 
@@ -88,7 +90,9 @@ export const DocumentNavigation = {
     fileInput.addEventListener('change', async e => {
         const files = e.target.files;
         if (!files.length) return;
-        await DocumentActions.uploadFiles(files);
+        
+        const patientId = window.app?.documents?.currentUploadPatientId || null;
+        await DocumentActions.uploadFiles(files, patientId);
         await this.refreshUnprocessedList();
     });
     }
@@ -154,6 +158,55 @@ export const DocumentNavigation = {
     }
   },
 
+  /*
+      Helpers for the rendering 
+   */
+  getUploadCategory(doc) {
+    const name = (doc.filename || '').toLowerCase();
+
+    if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg'))
+      return 'image';
+
+    if (name.endsWith('.pdf'))
+      return 'pdf';
+
+    return 'document';
+  },
+
+  getUploadLabel(category) {
+    switch (category) {
+      case 'image': return 'Imagine';
+      case 'pdf': return 'Document PDF';
+      default: return 'Document';
+    }
+  },
+
+ getUploadIconClass(category) {
+    switch (category) {
+      case 'image':        return 'fa-image';
+      case 'lab':          return 'fa-flask';
+      case 'prescription': return 'fa-file-prescription';
+      case 'id-card':      return 'fa-id-card';
+      case 'pdf':          return 'fa-file-pdf';
+      default:             return 'fa-file-medical';
+    }
+  },
+
+  formatUploadDate(isoString) {
+    if (!isoString) return 'Data upload necunoscută';
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return 'Data upload necunoscută';
+
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const timeOpts = { hour: '2-digit', minute: '2-digit' };
+
+    if (sameDay) {
+      return `Încărcat azi, ${d.toLocaleTimeString(undefined, timeOpts)}`;
+    }
+    return `Încărcat la ${d.toLocaleDateString()} ${d.toLocaleTimeString(undefined, timeOpts)}`;
+  },
+
   /**
    * Render uploaded documents in the Unprocessed tab
    */
@@ -166,33 +219,47 @@ export const DocumentNavigation = {
     return;
   }
 
-  console.log("Sunt aici si am gasit container");
+  //console.log("Sunt aici si am gasit container");
   container.innerHTML = '';
   if (!documents.length) {
     empty.style.display = 'block';
     return;
   }
 
-  empty.style.display = 'none';
+  if (empty) empty.style.display = 'none';
 
   documents.forEach(doc => {
+    const category = this.getUploadCategory(doc);
+    const iconClass = this.getUploadIconClass(category);
+    const label = this.getUploadLabel(category);
+    const dateText = this.formatUploadDate(doc.uploaded_at);
+
     const el = document.createElement('div');
-    el.classList.add('file-item');
+    el.classList.add('upload-card');
+    el.dataset.id = doc.id;
+
     el.innerHTML = `
-      <label class="file-select">
-        <input type="checkbox" class="file-checkbox" data-id="${doc.id}">
-        <div class="file-thumb">${doc.preview ? `<img src="${doc.preview}" alt="">` : '📄'}</div>
-        <div class="file-info">
-          <span class="file-name">${doc.filename}</span>
-          <small class="file-date">${doc.uploaded_at || ''}</small>
-          ${doc.patient_name ? `<span class="file-badge">👤 ${doc.patient_name}</span>` : ''}
+    <label class="upload-card-label">
+        <input 
+          type="checkbox"
+          class="file-checkbox"
+          data-id="${doc.id}"
+        />
+        <div class="upload-card-main">
+          <div class="upload-card-icon ${category}">
+            <i class="fas ${iconClass}"></i>
+          </div>
+          <div class="upload-card-meta">
+            <div class="upload-card-title">${label}</div>
+            <div class="upload-card-date">${dateText}</div>
+          </div>
         </div>
       </label>
     `;
+
     container.appendChild(el);
   });
 
-  // Bind “select all” checkbox
   const selectAll = document.getElementById('select-all');
   if (selectAll) {
     selectAll.onchange = (e) => {
@@ -200,5 +267,5 @@ export const DocumentNavigation = {
       allChecks.forEach(cb => (cb.checked = e.target.checked));
     };
   }
-  }
+}
 }

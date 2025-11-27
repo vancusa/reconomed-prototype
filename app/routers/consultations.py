@@ -73,7 +73,6 @@ async def get_consultation_counts(db: Session = Depends(get_db)):
         Consultation.status == "completed",
         Consultation.is_signed == False
     ).count()
-    
     return {
         "active_consultations": active_count,
         "discharge_ready": discharge_ready_count,

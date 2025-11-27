@@ -183,6 +183,8 @@ class ReconoMedApp {
     async loadConsultationCounts() {
         try {
             const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'counts'));
+            //print response
+            console.debug(response);
             if (response.ok) {
                 const counts = await response.json();
                 document.getElementById('active-consultations').textContent = counts.active_consultations || 0;

@@ -324,7 +324,7 @@ export class PatientManager {
                 }
                 break;
             case 'upload':
-                this.app.documentManager.uploadDocumentForPatient(id);
+                app.navigation.navigateTo('documents',null,id);
                 break;
             default:
                 console.warn('Unknown patient action:', action);

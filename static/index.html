@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ReconoMed - Healthcare Document Processing</title>
     <link rel="stylesheet" href="/static/css/styles.css">
-    <link rel="stylesheet" href="/static/css/document-manager.css">
+    <!--<link rel="stylesheet" href="/static/css/document-manager.css">-->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -72,8 +72,8 @@
                             <i class="fas fa-user-md"></i>
                         </div>
                         <div class="stat-content">
-                            <h3 id="patients-today"></h3>
-                            <p>Patients Seen Today</p>
+                            <h3 id="active-consultations"></h3>
+                            <p>Active Consultations</p>
                         </div>
                     </div>
                     
@@ -92,7 +92,7 @@
                             <i class="fas fa-clock"></i>
                         </div>
                         <div class="stat-content">
-                            <h3 id="pending-processing"></h3>
+                            <h3 id="review-pending"></h3>
                             <p>Pending Processing</p>
                         </div>
                     </div>
@@ -112,12 +112,12 @@
             <div class="dashboard-grid">
                 <div class="dashboard-card">
                     <div class="card-header">
-                        <h3>Recent Activity</h3>
+                        <h3>Discharge ready</h3>
                         <button class="btn-tertiary" onclick="app.refreshActivity()">
                             <i class="fas fa-sync-alt"></i>
                         </button>
                     </div>
-                    <div id="recent-activity" class="activity-list">
+                    <div id="discharge-ready" class="activity-list">
                         <div class="loading-placeholder">Loading recent activity...</div>
                     </div>
                 </div>
@@ -264,18 +264,16 @@
 
                 <!-- Upload Area -->
                 <div id="upload-area" class="upload-area">
-                    <div class="upload-dropzone" id="upload-dropzone">
-                        <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
-                        <div id="upload-prompt" class="upload-prompt">
-                            <div class="upload-icon">📷</div>
-                            <h3>Upload Documents</h3>
-                            <p>Drag and drop images here or click to select files</p>
-                            <p class="upload-hint">Images will be compressed automatically</p>
-                        </div>
-                        <div id="upload-status" class="upload-status" style="display: none;">
+                    <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
+                    <div id="upload-prompt">
+                        <div class="upload-icon">📷</div>
+                        <h3>Upload Documents</h3>
+                        <p>Drag and drop images here or <span class="upload-link clickable">click to select files</span></p>
+                        <p class="upload-hint">Images will be compressed automatically</p>
+                    <div id="upload-status" class="upload-status" style="display: none;">
                             <div class="spinner"></div>
                             <p>Compressing and uploading files...</p>
-                        </div>
+                    </div>
                     </div>
                 </div>
 
@@ -306,10 +304,12 @@
                                         Select All (<span id="total-uploads">0</span>)
                                     </label>
                                 </div>
+                                <!--
+                                removed this navigation option for the MVP
                                 <div class="uploads-toolbar__right">
                                     <button class="view-toggle active" data-view="grid">⊞</button>
                                     <button class="view-toggle" data-view="list">☰</button>
-                                </div>
+                                </div>-->
                             </div>
 
                             <div id="batch-actions" class="batch-actions" style="display: none;">

@@ -52,7 +52,7 @@ export class Navigation {
     // -------------------------------------------------------------------------
     // Core Navigation
     // -------------------------------------------------------------------------
-    navigateTo(sectionId, subSection = null) {
+    navigateTo(sectionId, subSection = null, patientId = null) {
         // Hide all sections
         this.sections.forEach(sec => sec.style.display = 'none');
 
@@ -79,6 +79,11 @@ export class Navigation {
         if (subSection && sectionId === 'documents') {
             const tab = document.querySelector(`[data-tab="${subSection}"]`);
             if (tab) tab.click();
+        }
+
+        //Set patient context for documents if provided
+        if (patientId && sectionId === 'documents' && this.app?.documents) {
+            this.app.documentManager.setUploadContext(patientId);
         }
         
         // Let the app know the active section changed

@@ -8,7 +8,7 @@ export const DocumentActions = {
   /**
    * Upload one or multiple files (no patient required)
    */
-  async uploadFiles(files) {
+  async uploadFiles(files, patientId=null) {
     const formData = new FormData();
     for (const file of files) {
       formData.append('files', file);
@@ -20,8 +20,19 @@ export const DocumentActions = {
         body: formData,
       });
       if (!response.ok) throw new Error('Upload failed');
+
+       const data = await response.json();
+    showToast('Files uploaded successfully', 'success');
+
+    // 🔑 doctor flow: auto-assign if patientId is known
+    if (patientId && data && data.documents && data.documents.length) {
+      const documentIds = data.documents.map(d => d.id);
+      await this.batchAssign(documentIds, patientId);
+    }
+    else {
       showToast('Files uploaded successfully', 'success');
-      return await response.json();
+      }
+      return data;
     } catch (err) {
       console.error('Upload error:', err);
       showToast('Error uploading files', 'error');
