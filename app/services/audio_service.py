@@ -1,14 +1,19 @@
 # app/services/audio_service.py
-import openai
+import importlib
+import importlib.util
 import os
 from typing import Dict, Any
 from pathlib import Path
 
 class AudioTranscriptionService:
     """Service for audio transcription using OpenAI Whisper API"""
-    
+
     def __init__(self, api_key: str):
-        openai.api_key = api_key
+        if importlib.util.find_spec("openai") is None:
+            raise ModuleNotFoundError("openai")
+
+        self._client = importlib.import_module("openai")
+        self._client.api_key = api_key
     
     async def transcribe_audio(self, audio_file_path: str, language: str = "ro") -> str:
         """
@@ -23,7 +28,7 @@ class AudioTranscriptionService:
         """
         try:
             with open(audio_file_path, "rb") as audio_file:
-                transcript = openai.Audio.transcribe(
+                transcript = self._client.Audio.transcribe(
                     model="whisper-1",
                     file=audio_file,
                     language=language,
@@ -50,7 +55,7 @@ class AudioTranscriptionService:
         """
         try:
             with open(audio_file_path, "rb") as audio_file:
-                transcript = openai.Audio.transcribe(
+                transcript = self._client.Audio.transcribe(
                     model="whisper-1",
                     file=audio_file,
                     language=language,

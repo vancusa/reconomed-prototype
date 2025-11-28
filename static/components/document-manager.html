@@ -54,46 +54,7 @@
                 <div id="unprocessed-tab" class="tab-content active">
                     <div class="uploads-toolbar">
                         <div class="uploads-toolbar__left">
-                            <label class="select-all">
-                                <input type="checkbox" id="select-all">
-                                Select All (<span id="total-uploads">0</span>)
-                            </label>
-                        </div>
-                        <div class="uploads-toolbar__right">
-                            <button class="view-toggle active" data-view="grid">⊞</button>
-                            <button class="view-toggle" data-view="list">☰</button>
-                        </div>
-                    </div>
-
-                    <div id="batch-actions" class="batch-actions" style="display: none;">
-                        <div class="batch-actions__header">
-                            <h4><span id="selected-count">0</span> files selected</h4>
-                        </div>
-                        <div class="batch-actions__controls">
-                            <div class="batch-control-group">
-                                <label>Assign to Patient:</label>
-                                <div class="batch-control-row">
-                                    <select id="batch-patient">
-                                        <option value="">Select Patient...</option>
-                                    </select>
-                                    <button id="apply-batch-patient" class="btn-secondary">Apply</button>
-                                </div>
-                            </div>
-                            <div class="batch-control-group">
-                                <label>Set Document Type:</label>
-                                <div class="batch-control-row">
-                                    <select id="batch-document-type">
-                                        <option value="">Document Type...</option>
-                                        <option value="romanian_id">Romanian ID</option>
-                                        <option value="lab_result">Lab Result</option>
-                                        <option value="discharge_note">Discharge Note</option>
-                                    </select>
-                                    <button id="apply-batch-type" class="btn-secondary">Apply</button>
-                                </div>
-                            </div>
-                            <div class="batch-control-group">
-                                <button id="start-processing" class="btn-primary">Start OCR Processing</button>
-                            </div>
+                            <span class="muted">Unprocessed uploads: <span id="total-uploads">0</span></span>
                         </div>
                     </div>
 

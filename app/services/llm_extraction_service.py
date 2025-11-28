@@ -1,13 +1,18 @@
 # app/services/llm_extraction_service.py
-import openai
+import importlib
+import importlib.util
 import json
 from typing import Dict, Any, List
 
 class LLMExtractionService:
     """Service for extracting structured data from transcripts using LLM"""
-    
+
     def __init__(self, api_key: str):
-        openai.api_key = api_key
+        if importlib.util.find_spec("openai") is None:
+            raise ModuleNotFoundError("openai")
+
+        self._client = importlib.import_module("openai")
+        self._client.api_key = api_key
     
     async def extract_fields_from_transcript(
         self,
@@ -19,7 +24,7 @@ class LLMExtractionService:
         prompt = self._build_extraction_prompt(transcript, template, existing_data)
         
         try:
-            response = openai.ChatCompletion.create(
+            response = self._client.ChatCompletion.create(
                 model="gpt-4-turbo-preview",
                 messages=[
                     {"role": "system", "content": self._get_system_prompt()},
@@ -69,7 +74,7 @@ IMPORTANT: Do NOT validate cross-references or exclusion rules. Just suggest cod
 """
         
         try:
-            response = openai.ChatCompletion.create(
+            response = self._client.ChatCompletion.create(
                 model="gpt-4-turbo-preview",
                 messages=[
                     {

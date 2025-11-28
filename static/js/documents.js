@@ -16,6 +16,7 @@ export class DocumentManager {
     console.log('DocumentManager init called');
     this.nav.bindUIEvents();
     await this.nav.refreshUnprocessedList();
+    await this.nav.refreshProcessingQueue();
   }
 
   setUploadContext(patientId){

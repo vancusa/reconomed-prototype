@@ -79,7 +79,7 @@ async def upload_file(
                 file_path=file_path,
                 file_size=file_size,
                 document_type="pending_ocr",
-                ocr_status="pending"
+                ocr_status="queued",
             )
             db.add(upload)
             db.commit()
@@ -114,7 +114,7 @@ async def get_unprocessed_uploads(
         query = (
             db.query(Upload)
             .outerjoin(Patient, Upload.patient_id == Patient.id)
-            .filter(Upload.ocr_status == "pending")
+            .filter(Upload.ocr_status.in_(["pending", "queued"]))
             .add_columns(
                 Patient.family_name.label("patient_family_name"),
                 Patient.given_name.label("patient_given_name"),
@@ -240,7 +240,36 @@ async def get_processing_queue(
     app_logger.debug("Fetching OCR processing queue")
     audit_logger.info(f"user={user} action=get_processing_queue")
 
-    uploads = db.query(Upload).filter(Upload.ocr_status.in_(["queued", "processing"])).all()
+    query = (
+        db.query(Upload)
+        .outerjoin(Patient, Upload.patient_id == Patient.id)
+        .filter(Upload.ocr_status.in_(["queued", "processing"]))
+        .add_columns(
+            Patient.family_name.label("patient_family_name"),
+            Patient.given_name.label("patient_given_name"),
+        )
+    )
+
+    uploads = []
+    for upload, patient_family_name, patient_given_name in query:
+        patient_name = None
+        if patient_family_name or patient_given_name:
+            patient_name = " ".join(filter(None, [patient_given_name, patient_family_name]))
+
+        uploads.append({
+            "id": upload.id,
+            "filename": upload.filename,
+            "file_path": upload.file_path,
+            "file_size": upload.file_size,
+            "clinic_id": upload.clinic_id,
+            "uploaded_at": upload.uploaded_at.isoformat() if upload.uploaded_at else None,
+            "ocr_status": upload.ocr_status,
+            "patient_id": upload.patient_id,
+            "patient_name": patient_name,
+            "preview_url": getattr(upload, "preview_url", None),
+            "document_type": getattr(upload, "document_type", None),
+        })
+
     return uploads
 
 # ------------------------------------------------------
