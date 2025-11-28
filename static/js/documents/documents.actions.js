@@ -7,11 +7,15 @@ import { showToast } from '../ui.js';
 export const DocumentActions = {
   /**
    * Upload one or multiple files (no patient required)
-   */
+  */
   async uploadFiles(files, patientId=null) {
     const formData = new FormData();
     for (const file of files) {
       formData.append('files', file);
+    }
+
+    if (patientId) {
+      formData.append('patient_id', patientId);
     }
 
     try {
@@ -56,6 +60,20 @@ export const DocumentActions = {
   },
 
   /**
+   * Fetch documents currently queued/processing for OCR
+   */
+  async fetchProcessingQueue() {
+    try {
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, 'processing-queue'));
+      if (!res.ok) throw new Error('Failed to load processing queue');
+      return await res.json();
+    } catch (err) {
+      console.error('fetchProcessingQueue error:', err);
+      return [];
+    }
+  },
+
+  /**
    * Batch assign selected uploads to a patient
    */
   async batchAssign(documentIds, patientId) {
@@ -80,7 +98,7 @@ export const DocumentActions = {
    */
   async startOCR(documentIds) {
     try {
-      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.uploads, '/batch-ocr'), {
+      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, 'uploads/batch-ocr'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ document_ids: documentIds }),
