@@ -2,7 +2,6 @@
 // Handles UI updates, tab switching, view toggles, and DOM rendering for Documents
 
 import { DocumentActions } from './documents.actions.js';
-import { showToast } from '../ui.js';
 
 export const DocumentNavigation = {
   currentView: 'grid',
@@ -15,43 +14,14 @@ export const DocumentNavigation = {
     document.querySelectorAll('.document-tabs .tab-button').forEach(btn => {
       btn.addEventListener('click', () => {
         this.switchTab(btn.dataset.tab);
+        if (btn.dataset.tab === 'processing') {
+          this.refreshProcessingQueue();
+        }
+        if (btn.dataset.tab === 'unprocessed') {
+          this.refreshUnprocessedList();
+        }
       });
     });
-
-    // View toggles
-    document.querySelectorAll('.view-toggle').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.toggleView(btn.dataset.view);
-      });
-    });
-
-    // Batch actions
-    const applyPatientBtn = document.getElementById('apply-batch-patient');
-    if (applyPatientBtn) {
-      applyPatientBtn.addEventListener('click', async () => {
-        const selected = this.getSelectedUploads();
-        const patientId = document.getElementById('batch-patient').value;
-        if (!selected.length || !patientId) {
-          showToast('Select files and a patient first', 'warning');
-          return;
-        }
-        await DocumentActions.batchAssign(selected, patientId);
-        await this.refreshUnprocessedList();
-      });
-    }
-
-    const startOCRBtn = document.getElementById('start-processing');
-    if (startOCRBtn) {
-      startOCRBtn.addEventListener('click', async () => {
-        const selected = this.getSelectedUploads();
-        if (!selected.length) {
-          showToast('Select files first', 'warning');
-          return;
-        }
-        await DocumentActions.startOCR(selected);
-        await this.refreshUnprocessedList();
-      });
-    }
 
     // ---- Upload drag & drop ----
     const dropzone = document.getElementById('upload-area');
@@ -82,7 +52,7 @@ export const DocumentNavigation = {
         
         const patientId = window.app?.documents?.currentUploadPatientId || null;
         await DocumentActions.uploadFiles(files, patientId);
-        await this.refreshUnprocessedList();
+        await this.refreshAfterUpload();
     });
 
     // Click-to-upload
@@ -93,7 +63,7 @@ export const DocumentNavigation = {
         
         const patientId = window.app?.documents?.currentUploadPatientId || null;
         await DocumentActions.uploadFiles(files, patientId);
-        await this.refreshUnprocessedList();
+        await this.refreshAfterUpload();
     });
     }
 
@@ -126,12 +96,9 @@ export const DocumentNavigation = {
     });
   },
 
-  /**
-   * Get IDs of selected uploads
-   */
-  getSelectedUploads() {
-    const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-    return Array.from(checkboxes).map(cb => cb.dataset.id);
+  async refreshAfterUpload() {
+    await this.refreshUnprocessedList();
+    await this.refreshProcessingQueue();
   },
 
   /**
@@ -212,39 +179,42 @@ export const DocumentNavigation = {
    */
   renderUploads(documents) {
     console.log('Render unprocessed uploads...');
-  const container =  document.querySelector('#documents .document-tabs #unprocessed-tab #file-container');//document.getElementById('file-container');
-  const empty = document.getElementById('empty-state');
-  if (!container) {
-    console.error('File container not found in Unprocessed tab');
-    return;
-  }
+    const container = document.querySelector('#documents .document-tabs #unprocessed-tab #file-container');
+    const empty = document.getElementById('empty-state');
+    const countEl = document.getElementById('total-uploads');
+    const tabCount = document.getElementById('unprocessed-count');
 
-  //console.log("Sunt aici si am gasit container");
-  container.innerHTML = '';
-  if (!documents.length) {
-    empty.style.display = 'block';
-    return;
-  }
+    if (!container) {
+      console.error('File container not found in Unprocessed tab');
+      return;
+    }
 
-  if (empty) empty.style.display = 'none';
+    container.innerHTML = '';
+    const total = documents.length;
+    if (countEl) countEl.textContent = total;
+    if (tabCount) tabCount.textContent = total;
 
-  documents.forEach(doc => {
-    const category = this.getUploadCategory(doc);
-    const iconClass = this.getUploadIconClass(category);
-    const label = this.getUploadLabel(category);
-    const dateText = this.formatUploadDate(doc.uploaded_at);
+    if (!documents.length) {
+      if (empty) empty.style.display = 'block';
+      return;
+    }
 
-    const el = document.createElement('div');
-    el.classList.add('upload-card');
-    el.dataset.id = doc.id;
+    if (empty) empty.style.display = 'none';
 
-    el.innerHTML = `
-    <label class="upload-card-label">
-        <input 
-          type="checkbox"
-          class="file-checkbox"
-          data-id="${doc.id}"
-        />
+    documents.forEach(doc => {
+      const category = this.getUploadCategory(doc);
+      const iconClass = this.getUploadIconClass(category);
+      const label = this.getUploadLabel(category);
+      const dateText = this.formatUploadDate(doc.uploaded_at);
+      const patientText = doc.patient_name || 'Unassigned patient';
+      const status = doc.ocr_status || 'pending';
+      const statusLabel = this.getStatusLabel(status);
+
+      const el = document.createElement('div');
+      el.classList.add('upload-card');
+      el.dataset.id = doc.id;
+
+      el.innerHTML = `
         <div class="upload-card-main">
           <div class="upload-card-icon ${category}">
             <i class="fas ${iconClass}"></i>
@@ -252,20 +222,85 @@ export const DocumentNavigation = {
           <div class="upload-card-meta">
             <div class="upload-card-title">${label}</div>
             <div class="upload-card-date">${dateText}</div>
+            <div class="upload-card-patient">${patientText}</div>
           </div>
         </div>
-      </label>
-    `;
+        <div class="upload-card-status status-${status}">${statusLabel}</div>
+      `;
 
-    container.appendChild(el);
-  });
+      container.appendChild(el);
+    });
+  },
 
-  const selectAll = document.getElementById('select-all');
-  if (selectAll) {
-    selectAll.onchange = (e) => {
-      const allChecks = container.querySelectorAll('.file-checkbox');
-      allChecks.forEach(cb => (cb.checked = e.target.checked));
-    };
-  }
-}
-}
+  getStatusLabel(status) {
+    switch ((status || '').toLowerCase()) {
+      case 'queued':
+        return 'Queued for OCR';
+      case 'processing':
+        return 'Processing';
+      case 'pending':
+      default:
+        return 'Pending';
+    }
+  },
+
+  renderProcessingQueue(documents) {
+    const container = document.getElementById('processing-list');
+    const countEl = document.getElementById('processing-total');
+    const tabCount = document.getElementById('processing-count');
+
+    if (!container) {
+      console.error('Processing container not found');
+      return;
+    }
+
+    container.innerHTML = '';
+    const total = documents.length;
+    if (countEl) countEl.textContent = total;
+    if (tabCount) tabCount.textContent = total;
+
+    if (!documents.length) {
+      container.innerHTML = '<p class="muted">No documents currently in the OCR queue.</p>';
+      return;
+    }
+
+    documents.forEach(doc => {
+      const category = this.getUploadCategory(doc);
+      const iconClass = this.getUploadIconClass(category);
+      const label = this.getUploadLabel(category);
+      const dateText = this.formatUploadDate(doc.uploaded_at);
+      const patientText = doc.patient_name || 'Unassigned patient';
+      const status = doc.ocr_status || 'queued';
+      const statusLabel = this.getStatusLabel(status);
+
+      const el = document.createElement('div');
+      el.classList.add('upload-card', 'processing-card');
+
+      el.innerHTML = `
+        <div class="upload-card-main">
+          <div class="upload-card-icon ${category}">
+            <i class="fas ${iconClass}"></i>
+          </div>
+          <div class="upload-card-meta">
+            <div class="upload-card-title">${label}</div>
+            <div class="upload-card-date">${dateText}</div>
+            <div class="upload-card-patient">${patientText}</div>
+          </div>
+        </div>
+        <div class="upload-card-status status-${status}">${statusLabel}</div>
+      `;
+
+      container.appendChild(el);
+    });
+  },
+
+  async refreshProcessingQueue() {
+    try {
+      const data = await DocumentActions.fetchProcessingQueue();
+      const docs = Array.isArray(data) ? data : data.documents;
+      this.renderProcessingQueue(docs || []);
+    } catch (err) {
+      console.error('refreshProcessingQueue error:', err);
+    }
+  },
+};
