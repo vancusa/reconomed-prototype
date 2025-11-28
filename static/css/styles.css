@@ -857,6 +857,8 @@ body {
   min-height: 88px; /* adjust to taste (80–100px works best) */
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 /* Make the whole card a horizontal flex item */
@@ -917,6 +919,25 @@ body {
 
 .upload-card-patient {
   font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.upload-card-status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: capitalize;
+}
+
+.status-queued {
+  color: var(--warning-dark, #b7791f);
+}
+
+.status-processing {
+  color: var(--primary, #3b82f6);
+}
+
+.status-pending {
   color: var(--text-secondary);
 }
 

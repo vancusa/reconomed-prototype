@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional, Dict, Any
 import uuid
-import aiofiles
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +19,6 @@ from app.schemas import (
 from app.services.template_service import TemplateService
 from app.services.audio_service import AudioTranscriptionService
 from app.services.llm_extraction_service import LLMExtractionService
-from app.services.template_service import TemplateService
 
 
 router = APIRouter(tags=["consultations"])
@@ -31,8 +29,26 @@ app_logger = logging.getLogger("reconomed.app")
 
 
 # Initialize services (use environment variables in production)
-audio_service = AudioTranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
-llm_service = LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+def get_audio_service() -> AudioTranscriptionService:
+    try:
+        return AudioTranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
+    except ModuleNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="The 'openai' package is required for audio transcription but is not installed."
+        )
+
+
+def get_llm_service() -> LLMExtractionService:
+    try:
+        return LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
+    except ModuleNotFoundError:
+        raise HTTPException(
+            status_code=500,
+            detail="The 'openai' package is required for LLM extraction but is not installed."
+        )
 
 
 # ----------------------------
@@ -703,10 +719,10 @@ async def upload_consultation_audio(
     audio_filename = f"{consultation_id}_{uuid.uuid4()}{file_ext}"
     audio_path = upload_dir / audio_filename
     
-    # Save file
-    async with aiofiles.open(audio_path, 'wb') as f:
-        content = await audio_file.read()
-        await f.write(content)
+    # Save file (synchronously is acceptable for the small uploads handled here)
+    content = await audio_file.read()
+    with open(audio_path, 'wb') as f:
+        f.write(content)
     
     # Get audio duration (if available)
     audio_duration = None
@@ -764,6 +780,9 @@ async def process_consultation_audio(
         raise HTTPException(status_code=400, detail="No audio file uploaded")
     
     try:
+        audio_service = get_audio_service()
+        llm_service = get_llm_service()
+
         # Step 1: Transcribe audio
         app_logger.info(f"Transcribing audio for consultation {consultation_id}")
         transcript = await audio_service.transcribe_audio(
@@ -802,7 +821,7 @@ async def process_consultation_audio(
         existing_data = consultation.structured_data or {}
         
         # Deep merge: extracted data goes in, but existing manual entries stay
-        merged_data = self._deep_merge_with_confidence(existing_data, extracted_data)
+        merged_data = _deep_merge_with_confidence(existing_data, extracted_data)
         
         consultation.structured_data = merged_data
         consultation.last_autosave_at = datetime.utcnow()
