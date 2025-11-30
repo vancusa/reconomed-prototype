@@ -212,7 +212,7 @@ export const DocumentNavigation = {
    */
   renderUploads(documents) {
     console.log('Render unprocessed uploads...');
-  const container =  document.querySelector('#documents .document-tabs #unprocessed-tab #file-container');//document.getElementById('file-container');
+  const container =  document.getElementById('file-container');
   const empty = document.getElementById('empty-state');
   if (!container) {
     console.error('File container not found in Unprocessed tab');
@@ -240,11 +240,6 @@ export const DocumentNavigation = {
 
     el.innerHTML = `
     <label class="upload-card-label">
-        <input 
-          type="checkbox"
-          class="file-checkbox"
-          data-id="${doc.id}"
-        />
         <div class="upload-card-main">
           <div class="upload-card-icon ${category}">
             <i class="fas ${iconClass}"></i>
