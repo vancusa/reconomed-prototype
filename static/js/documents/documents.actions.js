@@ -120,6 +120,23 @@ export const DocumentActions = {
     }
   },
 
+    /**
+   * Fetch processing queue (queued + processing uploads)
+   */
+  async fetchProcessingQueue() {
+    console.log('Fetching processing queue...');
+    try {
+      const res = await fetch(
+        apiUrl(API_CONFIG.ENDPOINTS.documents, 'processing-queue')
+      );
+      if (!res.ok) throw new Error('Failed to load processing queue');
+      return await res.json();
+    } catch (err) {
+      console.error('fetchProcessingQueue error:', err);
+      return [];
+    }
+  },
+
 
   /**
    * Start OCR processing for pending uploads

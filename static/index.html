@@ -297,9 +297,6 @@
                     <div class="upload-tab" class="tab-content">
                             <div id="file-container" class="file-container grid"></div>
                             <div id="empty-state" class="empty-state">
-                                <div class="empty-icon">📄</div>
-                                <h3>No uploads yet</h3>
-                                <p>Upload some documents to get started</p>
                             </div>
                     </div>
 
@@ -308,7 +305,7 @@
                             <div class="queue-summary">
                                 <h3>Processing <span id="processing-total">0</span> documents</h3>
                                 <p>Documents are processed automatically in order</p>
-                                <button class="btn-secondary" onclick="app.refreshProcessingQueue()">
+                                <button class="btn-secondary" onclick="app.documentManager.nav.refreshProcessingQueue()">
                                     <i class="fas fa-sync-alt"></i> Refresh Queue
                                 </button>
                             </div>

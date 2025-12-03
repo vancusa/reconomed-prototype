@@ -78,7 +78,7 @@ async def upload_file(
                 filename=unique_filename,
                 file_path=file_path,
                 file_size=file_size,
-                document_type="pending_ocr",
+                document_type=None,
                 ocr_status="pending"
             )
             db.add(upload)
@@ -111,10 +111,16 @@ async def get_unprocessed_uploads(
     audit_logger.info(f"user={user} action=list_unprocessed patient_id={patient_id}")
 
     try:
+        current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+        # or derived from request like above
+
         query = (
             db.query(Upload)
             .outerjoin(Patient, Upload.patient_id == Patient.id)
-            .filter(Upload.ocr_status == "pending")
+            .filter(
+                Upload.ocr_status == "pending",
+                Upload.clinic_id == current_user.clinic_id,
+            )
             .add_columns(
                 Patient.family_name.label("patient_family_name"),
                 Patient.given_name.label("patient_given_name"),
@@ -206,24 +212,39 @@ async def start_batch_processing(
     db: Session = Depends(get_db),
     patient_id: Optional[str] = None
 ):
-    user = request.headers.get("X-User", "anonymous")
+    user_email = request.headers.get("X-User", "anonymous")
     app_logger.debug(f"Starting OCR batch processing (patient_id={patient_id})")
-    audit_logger.info(f"user={user} action=batch_ocr patient_id={patient_id}")
+    audit_logger.info(f"user={user_email} action=batch_ocr patient_id={patient_id}")
 
-    query = db.query(Upload).filter(Upload.ocr_status == "pending")
+    # Find current user + clinic
+    current_user = db.query(User).filter(User.email == user_email).first()
+    if not current_user:
+        raise HTTPException(status_code=400, detail="User not found for OCR batch")
+
+    # Only queue uploads for THIS clinic, that are still pending
+    query = (
+        db.query(Upload)
+        .filter(
+            Upload.clinic_id == current_user.clinic_id,
+            Upload.ocr_status == "pending"
+        )
+    )
+
     if patient_id:
         query = query.filter(Upload.patient_id == patient_id)
 
     uploads = query.all()
+
     for upl in uploads:
         upl.ocr_status = "queued"
         upl.expires_at = upl.expires_at or datetime.utcnow()
+
     db.commit()
 
     return {
         "message": "OCR batch processing started",
         "queued_count": len(uploads),
-        "upload_ids": [upl.id for upl in uploads]
+        "upload_ids": [upl.id for upl in uploads],
     }
 
 #----------------------------Processing Queue Routes -----------------------------------------
@@ -240,7 +261,16 @@ async def get_processing_queue(
     app_logger.debug("Fetching OCR processing queue")
     audit_logger.info(f"user={user} action=get_processing_queue")
 
-    uploads = db.query(Upload).filter(Upload.ocr_status.in_(["queued", "processing"])).all()
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    uploads = (
+        db.query(Upload)
+        .filter(
+            Upload.ocr_status.in_(["queued", "processing"]),
+            Upload.clinic_id == current_user.clinic_id,
+        )
+        .all()
+    )
+    
     return uploads
 
 # ------------------------------------------------------
@@ -270,17 +300,27 @@ async def cancel_processing(upload_id: str, request: Request, db: Session = Depe
     user = request.headers.get("X-User", "anonymous")
     audit_logger.info(f"user={user} action=cancel_processing upload_id={upload_id}")
 
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
+    # Find the Upload record
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
 
-    # If already processed, cannot cancel
-    if doc.ocr_status not in ["pending", "processing"]:
-        raise HTTPException(status_code=400, detail="Processing cannot be cancelled")
+    # Only cancel if still pending or processing
+    if upload.ocr_status not in ["pending", "queued", "processing"]:
+        raise HTTPException(status_code=400, detail="Cannot cancel OCR for completed item")
 
-    doc.ocr_status = "cancelled"
+    # Remove file from disk
+    try:
+        if os.path.exists(upload.file_path):
+            os.remove(upload.file_path)
+    except Exception as e:
+        app_logger.error(f"Failed to remove file {upload.file_path}: {e}")
+
+    # Delete DB row
+    db.delete(upload)
     db.commit()
-    return {"message": "Processing cancelled"}
+
+    return {"message": "Processing cancelled and upload deleted"}
 
 #------------------------Validation Workflow Routes------------------------------------------------
 # ------------------------------------------------------
@@ -295,9 +335,17 @@ async def get_validation_queue(
     app_logger.debug("Fetching validation queue")
     audit_logger.info(f"user={user} action=get_validation_queue")
 
-    # In your flow, validation would normally happen on processed OCR docs.
-    # Here we consider uploads with "ocr_status = completed" as ready for validation.
-    uploads = db.query(Upload).filter(Upload.ocr_status == "completed").all()
+    # Validation would normally happen on processed OCR docs.
+    # Therefore we consider uploads with "ocr_status = completed" as ready for validation.
+    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
+    uploads = (
+        db.query(Upload)
+        .filter(
+            Upload.ocr_status == "completed",
+            Upload.clinic_id == current_user.clinic_id,
+        )
+        .all()
+    )
     return uploads
 
 # ------------------------------------------------------

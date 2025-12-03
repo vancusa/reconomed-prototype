@@ -19,11 +19,11 @@ export const DocumentNavigation = {
     });
 
     // View toggles
-    document.querySelectorAll('.view-toggle').forEach(btn => {
-      btn.addEventListener('click', () => {
-        this.toggleView(btn.dataset.view);
-      });
-    });
+    //document.querySelectorAll('.view-toggle').forEach(btn => {
+      //btn.addEventListener('click', () => {
+        //this.toggleView(btn.dataset.view);
+      //});
+    //});
 
     // Batch actions
     const applyPatientBtn = document.getElementById('apply-batch-patient');
@@ -99,17 +99,47 @@ export const DocumentNavigation = {
 
   },
 
-  /**
-   * Switch tab by key
-   */
-  switchTab(tabKey) {
-    document.querySelectorAll('.document-tabs .tab-button').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.tab === tabKey);
-    });
-    document.querySelectorAll('.document-tabs .tab-content').forEach(div => {
-      div.classList.toggle('active', div.id === `${tabKey}-tab`);
-    });
-  },
+/**
+ * Switch tab by key
+ */
+async switchTab(tabKey) {
+  // 1. UI: activate buttons + tab content
+  document.querySelectorAll('.document-tabs .tab-button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tabKey);
+  });
+
+  document.querySelectorAll('.document-tabs .tab-content').forEach(div => {
+    div.classList.toggle('active', div.id === `${tabKey}-tab`);
+  });
+
+  // 2. DATA LOADING based on tab
+  switch (tabKey) {
+    case 'unprocessed': {
+      const uploads = await DocumentActions.fetchUnprocessed();
+      this.renderUploads(uploads);   // you already have this
+      break;
+    }
+
+    case 'processing': {
+      const uploads = await DocumentActions.fetchProcessingQueue();
+      this.renderProcessing(uploads);   // you'll add this renderer
+      break;
+    }
+
+    case 'validation': {
+      const uploads = await DocumentActions.fetchValidationQueue?.();
+      this.renderValidation?.(uploads);
+      break;
+    }
+
+    case 'completed': {
+      const uploads = await DocumentActions.fetchCompletedQueue?.();
+      this.renderCompleted?.(uploads);
+      break;
+    }
+  }
+},
+
 
   /**
    * Toggle view mode (grid / list)
@@ -158,6 +188,15 @@ export const DocumentNavigation = {
     }
   },
 
+  /* 
+    Refreshes the processing queue
+  */
+
+  async refreshProcessingQueue() {
+    const uploads = await DocumentActions.fetchProcessingQueue();
+    DocumentNavigation.renderProcessing(uploads);
+  },
+
   /*
       Helpers for the rendering 
    */
@@ -175,8 +214,8 @@ export const DocumentNavigation = {
 
   getUploadLabel(category) {
     switch (category) {
-      case 'image': return 'Imagine';
-      case 'pdf': return 'Document PDF';
+      case 'image': return 'Image';
+      case 'pdf': return 'PDF';
       default: return 'Document';
     }
   },
@@ -193,53 +232,93 @@ export const DocumentNavigation = {
   },
 
   formatUploadDate(isoString) {
-    if (!isoString) return 'Data upload necunoscută';
+    if (!isoString) return 'Unknown date';
     const d = new Date(isoString);
-    if (Number.isNaN(d.getTime())) return 'Data upload necunoscută';
+    if (Number.isNaN(d.getTime())) return 'Unknown date';
 
     const now = new Date();
     const sameDay = d.toDateString() === now.toDateString();
     const timeOpts = { hour: '2-digit', minute: '2-digit' };
 
     if (sameDay) {
-      return `Încărcat azi, ${d.toLocaleTimeString(undefined, timeOpts)}`;
+      return `Uploaded today, ${d.toLocaleTimeString(undefined, timeOpts)}`;
     }
-    return `Încărcat la ${d.toLocaleDateString()} ${d.toLocaleTimeString(undefined, timeOpts)}`;
+    return `Uploaded at ${d.toLocaleDateString()} ${d.toLocaleTimeString(undefined, timeOpts)}`;
   },
 
   /**
-   * Render uploaded documents in the Unprocessed tab
+   * Fetch processing queue (queued + processing uploads)
    */
-  renderUploads(documents) {
-    console.log('Render unprocessed uploads...');
-  const container =  document.getElementById('file-container');
-  const empty = document.getElementById('empty-state');
-  if (!container) {
-    console.error('File container not found in Unprocessed tab');
-    return;
-  }
+  async fetchProcessingQueue() {
+    console.log('Fetching processing queue...');
+    try {
+      const res = await fetch(
+        apiUrl(API_CONFIG.ENDPOINTS.documents, 'processing-queue')
+      );
+      if (!res.ok) throw new Error('Failed to load processing queue');
+      return await res.json();
+    } catch (err) {
+      console.error('fetchProcessingQueue error:', err);
+      return [];
+    }
+  },
 
-  //console.log("Sunt aici si am gasit container");
-  container.innerHTML = '';
-  if (!documents.length) {
-    empty.style.display = 'block';
-    return;
-  }
+  /*
+    Helper to standardize status text
+  */
+ getStatusConfig(context, doc) {
+    // context: 'processing' | 'validation' | 'completed'
+    const ocr = doc.ocr_status;
+    const val = doc.validation_status;
 
-  if (empty) empty.style.display = 'none';
+    if (context === 'processing') {
+      if (ocr === 'processing') {
+        return { text: 'Processing OCR…', variant: 'info', showDots: true };
+      }
+      // queued or pending
+      return { text: 'Queued for OCR', variant: 'muted', showDots: true };
+    }
 
-  documents.forEach(doc => {
-    const category = this.getUploadCategory(doc);
+    if (context === 'validation') {
+      // later you can branch on confidence, etc.
+      return { text: 'Ready for validation', variant: 'warning', showDots: false };
+    }
+
+    if (context === 'completed') {
+      if (val === 'rejected') {
+        return { text: 'Rejected', variant: 'danger', showDots: false };
+      }
+      // default: approved / validated
+      return { text: 'Validated', variant: 'success', showDots: false };
+    }
+
+    return { text: null, variant: null, showDots: false };
+  },
+
+
+  /*
+   Factory for single card creation
+  */
+  createDocumentCard(doc, options = {}) {
+    const {
+      statusConfig = null,   // {text, variant, showDots}
+      showCancel = false,
+      onCancel = null,
+      primaryActionLabel = null,
+      onPrimaryAction = null,
+    } = options;
+
+    const category  = this.getUploadCategory(doc);
     const iconClass = this.getUploadIconClass(category);
-    const label = this.getUploadLabel(category);
-    const dateText = this.formatUploadDate(doc.uploaded_at);
+    const label     = this.getUploadLabel(category);
+    const dateText  = this.formatUploadDate(doc.uploaded_at);
 
-    const el = document.createElement('div');
-    el.classList.add('upload-card');
-    el.dataset.id = doc.id;
+    const card = document.createElement('div');
+    card.classList.add('upload-card');
+    card.dataset.id = doc.id;
 
-    el.innerHTML = `
-    <label class="upload-card-label">
+    card.innerHTML = `
+      <div class="upload-card-label">
         <div class="upload-card-main">
           <div class="upload-card-icon ${category}">
             <i class="fas ${iconClass}"></i>
@@ -247,20 +326,183 @@ export const DocumentNavigation = {
           <div class="upload-card-meta">
             <div class="upload-card-title">${label}</div>
             <div class="upload-card-date">${dateText}</div>
+            ${
+              statusConfig && statusConfig.text
+                ? `<div class="upload-card-status status-${statusConfig.variant || 'muted'}">
+                    <span class="status-text">${statusConfig.text}</span>
+                    ${
+                      statusConfig.showDots
+                        ? '<span class="processing-dots">•••</span>'
+                        : ''
+                    }
+                  </div>`
+                : ''
+            }
           </div>
         </div>
-      </label>
+        <div class="upload-card-actions">
+          ${
+            primaryActionLabel
+              ? `<button class="primary-btn" data-role="primary">${primaryActionLabel}</button>`
+              : ''
+          }
+          ${
+            showCancel
+              ? `<button class="cancel-btn" data-role="cancel">Cancel</button>`
+              : ''
+          }
+        </div>
+      </div>
     `;
 
-    container.appendChild(el);
-  });
+    // Actions
+    const primaryBtn = card.querySelector('button[data-role="primary"]');
+    if (primaryBtn && typeof onPrimaryAction === 'function') {
+      primaryBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onPrimaryAction(doc, primaryBtn);
+      });
+    }
 
-  const selectAll = document.getElementById('select-all');
-  if (selectAll) {
-    selectAll.onchange = (e) => {
-      const allChecks = container.querySelectorAll('.file-checkbox');
-      allChecks.forEach(cb => (cb.checked = e.target.checked));
-    };
+    const cancelBtn = card.querySelector('button[data-role="cancel"]');
+    if (cancelBtn && typeof onCancel === 'function') {
+      cancelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onCancel(doc, cancelBtn);
+      });
+    }
+
+    return card;
+  },
+
+
+  /*
+    Renders processing queue
+  */
+  renderProcessing(queue) {
+    console.log('Render processing queue...');
+    const container = document.getElementById('processing-list');
+    const totalEl = document.getElementById('processing-total');
+    const countBadge = document.getElementById('processing-count');
+    
+    const self = this;
+
+    if (!container) {
+      console.log('Processing container not found');
+      return;
+    }
+
+    container.innerHTML = '';
+
+    if (!queue || !queue.length) {
+      if (totalEl) totalEl.textContent = '0';
+      if (countBadge) countBadge.textContent = '0';
+      container.innerHTML = `
+        <div class="empty-message">
+          No documents are currently being processed.
+        </div>`;
+      return;
+    }
+
+    if (totalEl) totalEl.textContent = queue.length;
+    if (countBadge) countBadge.textContent = queue.length;
+
+    queue.forEach(doc => {
+      const statusConfig = this.getStatusConfig('processing', doc);
+      const card = this.createDocumentCard(doc, {
+        statusConfig,
+        showCancel: true,
+        onCancel: async (d) => {
+          const res = await fetch(
+            apiUrl(API_CONFIG.ENDPOINTS.documents, `processing/${d.id}`),
+            { method: 'DELETE' }
+          );
+          if (res.ok) {
+            showToast('Processing canceled', 'success');
+            self.refreshProcessingQueue();
+          } else {
+            showToast('Could not cancel this', 'error');
+          }
+        },
+      });
+
+      container.appendChild(card);
+    });
+  },
+
+  /*
+    Render validation
+  */
+  renderValidation(docs) {
+    const container = document.getElementById('validation-list');
+    container.innerHTML = '';
+
+    if (!docs.length) {
+      container.innerHTML = '<div class="empty-message">No documents to validate.</div>';
+      return;
+    }
+
+    docs.forEach(doc => {
+      const statusConfig = this.getStatusConfig('validation', doc);
+
+      const card = this.createDocumentCard(doc, {
+        statusConfig,
+        primaryActionLabel: 'Review',
+        onPrimaryAction: (d) => this.openValidationForm(d),
+      });
+
+      container.appendChild(card);
+    });
+  },
+
+  renderCompleted(docs) {
+    const container = document.getElementById('validation-list');
+    container.innerHTML = '';
+
+    if (!docs.length) {
+      container.innerHTML = '<div class="empty-message">No documents to validate.</div>';
+      return;
+    }
+
+    docs.forEach(doc => {
+      const statusConfig = this.getStatusConfig('completed', doc);
+
+      const card = this.createDocumentCard(doc, {
+        statusConfig,
+        primaryActionLabel: 'Review',
+        onPrimaryAction: (d) => this.openValidationForm(d),
+      });
+
+      container.appendChild(card);
+    });
+  },
+
+
+  /**
+   * Render uploaded documents in the Unprocessed tab
+   */
+  renderUploads(documents) {
+    console.log('Render unprocessed uploads...');
+    const container = document.getElementById('file-container');
+    const empty = document.getElementById('empty-state');
+
+    if (!container) {
+      console.error('File container not found in Unprocessed tab');
+      return;
+    }
+
+    container.innerHTML = '';
+
+    if (!documents.length) {
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+
+    if (empty) empty.style.display = 'none';
+
+    documents.forEach(doc => {
+      const card = this.createDocumentCard(doc); // no status, no cancel
+      container.appendChild(card);
+    });
   }
-}
 }
