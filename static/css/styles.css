@@ -905,6 +905,8 @@ body {
   flex-direction: column;
   gap: 2px;
   white-space: nowrap;
+  min-width: 0;
+  overflow:hidden;
 }
 
 .upload-card-title {
@@ -913,7 +915,7 @@ body {
 }
 
 .upload-card-date {
-  font-size: 0.8rem;
+  font-size: 0.65rem;
   color: var(--text-secondary);
 }
 
