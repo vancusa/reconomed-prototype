@@ -17,6 +17,7 @@ export const DocumentActions = {
     try {
       const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents,'uploads'), {
         method: 'POST',
+        'X-User': window.app.currentUser.username,
         body: formData,
       });
       if (!response.ok) throw new Error('Upload failed');
@@ -65,6 +66,7 @@ export const DocumentActions = {
         const query = `uploads/${encodeURIComponent(id)}/patient?patient_id=${encodeURIComponent(patientId)}`;
         return fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, query), {
           method: 'PUT',
+          'X-User': window.app.currentUser.username,
         });
       });
 
@@ -102,6 +104,7 @@ export const DocumentActions = {
         const query = `uploads/${encodeURIComponent(id)}/type?document_type=${encodeURIComponent(documentType)}`;
         return fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, query), {
           method: 'PUT',
+          'X-User': window.app.currentUser.username,
         });
       });
 
@@ -139,6 +142,7 @@ export const DocumentActions = {
 
 
   /**
+   * 
    * Start OCR processing for pending uploads
    * - patientId is optional; if given, backend queues only that patient's uploads
    */
@@ -150,7 +154,11 @@ export const DocumentActions = {
 
       const res = await fetch(
         apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/batch-ocr${query}`),
-        { method: 'POST' }
+        { method: 'POST',
+          headers: {
+            'X-User': window.app.currentUser.username
+          }
+         }
       );
 
       if (!res.ok) throw new Error('Failed to start OCR');
@@ -160,6 +168,33 @@ export const DocumentActions = {
     catch (err) {
       console.error('startOCR error:', err);
       showToast('Error starting OCR', 'error');
+      return null;
+    }
+  },
+
+  /**
+   * Process the next queued OCR job
+   */
+  async runNextOCR() {
+    try {
+      const res = await fetch(
+        apiUrl(API_CONFIG.ENDPOINTS.documents, 'processing/run-next'),
+        { method: 'POST' }
+      );
+
+      if (!res.ok) throw new Error('OCR job failed');
+      const payload = await res.json();
+
+      if (payload.processed) {
+        showToast('Processed one OCR job', 'success');
+      } else {
+        showToast('No queued documents', 'info');
+      }
+
+      return payload;
+    } catch (err) {
+      console.error('runNextOCR error:', err);
+      showToast('Error processing OCR job', 'error');
       return null;
     }
   },

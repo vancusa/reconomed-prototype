@@ -3141,3 +3141,41 @@ body {
     letter-spacing: 2px;
     animation: pulse 1.5s ease-in-out infinite;
 }
+
+/*
+    VALIDATION MODAL
+*/
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 5000;
+  left: 0; top: 0;
+  width: 100%; height: 100%;
+  background: rgba(0,0,0,0.45);
+}
+
+.modal.open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background: white;
+  width: 700px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.25);
+}
+
+.modal-textarea {
+  width: 100%;
+  height: 180px;
+  margin-top: 6px;
+}
+
+.json-editor {
+  font-family: monospace;
+}

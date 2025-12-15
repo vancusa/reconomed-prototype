@@ -85,6 +85,8 @@ class ConsultationCreate(BaseModel):
     consultation_date: Optional[datetime] = None
     structured_data: Optional[dict] = None
     audio_file_path: Optional[str] = None
+    audio_transcript: Optional[str] = None
+    audio_duration_seconds: Optional[int] = None
 
 class ConsultationUpdate(BaseModel):
     """Update existing consultation"""
@@ -147,6 +149,7 @@ class DocumentCreate(DocumentBase):
     clinic_id: str
     file_path: str
     file_size: Optional[int] = None
+    upload_id: Optional[str] = None
 
 class DocumentResponse(DocumentBase):
     id: str
@@ -161,10 +164,38 @@ class DocumentResponse(DocumentBase):
     validated_by: Optional[str] = None
     validated_at: Optional[datetime] = None
     created_at: datetime
+    upload_id: Optional[str] = None
     extracted_data: Optional[Union[dict, str]] = None
 
     class Config:
         from_attributes = True
+
+#------------------------------
+# GDPR logs
+#-------------------------------
+class GDPRAuditLogBase(BaseModel):
+    action: str
+    legal_basis: Optional[str] = None
+    data_category: Optional[str] = None
+    details: Optional[dict] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+
+class GDPRAuditLogCreate(GDPRAuditLogBase):
+    clinic_id: str
+    user_id: Optional[str] = None
+    patient_id: Optional[str] = None
+
+class GDPRAuditLogResponse(GDPRAuditLogBase):
+    id: str
+    clinic_id: str
+    user_id: Optional[str] = None
+    patient_id: Optional[str] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
 
 # ----------------------------
 # Upload Schemas
@@ -186,7 +217,7 @@ class UploadResponse(UploadBase):
     patient_id: Optional[str] = None
     uploaded_at: datetime
     expires_at: Optional[datetime] = None
-    original_filename: Optional[str] = None
+    #original_filename: Optional[str] = None - removed from the model
 
     class Config:
         from_attributes = True

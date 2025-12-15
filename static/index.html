@@ -841,6 +841,29 @@
         </div>
     </div>
 
+    <!-- Validation Modal-->
+    <div id="validation-modal" class="modal">
+    <div class="modal-content">
+        <h2>Validate Document</h2>
+
+        <div class="modal-section">
+        <label for="ocr-text">Extracted Text (OCR)</label>
+        <textarea id="ocr-text" class="modal-textarea"></textarea>
+        </div>
+
+        <div class="modal-section">
+        <label for="ocr-json">Extracted Structured Data (editable JSON)</label>
+        <textarea id="ocr-json" class="modal-textarea json-editor"></textarea>
+        </div>
+
+        <div class="modal-actions">
+        <button id="validation-approve" class="primary-btn">Approve</button>
+        <button id="validation-reject" class="danger-btn">Reject</button>
+        <button id="validation-close" class="secondary-btn">Close</button>
+        </div>
+    </div>
+    </div>
+
     <!-- Loading Overlay -->
     <div id="loading" class="loading-overlay">
         <div class="spinner">

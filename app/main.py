@@ -5,6 +5,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from threading import Thread
+
 import os
 
 #---SETUP LOGGING
@@ -51,6 +53,7 @@ from app.routers.documents import router as documents_router
 from app.routers.search import router as search_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.consultations import router as consultations_router
+from app.services.ocr_worker import background_ocr_worker
 
 # Create FastAPI app
 app = FastAPI(
@@ -94,6 +97,11 @@ app.include_router(consultations_router, prefix=f"{API_PREFIX}/consultations", t
 @app.on_event("startup")
 def startup_event():
     create_tables()
+
+#Start the background OCR queue worker
+@app.on_event("startup")
+def start_worker():
+    Thread(target=background_ocr_worker, daemon=True).start()
 
 # Serve frontend
 @app.get("/")

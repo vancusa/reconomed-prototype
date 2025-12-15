@@ -17,6 +17,7 @@ from app.services.romanian_document_templates import RomanianDocumentTemplates
 from app.services.ocr import extract_text_from_image, extract_text_confidence
 from app.services.enhanced_ocr import RomanianOCRProcessor
 from app.utils.file import validate_file_type, generate_unique_filename, save_uploaded_file
+from app.services.gdpr_logging import log_gdpr_event
 
 router = APIRouter(
     #prefix="/documents",
@@ -27,6 +28,9 @@ router = APIRouter(
 # Reuse the loggers created in app.main
 audit_logger = logging.getLogger("reconomed.audit")
 app_logger=logging.getLogger("reconomed.app")
+
+#Create an instance for the OCR service
+enhanced_doc_service = EnhancedDocumentService()
 
 #--------------------------------------ROUTERS --------------------------------------
 
@@ -174,9 +178,26 @@ async def assign_patient(
         raise HTTPException(status_code=404, detail="Upload not found")
 
     upload.patient_id = patient_id
+
+     # also update Document, if already created by OCR
+    doc = db.query(Document).filter(Document.upload_id == upload.id).first()
+    if doc:
+        doc.patient_id = patient_id
+
     db.commit()
     db.refresh(upload)
-    return upload
+
+    if doc:
+        db.refresh(doc)
+
+    return {
+    "upload": upload_schema,
+    "document": {
+        "id": doc.id if doc else None,
+        "validation_status": doc.validation_status if doc else None,
+        "ocr_confidence": doc.ocr_confidence if doc else None
+    }
+}
 
 
 # ------------------------------------------------------
@@ -239,6 +260,21 @@ async def start_batch_processing(
         upl.ocr_status = "queued"
         upl.expires_at = upl.expires_at or datetime.utcnow()
 
+        # GDPR audit log for each queued upload
+        log_gdpr_event(
+            db,
+            clinic_id=current_user.clinic_id,
+            user_id=current_user.id,
+            patient_id=upl.patient_id,
+            action="ocr_queued",
+            data_category="health_data_document",
+            details={
+                "upload_id": upl.id,
+                "document_type": upl.document_type,
+            },
+            request=request,
+        )
+
     db.commit()
 
     return {
@@ -246,6 +282,211 @@ async def start_batch_processing(
         "queued_count": len(uploads),
         "upload_ids": [upl.id for upl in uploads],
     }
+
+# ---------------------------------------------------------
+"""
+ Process the next queued medical document (Upload → Document) via OCR.
+
+    This endpoint functions as a lightweight in-application worker:
+    - Finds the oldest Upload with `ocr_status = 'queued'` for the user's clinic.
+    - Marks it as `processing`.
+    - Executes the enhanced OCR pipeline (Tesseract + Romanian document templates).
+    - Creates or updates the corresponding Document record with OCR text,
+      confidence score, and extracted structured data.
+    - Marks the Upload as `completed` or `error` depending on outcome.
+    - Writes GDPR audit log entries for OCR start, completion, or failure.
+    
+    It enables controlled, one-at-a-time OCR execution without requiring an
+    external task queue. The frontend can call this endpoint manually or on
+    a timer to drain the queue. No OCR text or PHI is written to logs—only
+    metadata and identifiers necessary for traceability.
+"""
+#---------------------------------------------------------
+@router.post("/processing/run-next")
+async def run_next_ocr_job(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user_email = request.headers.get("X-User", "anonymous")
+    audit_logger.info(f"user={user_email} action=run_next_ocr_job")
+
+    current_user = db.query(User).filter(User.email == user_email).first()
+    if not current_user:
+        raise HTTPException(status_code=400, detail="User not found")
+
+    # Oldest queued upload for this clinic
+    upload = (
+        db.query(Upload)
+        .filter(
+            Upload.clinic_id == current_user.clinic_id,
+            Upload.ocr_status == "queued",
+        )
+        .order_by(Upload.uploaded_at.asc())
+        .first()
+    )
+
+    if not upload:
+        return {"message": "No queued uploads", "processed": False}
+
+    # Mark as processing
+    upload.ocr_status = "processing"
+    db.commit()
+    db.refresh(upload)
+
+    # GDPR log: OCR started
+    log_gdpr_event(
+        db,
+        clinic_id=current_user.clinic_id,
+        user_id=current_user.id,
+        patient_id=upload.patient_id,
+        action="ocr_started",
+        details={
+            "upload_id": upload.id,
+            "document_type": upload.document_type,
+        },
+        request=request,
+    )
+
+    try:
+        doc = _run_ocr_for_upload(upload, db)
+
+        # GDPR log: OCR completed
+        log_gdpr_event(
+            db,
+            clinic_id=current_user.clinic_id,
+            user_id=current_user.id,
+            patient_id=upload.patient_id,
+            action="ocr_completed",
+            details={
+                "upload_id": upload.id,
+                "document_id": doc.id,
+                "document_type": doc.document_type,
+                "ocr_confidence": doc.ocr_confidence,
+            },
+            request=request,
+        )
+
+    except HTTPException as e:
+        # OCR failed in a controlled way
+        # helper already set status appropriately
+        log_gdpr_event(
+            db,
+            clinic_id=current_user.clinic_id,
+            user_id=current_user.id,
+            patient_id=upload.patient_id,
+            action="ocr_failed",
+            details={
+                "upload_id": upload.id,
+                "error": str(e.detail),
+            },
+            request=request,
+        )
+        raise
+
+    except Exception as e:
+        app_logger.error(f"OCR job failed for upload {upload.id}: {e}", exc_info=True)
+        upload.ocr_status = "error"
+        db.commit()
+
+        log_gdpr_event(
+            db,
+            clinic_id=current_user.clinic_id,
+            user_id=current_user.id,
+            patient_id=upload.patient_id,
+            action="ocr_failed",
+            details={
+                "upload_id": upload.id,
+                "error": "internal_error",
+            },
+            request=request,
+        )
+        raise HTTPException(status_code=500, detail="OCR job failed")
+
+    return {
+        "processed": True,
+        "upload_id": upload.id,
+        "document_id": doc.id,
+        "ocr_status": upload.ocr_status,
+        "validation_status": doc.validation_status,
+        "ocr_confidence": doc.ocr_confidence,
+        "document_type": doc.document_type,
+    }
+
+
+def _run_ocr_for_upload(upload: Upload, db: Session) -> Document:
+    """
+    Run enhanced OCR for a single Upload and create/update its Document.
+    Uses Tesseract via RomanianOCRProcessor + templates.
+    """
+    # Safety checks: we need patient + clinic context
+    #if not upload.patient_id:
+    #    raise HTTPException(status_code=400, detail="Upload has no patient assigned")
+    #We just need the clinic context
+    if not upload.clinic_id:
+        raise HTTPException(status_code=400, detail="Upload has no clinic assigned")
+
+    # File must exist
+    if not os.path.exists(upload.file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    # Read file bytes
+    with open(upload.file_path, "rb") as f:
+        file_content = f.read()
+
+    # Hint = document_type if set (lab_result, discharge_summary, etc.)
+    hint_type = upload.document_type or None
+
+    # Call enhanced OCR pipeline (this wraps Tesseract)
+    ocr_result = enhanced_doc_service.process_document_with_templates(
+        file_content=file_content,
+        hint_type=hint_type,
+    )
+
+    if not ocr_result.get("success", False):
+        # Mark upload as error and stop
+        upload.ocr_status = "error"
+        db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail=f"OCR failed: {ocr_result.get('error', 'unknown error')}",
+        )
+
+    # Either find existing Document for this upload or create one
+    doc = (
+        db.query(Document)
+        .filter(Document.upload_id == upload.id)
+        .first()
+    )
+
+    if not doc:
+        doc = Document(
+            upload_id=upload.id,
+            patient_id=upload.patient_id,
+            clinic_id=upload.clinic_id,
+            filename=upload.filename,
+            original_filename=upload.filename,
+            file_path=upload.file_path,
+            file_size=upload.file_size,
+            document_type=ocr_result.get("document_type") or upload.document_type,
+            ocr_status="completed",
+            validation_status="pending",
+        )
+        db.add(doc)
+
+    # Update OCR fields
+    doc.ocr_text = ocr_result.get("ocr_text", "")
+    doc.ocr_confidence = int(ocr_result.get("confidence_score") or 0)
+    doc.extracted_data = ocr_result.get("structured_data") or {}
+
+    # Update upload status
+    upload.ocr_status = "completed"
+
+    db.commit()
+    db.refresh(upload)
+    db.refresh(doc)
+
+    return doc
+
 
 #----------------------------Processing Queue Routes -----------------------------------------
 
@@ -281,15 +522,24 @@ async def get_processing_status(upload_id: str, request: Request, db: Session = 
     user = request.headers.get("X-User", "anonymous")
     audit_logger.info(f"user={user} action=get_processing_status upload_id={upload_id}")
 
-    doc = db.query(Document).filter(Document.id == upload_id).first()
+    # First find the Upload
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    # Then, if OCR has created a Document, find it by upload_id
+    doc = db.query(Document).filter(Document.upload_id == upload.id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Upload not found")
 
     return {
-        "document_id": doc.id,
-        "ocr_status": doc.ocr_status,
-        "ocr_confidence": doc.ocr_confidence,
-        "validation_status": doc.validation_status,
+        "upload_id": upload.id,
+        "document_id": doc.id if doc else None,
+        # OCR status lives primarily on Upload
+        "ocr_status": upload.ocr_status,
+        # These only exist once OCR has produced a Document
+        "ocr_confidence": doc.ocr_confidence if doc else None,
+        "validation_status": doc.validation_status if doc else None,
     }
 
 # ------------------------------------------------------
@@ -356,43 +606,70 @@ async def get_validation_details(upload_id: str, request: Request, db: Session =
     user = request.headers.get("X-User", "anonymous")
     audit_logger.info(f"user={user} action=get_validation_details upload_id={upload_id}")
 
-    doc = db.query(Document).filter(Document.id == upload_id).first()
+    # Find the Upload first
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    # Then find the associated Document by upload_id
+    doc = db.query(Document).filter(Document.upload_id == upload.id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Upload not found")
 
     return {
+        "upload_id": upload.id,
         "document_id": doc.id,
         "ocr_text": doc.ocr_text,
         "ocr_confidence": doc.ocr_confidence,
         "validation_status": doc.validation_status,
         "file_path": doc.file_path,  # you could serve via /static
+        "extracted_data": doc.extracted_data or {},
     }
 
 # ------------------------------------------------------
 # Approve Validation
 # ------------------------------------------------------
 @router.post("/validation/{upload_id}/approve")
-async def approve_validation(upload_id: str, body: dict, request: Request, db: Session = Depends(get_db)):
+async def approve_validation(
+    upload_id: str,
+    body: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     user = request.headers.get("X-User", "anonymous")
     audit_logger.info(f"user={user} action=approve_validation upload_id={upload_id}")
 
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
+    # Find Upload
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
+
+    # Find Document linked to this upload
+    doc = db.query(Document).filter(Document.upload_id == upload.id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for upload")
 
     corrected_fields = body.get("corrected_fields", {})
     create_patient = body.get("create_patient", False)
 
-    # Apply corrections
+    # Apply corrections on structured data
     doc.extracted_data = corrected_fields
     doc.validation_status = "approved"
+    doc.ocr_status = doc.ocr_status or "completed"
     db.commit()
+
+    # Optionally also mark Upload as validated (for dashboard counts, etc.)
+    upload.ocr_status = "validated"
+    db.commit()
+    db.refresh(upload)
+    db.refresh(doc)
 
     # Optionally, create patient logic here
     if create_patient:
-        app_logger.info(f"Would create patient from document {upload_id}")
+        app_logger.info(f"Would create patient from document {doc.id} / upload {upload_id}")
 
     return {
+        "upload_id": upload.id,
         "document_id": doc.id,
         "status": "approved",
         "extracted_data": doc.extracted_data,
@@ -402,19 +679,42 @@ async def approve_validation(upload_id: str, body: dict, request: Request, db: S
 # Reject Validation
 # ------------------------------------------------------
 @router.post("/validation/{upload_id}/reject")
-async def reject_validation(upload_id: str, body: dict, request: Request, db: Session = Depends(get_db)):
+async def reject_validation(
+    upload_id: str,
+    body: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     user = request.headers.get("X-User", "anonymous")
     audit_logger.info(f"user={user} action=reject_validation upload_id={upload_id}")
 
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
+    # Find Upload
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
 
+    # Find Document linked to this upload
+    doc = db.query(Document).filter(Document.upload_id == upload.id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for upload")
+
     reason = body.get("reason", "No reason provided")
+
     doc.validation_status = "rejected"
     db.commit()
 
-    return {"message": f"Rejected, moved to manual entry. Reason: {reason}"}
+    # Optionally propagate to Upload status
+    upload.ocr_status = "rejected"
+    db.commit()
+    db.refresh(upload)
+    db.refresh(doc)
+
+    return {
+        "upload_id": upload.id,
+        "document_id": doc.id,
+        "status": "rejected",
+        "reason": reason,
+    }
 
 # ----------------- Utility Routes -------------------
 

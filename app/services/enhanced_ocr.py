@@ -54,17 +54,29 @@ class RomanianOCRProcessor:
         image = self._normalize_input_to_image(image_input)
         app_logger.debug("Input normalized to PIL Image")
         
+        w, h = image.size
+        if w < 600 or h < 600:
+            app_logger.info(f"Image too small ({w}x{h}); skipping layout detection and using full OCR.")
+            return self._process_with_full_ocr(image, hint_document_type)
+
         # Layout detection
         detected_layout, document_subtype = self._detect_document_layout(image)
         app_logger.debug(f"Detected layout: {detected_layout}, subtype: {document_subtype}")
 
         # Route processing based on detected layout
         if detected_layout == "romanian_id":
-            return self._process_romanian_id(image, document_subtype)
-        else:
-            # Fall back to full OCR for other documents
-            return self._process_with_full_ocr(image, hint_document_type)
+            # v1: ID OCR disabled unless explicitly requested
+            id_hints = {"romanian_id", "id_card", "carte_identitate", "ci", "eci"}
+            if hint_document_type not in id_hints:
+                app_logger.info("ID layout detected, but ID OCR disabled for v1. Falling back to full OCR.")
+                return self._process_with_full_ocr(image, hint_document_type)
 
+            return self._process_romanian_id(image, document_subtype)
+
+        # Otherwise: normal medical docs
+        return self._process_with_full_ocr(image, hint_document_type)
+
+        
     def _normalize_hint(self, hint: Optional[str]) -> Optional[str]:
         """Normalize document type hints"""
         if not hint:

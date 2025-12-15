@@ -97,6 +97,34 @@ export const DocumentNavigation = {
     });
     }
 
+    const approveBtn = document.getElementById('validation-approve');
+    if (approveBtn) {
+      approveBtn.addEventListener('click', () => this.approveValidation());
+    }
+
+    const rejectBtn = document.getElementById('validation-reject');
+    if (rejectBtn) {
+      rejectBtn.addEventListener('click', () => this.rejectValidation());
+    }
+
+    setInterval(async () => {
+      const activeTab = document.querySelector('.tab-button.active')?.dataset.tab;
+      if (activeTab === 'processing') {
+        await this.refreshProcessingQueue();
+      }
+      if (activeTab === 'validation') {
+        await this.switchTab('validation');
+      }
+    }, 4000);
+
+
+    const closeBtn = document.getElementById('validation-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        document.getElementById('validation-modal').classList.remove('open');
+      });
+    }
+
   },
 
 /**
@@ -504,5 +532,79 @@ async switchTab(tabKey) {
       const card = this.createDocumentCard(doc); // no status, no cancel
       container.appendChild(card);
     });
-  }
+  },
+
+  /**
+   * Open validation form (modal or panel)
+   */
+  async openValidationForm(upload) {
+    try {
+      const res = await fetch(
+        apiUrl(API_CONFIG.ENDPOINTS.documents, `validation/${upload.id}`)
+      );
+      if (!res.ok) throw new Error('Failed to load validation details');
+
+      const data = await res.json();
+
+      // SHOW MODAL (you already have a modal component; if not, we add it next)
+      const modal = document.getElementById('validation-modal');
+      const textEl = document.getElementById('ocr-text');
+      const jsonEl = document.getElementById('ocr-json');
+
+      if (textEl) textEl.value = data.ocr_text || '';
+      if (jsonEl) jsonEl.value = JSON.stringify(data.extracted_data || {}, null, 2);
+
+      modal.dataset.uploadId = upload.id;
+      modal.classList.add('open');
+    } catch (err) {
+      console.error('openValidationForm error:', err);
+      showToast('Error loading validation data', 'error');
+    }
+  },
+
+  async approveValidation() {
+    const modal = document.getElementById('validation-modal');
+    const uploadId = modal.dataset.uploadId;
+
+    const corrected = JSON.parse(document.getElementById('ocr-json').value || '{}');
+
+    const res = await fetch(
+      apiUrl(API_CONFIG.ENDPOINTS.documents, `validation/${uploadId}/approve`),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ corrected_fields: corrected })
+      }
+    );
+
+    if (res.ok) {
+      showToast('Document approved', 'success');
+      modal.classList.remove('open');
+      await this.refreshValidationQueue?.();
+    } else {
+      showToast('Approval failed', 'error');
+    }
+  },
+
+  async rejectValidation() {
+    const modal = document.getElementById('validation-modal');
+    const uploadId = modal.dataset.uploadId;
+
+    const res = await fetch(
+      apiUrl(API_CONFIG.ENDPOINTS.documents, `validation/${uploadId}/reject`),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Invalid OCR' })
+      }
+    );
+
+    if (res.ok) {
+      showToast('Document rejected', 'warning');
+      modal.classList.remove('open');
+      await this.refreshValidationQueue?.();
+    } else {
+      showToast('Rejection failed', 'error');
+    }
+  },
 }

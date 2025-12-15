@@ -129,28 +129,34 @@ class Document(Base):
     __tablename__ = "documents"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    patient_id = Column(String, ForeignKey("patients.id"), nullable=False)
+    patient_id = Column(String, ForeignKey("patients.id"), nullable=True)
     clinic_id = Column(String, ForeignKey("clinics.id"), nullable=False)
 
     filename = Column(String(255), nullable=False)
     original_filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
     file_size = Column(Integer)
+
     document_type = Column(String(100))
     document_subtype = Column(String(100))
+    
     ocr_text = Column(Text)
     ocr_confidence = Column(Integer, default=0)
     ocr_status = Column(String(20), default="pending")
     extracted_data = Column(JSON)
+    
     validation_status = Column(String(20), default="pending")
     validated_by = Column(String, ForeignKey("users.id"))
     validated_at = Column(DateTime)
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    upload_id = Column(Text, ForeignKey("uploads.id"), index=True)
 
     # Relationships
     patient = relationship("Patient", back_populates="documents")
     clinic = relationship("Clinic", back_populates="documents")
     validator = relationship("User", back_populates="validated_documents")
+    upload = relationship("Upload", back_populates="documents")
 
 # ----------------------------
 # GDPR Audit Logs
@@ -163,10 +169,11 @@ class GDPRAuditLog(Base):
     user_id = Column(String, ForeignKey("users.id"))
     patient_id = Column(String, ForeignKey("patients.id"))
 
-    action = Column(String(100), nullable=False)
-    legal_basis = Column(String(100))
-    data_category = Column(String(100))
-    details = Column(JSON)
+    action = Column(String(100), nullable=False)        # e.g. "ocr_completed"
+    legal_basis = Column(String(100))                   # e.g. "art9_2_h_medical_diagnosis"
+    data_category = Column(String(100))                 # e.g. "health_data_document"
+    details = Column(JSON)                              # JSON dict, no raw PHI if possible
+    
     ip_address = Column(String(45))
     user_agent = Column(String(500))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -184,11 +191,14 @@ class Upload(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     clinic_id = Column(String, ForeignKey("clinics.id"))
+    
     filename = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
     file_size = Column(Integer)
+    
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime)
+    
     patient_id = Column(String, ForeignKey("patients.id"))
     document_type = Column(String)
     ocr_status = Column(String, default="pending")
@@ -196,4 +206,4 @@ class Upload(Base):
     # Relationships
     clinic = relationship("Clinic", back_populates="uploads")
     patient = relationship("Patient", back_populates="uploads")
-    
+    documents = relationship("Document", back_populates="upload")
