@@ -1,7 +1,8 @@
 # app/schemas.py
-from pydantic import BaseModel, Field, conint
+from pydantic import BaseModel, Field, conint,  ConfigDict
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
+from enum import Enum
 
 # ----------------------------
 # Patient Schemas
@@ -134,42 +135,6 @@ class ConsultationListItem(BaseModel):
     class Config:
         from_attributes = True
 
-# ----------------------------
-# Document Schemas
-# ----------------------------
-class DocumentBase(BaseModel):
-    filename: str
-    document_type: Optional[str] = None
-    document_subtype: Optional[str] = None
-    ocr_text: Optional[str] = None
-    extracted_data: Optional[dict] = None
-
-class DocumentCreate(DocumentBase):
-    patient_id: str
-    clinic_id: str
-    file_path: str
-    file_size: Optional[int] = None
-    upload_id: Optional[str] = None
-
-class DocumentResponse(DocumentBase):
-    id: str
-    patient_id: str
-    clinic_id: str
-    original_filename: str
-    file_path: str
-    file_size: Optional[int] = None
-    ocr_confidence: int
-    ocr_status: str
-    validation_status: str
-    validated_by: Optional[str] = None
-    validated_at: Optional[datetime] = None
-    created_at: datetime
-    upload_id: Optional[str] = None
-    extracted_data: Optional[Union[dict, str]] = None
-
-    class Config:
-        from_attributes = True
-
 #------------------------------
 # GDPR logs
 #-------------------------------
@@ -196,31 +161,230 @@ class GDPRAuditLogResponse(GDPRAuditLogBase):
     class Config:
         from_attributes = True
 
+# ----------------------------
+# Enums
+# ----------------------------
+
+class JobState(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    OCR_DONE = "ocr_done"
+    OCR_FAILED = "ocr_failed"
+
+
+class ValidationStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
 
 # ----------------------------
-# Upload Schemas
+# Upload (Public) Schemas
 # ----------------------------
+
 class UploadBase(BaseModel):
+    """
+    Fields describing the uploaded file and its association.
+    job_state is not included here by default; it's part of response/update.
+    """
+    clinic_id: str
+    filename: str
+    file_path: str
+
+    file_size: Optional[int] = None
+    document_type: Optional[str] = None
+    patient_id: Optional[str] = None
+
+
+class UploadCreate(BaseModel):
+    """
+    Internal use: creation payload once the file is saved.
+    Public API typically sends multipart/form-data; server will build this object.
+    """
+    clinic_id: str
     filename: str
     file_path: str
     file_size: Optional[int] = None
     document_type: Optional[str] = None
-    ocr_status: Optional[str] = "pending"
+    patient_id: Optional[str] = None  # usually None in v1
+    expires_at: Optional[datetime] = None  # server sets now + 30 days if omitted
 
-class UploadCreate(UploadBase):
-    clinic_id: str
+
+class UploadUpdate(BaseModel):
+    """
+    Internal/system update for queue processing.
+    """
+    job_state: Optional[JobState] = None
+    attempts: Optional[int] = None
+    claimed_at: Optional[datetime] = None
+    claimed_by: Optional[str] = None
+    error_message: Optional[str] = None
+
+    document_type: Optional[str] = None
     patient_id: Optional[str] = None
 
-class UploadResponse(UploadBase):
+
+class UploadListItem(BaseModel):
+    """
+    Payload for tab lists (cards). Keep it light.
+    """
     id: str
     clinic_id: str
+    filename: str
+    file_size: Optional[int] = None
+    document_type: Optional[str] = None
+
+    job_state: JobState
+    uploaded_at: datetime
+    expires_at: datetime
+
+    # Derived/UX fields
+    patient_id: Optional[str] = None
+    preview_url: Optional[str] = None
+    # Small snippet for list views (optional; keep short)
+    ocr_snippet: Optional[str] = Field(default=None, max_length=500)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UploadListResponse(BaseModel):
+    """
+    Standard list wrapper (so you can add counts/paging later).
+    """
+    items: List[UploadListItem]
+    total: int
+
+
+# ----------------------------
+# Document (Internal Artifact) Schemas (reachable via Upload)
+# ----------------------------
+
+class UploadDocumentSummary(BaseModel):
+    """
+    Minimal document info for list/detail views.
+    (Upload-centric: this is never created/updated directly by clients.)
+    """
+    id: str
+    upload_id: str
+
+    validation_status: ValidationStatus = ValidationStatus.PENDING
+    validated_by: Optional[str] = None
+    validated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UploadDetailResponse(BaseModel):
+    """
+    Upload details + document summary.
+    Recommended for: GET /uploads/{id}
+    """
+    id: str
+    clinic_id: str
+    filename: str
+    file_path: str
+    file_size: Optional[int] = None
+    document_type: Optional[str] = None
+
+    job_state: JobState
+    attempts: int
+    claimed_at: Optional[datetime] = None
+    claimed_by: Optional[str] = None
+    error_message: Optional[str] = None
+
     patient_id: Optional[str] = None
     uploaded_at: datetime
-    expires_at: Optional[datetime] = None
-    #original_filename: Optional[str] = None - removed from the model
+    expires_at: datetime
 
-    class Config:
-        from_attributes = True
+    preview_url: Optional[str] = None
+    document: Optional[UploadDocumentSummary] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UploadOCRResponse(BaseModel):
+    """
+    Full OCR output payload.
+    Recommended for: GET /uploads/{id}/ocr
+    """
+    upload_id: str
+    document_id: str
+    ocr_text: str
+    # Optional metadata (keep non-PHI)
+    ocr_metadata: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ----------------------------
+# Public Workflow Actions (Doctor)
+# ----------------------------
+
+class UploadCompleteRequest(BaseModel):
+    """
+    One-button doctor action:
+    - assigns patient
+    - approves validation
+    - optionally edits OCR text
+    - optionally sets document_type
+    Recommended for: POST /uploads/{id}/complete
+    """
+    patient_id: str = Field(..., min_length=1)
+    document_type: Optional[str] = None
+    edited_ocr_text: Optional[str] = None  # if doctor edited the OCR result
+
+
+class UploadCompleteResponse(BaseModel):
+    """
+    Return updated card-friendly payload after completion.
+    """
+    upload: UploadDetailResponse
+
+
+class UploadRejectResponse(BaseModel):
+    """
+    For: DELETE /uploads/{id} or POST /uploads/{id}/reject (immediate delete)
+    """
+    deleted: bool
+    upload_id: str
+
+
+# ----------------------------
+# Queue/Worker (Internal)
+# ----------------------------
+
+class ClaimJobRequest(BaseModel):
+    worker_id: str
+    clinic_id: Optional[str] = None
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    stale_timeout_seconds: int = Field(default=600, ge=60, le=86400)
+
+
+class ClaimJobResponse(BaseModel):
+    claimed: bool
+    upload_id: Optional[str] = None
+    message: Optional[str] = None
+
+
+class JobStats(BaseModel):
+    queued: int
+    processing: int
+    ocr_done: int
+    ocr_failed: int
+    total: int
+    oldest_queued: Optional[datetime] = None
+
+
+# ----------------------------
+# Validators (optional, but helpful)
+# ----------------------------
+
+class TabName(str, Enum):
+    UNPROCESSED = "unprocessed"
+    PROCESSING = "processing"
+    VALIDATION = "validation"
+    COMPLETED = "completed"
+    ERROR = "error"
 
 # ----------------------------
 # Clinic Schemas

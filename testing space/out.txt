@@ -1,0 +1,61 @@
+thr        psm3  OK  conf=64 score=    96.2 wc=251 avgLen= 3.8 longR=0.02 garbR=0.24 nonTxt=0.00 | AWOOTOPVU VETVOPAVIFN VIZAT FA » 49 an CNP DATA NAȘTERII 11. 03. ADRESA STR Salviei 26, Gi
+thr        psm4  OK  conf=64 score=    97.3 wc=257 avgLen= 3.8 longR=0.02 garbR=0.23 nonTxt=0.00 | AWOOTOPVU VETVOPAVIFN VIZAT FA "49 anl Buletin de analize 24 BO 9 T 0186 din 09. 11. CNP 2
+thr        psm6  OK  conf=64 score=    99.5 wc=275 avgLen= 3.7 longR=0.02 garbR=0.26 nonTxt=0.00 | VETO VIFVIVIFA ; ; A MNT PXWIPNIVIFAINTENF, 43 ani Buletin de analize 24 B 09 T 0186 din 0
+thr        psm11 OK  conf=34 score=    50.5 wc=148 avgLen= 4.9 longR=0.03 garbR=0.20 nonTxt=0.00 | ATNIVOr CVETTOFUVIFCIVIFATTTA ani Buletin de analize 24 BO 9 T 0186 din 09. 11. CNP DATA N
+gray       psm3  OK  conf=63 score=    88.9 wc=201 avgLen= 3.5 longR=0.01 garbR=0.20 nonTxt=0.00 | PINYIN VLIOA VIZA IVIAAINIA r, 43 ani Buletin de analize 24809 T 0186 din 09. 11. CNP DATA
+gray       psm4  OK  conf=62 score=    88.3 wc=204 avgLen= 3.5 longR=0.01 garbR=0.21 nonTxt=0.00 | PAINY YUP VLIOM VIZA IVIAINIA r, 43 ani Buletin de analize 24 B 809 T 0186 din 09. 11. CNP
+gray       psm6  OK  conf=63 score=    89.0 wc=203 avgLen= 3.6 longR=0.01 garbR=0.21 nonTxt=0.01 | DP OY PT Tor VINE Pa it ari Buletin de analize 24809 T 0186 din 09. 11. CNP DATA NAȘTERII 
+gray       psm11 OK  conf=33 score=    46.8 wc=115 avgLen= 4.9 longR=0.03 garbR=0.10 nonTxt=0.01 | PIN ION VEMUAVIFA IVIAINIA F, 43 ani Buletin de analize 24 BO 9 TO 186 din 09. 11. CNP DAT
+thr_deskew psm3  OK  conf=64 score=    96.2 wc=251 avgLen= 3.8 longR=0.02 garbR=0.24 nonTxt=0.00 | AWOOTOPVU VETVOPAVIFN VIZAT FA » 49 an CNP DATA NAȘTERII 11. 03. ADRESA STR Salviei 26, Gi
+thr_deskew psm4  OK  conf=64 score=    97.3 wc=257 avgLen= 3.8 longR=0.02 garbR=0.23 nonTxt=0.00 | AWOOTOPVU VETVOPAVIFN VIZAT FA "49 anl Buletin de analize 24 BO 9 T 0186 din 09. 11. CNP 2
+thr_deskew psm6  OK  conf=64 score=    99.5 wc=275 avgLen= 3.7 longR=0.02 garbR=0.26 nonTxt=0.00 | VETO VIFVIVIFA ; ; A MNT PXWIPNIVIFAINTENF, 43 ani Buletin de analize 24 B 09 T 0186 din 0
+thr_deskew psm11 OK  conf=34 score=    50.5 wc=148 avgLen= 4.9 longR=0.03 garbR=0.20 nonTxt=0.00 | ATNIVOr CVETTOFUVIFCIVIFATTTA ani Buletin de analize 24 BO 9 T 0186 din 09. 11. CNP DATA N
+gray_deskew psm3  OK  conf=63 score=    88.9 wc=201 avgLen= 3.5 longR=0.01 garbR=0.20 nonTxt=0.00 | PINYIN VLIOA VIZA IVIAAINIA r, 43 ani Buletin de analize 24809 T 0186 din 09. 11. CNP DATA
+gray_deskew psm4  OK  conf=62 score=    88.3 wc=204 avgLen= 3.5 longR=0.01 garbR=0.21 nonTxt=0.00 | PAINY YUP VLIOM VIZA IVIAINIA r, 43 ani Buletin de analize 24 B 809 T 0186 din 09. 11. CNP
+gray_deskew psm6  OK  conf=63 score=    89.0 wc=203 avgLen= 3.6 longR=0.01 garbR=0.21 nonTxt=0.01 | DP OY PT Tor VINE Pa it ari Buletin de analize 24809 T 0186 din 09. 11. CNP DATA NAȘTERII 
+gray_deskew psm11 OK  conf=33 score=    46.8 wc=115 avgLen= 4.9 longR=0.03 garbR=0.10 nonTxt=0.01 | PIN ION VEMUAVIFA IVIAINIA F, 43 ani Buletin de analize 24 BO 9 TO 186 din 09. 11. CNP DAT
+
+=== BEST ===
+variant=thr psm=psm6 conf=64 score=99.5
+Wrote best to out.txt
+
+VETO VIFVIVIFA ; ; A
+MNT PXWIPNIVIFAINTENF, 43 ani Buletin de analize 24 B 09 T 0186 din 09. 11.
+CNP
+2310311350071 DATA NAŞTERII 11. 03.
+4981 RECOLTAT — 09. 11. 2024 08: 56
+ADRESA STR Salviei 26, Giroc, Timiș LUCRAT Bioclinica SA
++. 00398 "Bioclinica Calea Martirilor BLD Cetăţii 53 B, Timisoara
+ee a GENERAT 14. 11. 2024 17: 68
+VALORI BIOLOGICE DE REFERINȚĂ ANTECEDENT
+Albumină serică
+4, 9 g t (3, 2 - 4, 8) "9
+(ser, spectrofotometrie)
+Bilirubina directă
+0, 38 mg d L (< 0, 30) e "9
+6, 50 pmol L (s 5, 13)
+Bilirubina totală
+1, 64 ms d L (0, 30 - 1, 20) i Y —
+28 , 04 pmol L (5, 13 - 20, 52)
+(ser, spectrofotometrie)
+Calciu total seric
+10, 0 mg d L (8, 7 - 10, 4) —- 9 CD
+2, 50 mmol L (2, 18 - 2, 60)
+Fosfataza alcalina totala
+133 U L (46 - 116) CI 9
+GGT (gama glutamiltransferaza)
+61 U L (< 38) CI II i 9 >
+; (ser, spectrofotometrie)
+HDL colesterol 9
+65 mg d L (> 60) C smo a
+1, 68 mmol L (2 1, 55)
+Interpretare: mg d L (mmo 1 L)
+Ideal cecsesveceens 2 60 (2 1, 55)
+eal . . . . . -. c. cosoneonosoenee
+Risc major pentru boli cardiovasculare . . . . . < 40 (< 1, 04)
+(ser, spect rofotometrie)
+LDL colesterol direct
+Rezultatele se referă numai 3 proba analizată.
+Reproducerea totală sau parțială a buletinului de analize se face numai cu acordul BIOCLINICA. bioclinicaro
+FOI - PG 2?
+Pagina 1 3 Ă Ed 4, Rev O

@@ -127,46 +127,62 @@ export const DocumentNavigation = {
 
   },
 
-/**
- * Switch tab by key
- */
-async switchTab(tabKey) {
-  // 1. UI: activate buttons + tab content
-  document.querySelectorAll('.document-tabs .tab-button').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tabKey);
-  });
+  /**
+   * Switch tab by key
+   */
+  async switchTab(tabKey) {
+    // 1. UI: activate buttons + tab content
+    document.querySelectorAll('.document-tabs .tab-button').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === tabKey);
+    });
 
-  document.querySelectorAll('.document-tabs .tab-content').forEach(div => {
-    div.classList.toggle('active', div.id === `${tabKey}-tab`);
-  });
+    document.querySelectorAll('.document-tabs .tab-content').forEach(div => {
+      div.classList.toggle('active', div.id === `${tabKey}-tab`);
+    });
 
-  // 2. DATA LOADING based on tab
-  switch (tabKey) {
-    case 'unprocessed': {
-      const uploads = await DocumentActions.fetchUnprocessed();
-      this.renderUploads(uploads);   // you already have this
-      break;
+    // 2. DATA LOADING based on tab
+    // Update active tab styling
+    this.tabs.forEach(t => t.classList.remove('active'));
+    this.tabs.find(t => t.dataset.tab === tabKey)?.classList.add('active');
+    
+    // Load data
+    try {
+      const uploads = await DocumentActions.fetchTab(tabKey);
+      this.renderTab(tabKey, uploads);
+    } catch (error) {
+      console.error(`Error loading ${tabKey} tab:`, error);
+      this.renderError(tabKey, error);
     }
+  },
 
-    case 'processing': {
-      const uploads = await DocumentActions.fetchProcessingQueue();
-      this.renderProcessing(uploads);   // you'll add this renderer
-      break;
+  /**
+   * Dispatches uploads to appropriate renderer based on active tab
+    * @param {string} tabKey - Tab identifier (unprocessed|processing|validation|completed|error)
+    * @param {Array} uploads - Upload objects from backend
+   * @returns nothing
+   */
+  renderTab(tabKey, uploads) {
+    const container = this.contentArea.querySelector(`#${tabKey}-tab`);
+    if (!container) return;
+    
+    switch(tabKey) {
+      case 'unprocessed':
+        this.renderUploads(uploads);
+        break;
+      case 'processing':
+        this.renderProcessing(uploads);
+        break;
+      case 'validation':
+        this.renderValidation(uploads);
+        break;
+      case 'completed':
+        this.renderCompleted(uploads);
+        break;
+      case 'error':
+        this.renderErrors(uploads);
+        break;
     }
-
-    case 'validation': {
-      const uploads = await DocumentActions.fetchValidationQueue?.();
-      this.renderValidation?.(uploads);
-      break;
-    }
-
-    case 'completed': {
-      const uploads = await DocumentActions.fetchCompletedQueue?.();
-      this.renderCompleted?.(uploads);
-      break;
-    }
-  }
-},
+  },
 
 
   /**
@@ -198,7 +214,7 @@ async switchTab(tabKey) {
   async refreshUnprocessedList() {
     console.log('refreshUnprocessedList() triggered');
     try {
-        const data = await DocumentActions.fetchUnprocessed();
+        const data = await DocumentActions.fetchTab("unprocessed");
         console.log('Fetched unprocessed data:', data);
 
         // Accept both a list and an object with documents key
@@ -219,7 +235,6 @@ async switchTab(tabKey) {
   /* 
     Refreshes the processing queue
   */
-
   async refreshProcessingQueue() {
     const uploads = await DocumentActions.fetchProcessingQueue();
     DocumentNavigation.renderProcessing(uploads);

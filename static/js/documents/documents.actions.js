@@ -37,57 +37,40 @@ export const DocumentActions = {
     }
   },
 
-  /**
-   * Fetch unprocessed uploads (for Unprocessed tab)
-   */
-  async fetchUnprocessed() {
-    console.log('Fetching unprocessed uploads...');
-    try {
-      const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, 'uploads/unprocessed'));
-      if (!res.ok) throw new Error('Failed to load uploads');
-      return await res.json();
-    } catch (err) {
-      console.error('fetchUnprocessed error:', err);
-      return { documents: [] };
-    }
-  },
-
-  /**
-   * Batch-assign selected uploads to a patient (used in Validation screen)
-   * - For each uploadId, calls: PUT /documents/uploads/{upload_id}/patient?patient_id=...
-   */
-  async batchAssign(uploadIds, patientId) {
-    if (!uploadIds || !uploadIds.length || !patientId) {
-      return;
-    }
-
-    try {
-      const requests = uploadIds.map((id) => {
-        const query = `uploads/${encodeURIComponent(id)}/patient?patient_id=${encodeURIComponent(patientId)}`;
-        return fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, query), {
-          method: 'PUT',
-          'X-User': window.app.currentUser.username,
-        });
-      });
-
-      const responses = await Promise.all(requests);
-
-      const allOk = responses.every((res) => res.ok);
-      if (!allOk) {
-        throw new Error('One or more assignments failed');
+  async fetchTab(tab) {
+    const response = await fetch(
+      `/api/documents/uploads?tab=${tab}`,
+      {
+        headers: {
+          "X-User": window.app.currentUser.username
+        }
       }
-
-      showToast('Documentele au fost asociate pacientului', 'success');
-      // Optionally parse JSON for each if you need updated objects:
-      // const payloads = await Promise.all(responses.map(r => r.json()));
-      // return payloads;
-      return true;
-    } catch (err) {
-      console.error('Batch assign error:', err);
-      showToast('Eroare la asocierea documentelor cu pacientul', 'error');
-      return null;
-    }
+    );
+    if (!response.ok) throw new Error(`Failed to fetch ${tab} uploads`);
+    return response.json();
   },
+
+  /**
+   * Completes upload validation and assigns to patient
+   * @param {string} uploadId - Upload UUID
+   * @param {string} patientId - Patient UUID to assign
+   * @param {string} [editedOcrText] - Corrected OCR text (optional)
+   * @param {string} [documentType] - Document type override (optional)
+   * @returns {Promise<Object>} Completed document
+   */
+  async completeUpload(uploadId, patientId, editedOcrText = null, documentType = null) {
+    const response = await fetch(`/api/uploads/${uploadId}/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        patient_id: patientId,
+        edited_ocr_text: editedOcrText,
+        document_type: documentType
+      })
+    });
+    if (!response.ok) throw new Error('Failed to complete upload');
+    return response.json();
+  }, 
 
   /**
    * Batch-set document type for selected uploads (Validation screen)
@@ -123,79 +106,29 @@ export const DocumentActions = {
     }
   },
 
-    /**
-   * Fetch processing queue (queued + processing uploads)
-   */
-  async fetchProcessingQueue() {
-    console.log('Fetching processing queue...');
-    try {
-      const res = await fetch(
-        apiUrl(API_CONFIG.ENDPOINTS.documents, 'processing-queue')
-      );
-      if (!res.ok) throw new Error('Failed to load processing queue');
-      return await res.json();
-    } catch (err) {
-      console.error('fetchProcessingQueue error:', err);
-      return [];
-    }
-  },
-
-
   /**
-   * 
-   * Start OCR processing for pending uploads
-   * - patientId is optional; if given, backend queues only that patient's uploads
+   * Fetches complete upload details including metadata, OCR results, and preview URL
+   * @param {string} uploadId - Upload UUID
+   * @returns {Promise<{metadata: Object, ocr: Object, previewUrl: string}>}
    */
-  async startOCR(patientId = null) {
-    try {
-      const query = patientId
-        ? `?patient_id=${encodeURIComponent(patientId)}`
-        : '';
-
-      const res = await fetch(
-        apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/batch-ocr${query}`),
-        { method: 'POST',
-          headers: {
-            'X-User': window.app.currentUser.username
-          }
-         }
-      );
-
-      if (!res.ok) throw new Error('Failed to start OCR');
-      showToast('OCR processing started', 'info');
-      return await res.json();
-    }
-    catch (err) {
-      console.error('startOCR error:', err);
-      showToast('Error starting OCR', 'error');
-      return null;
-    }
+  async fetchUploadDetails(uploadId) {
+    const [metadata, ocr] = await Promise.all([
+      fetch(`/api/uploads/${uploadId}`).then(r => r.json()),
+      fetch(`/api/uploads/${uploadId}/ocr`).then(r => r.json())
+    ]);
+    return { metadata, ocr, previewUrl: `/api/uploads/${uploadId}/download` };
   },
 
   /**
-   * Process the next queued OCR job
+   * Opens validation modal with document preview and OCR results
+   * @param {string} uploadId - Upload UUID to validate
    */
-  async runNextOCR() {
-    try {
-      const res = await fetch(
-        apiUrl(API_CONFIG.ENDPOINTS.documents, 'processing/run-next'),
-        { method: 'POST' }
-      );
-
-      if (!res.ok) throw new Error('OCR job failed');
-      const payload = await res.json();
-
-      if (payload.processed) {
-        showToast('Processed one OCR job', 'success');
-      } else {
-        showToast('No queued documents', 'info');
-      }
-
-      return payload;
-    } catch (err) {
-      console.error('runNextOCR error:', err);
-      showToast('Error processing OCR job', 'error');
-      return null;
-    }
+  async openValidationCard(uploadId) {
+    const { metadata, ocr, previewUrl } = await DocumentActions.fetchUploadDetails(uploadId);
+    
+    // Render split view:
+    // Left: <img src="${previewUrl}">
+    // Right: Display metadata + ocr.text with confidence highlighting
   },
+
 };

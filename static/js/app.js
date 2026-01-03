@@ -128,8 +128,7 @@ class ReconoMedApp {
             this.patientManager.init();    // Set up form submissions, search
             this.documentManager.init();   // Set up upload handlers
             this.consultationManager.init(); // Set up consultation event listeners
-            //initDocumentTabs();            // Set up document tab switching
-        } catch (err) {
+           } catch (err) {
             console.error('UI initialization failed:', err);
             showToast('Interface setup failed', 'error');
             return; // Don't continue if UI setup failed

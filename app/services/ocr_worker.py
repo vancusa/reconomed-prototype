@@ -2,24 +2,21 @@
 
 import time
 from app.database import SessionLocal
-from app.models import Upload
-from app.routers.documents import _run_ocr_for_upload
+from app.services.upload_processing import UploadProcessingService
+
+svc = UploadProcessingService(max_attempts=3, stale_timeout_seconds=600)
 
 def background_ocr_worker():
     while True:
         time.sleep(2)
         db = SessionLocal()
         try:
-            upload = (
-                db.query(Upload)
-                .filter(Upload.ocr_status == "queued")
-                .order_by(Upload.uploaded_at.asc())
-                .first()
-            )
+            # optional: periodically recover stale jobs
+            svc.recover_stale_jobs(db)
+
+            upload = svc.claim_next(db)  # claims globally; later you can scope per clinic
             if upload:
-                upload.ocr_status = "processing"
-                db.commit()
-                _run_ocr_for_upload(upload, db)
+                svc.process_upload(db, upload_id=upload.id)
         except Exception as e:
             print("Background OCR error:", e)
         finally:
