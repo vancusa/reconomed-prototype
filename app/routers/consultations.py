@@ -15,8 +15,11 @@ from app.database import get_db
 from app.auth import get_user_from_header
 from app.models import Consultation, User, Patient, GDPRAuditLog, Document
 from app.schemas import (
-    ConsultationStart, ConsultationAutoSave, ConsultationCreate, 
-    ConsultationUpdate, ConsultationResponse, ConsultationListItem
+    ConsultationStart, ConsultationAutoSave, ConsultationCreate,
+    ConsultationUpdate, ConsultationResponse, ConsultationListItem,
+    ConsultationCountsResponse, ConsultationTodayStatsResponse,
+    ConsultationAudioUploadResponse, ConsultationAudioProcessResponse,
+    ConsultationTranscriptResponse, ApiMessageResponse
 )
 from app.services.template_service import TemplateService
 from app.services.audio_service import AudioTranscriptionService
@@ -38,8 +41,11 @@ llm_service = LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
 #--------------
 # Get counts
 #------------------
-@router.get("/counts")
-async def get_consultation_counts(request:Request,db: Session = Depends(get_db)):
+@router.get("/counts", response_model=ConsultationCountsResponse)
+async def get_consultation_counts(
+    request: Request,
+    db: Session = Depends(get_db),
+)-> ConsultationCountsResponse:
     """Get consultation counts for tab badges"""
     # Get demo doctor
     current_user = get_user_from_header(db, request)
@@ -61,11 +67,11 @@ async def get_consultation_counts(request:Request,db: Session = Depends(get_db))
         Consultation.status == "completed",
         Consultation.is_signed == False
     ).count()
-    return {
-        "active_consultations": active_count,
-        "discharge_ready": discharge_ready_count,
-        "review_pending": review_pending_count
-    }
+    return ConsultationCountsResponse(
+        active_consultations=active_count,
+        discharge_ready=discharge_ready_count,
+        review_pending=review_pending_count,
+    )
 
 
 # ----------------------------
@@ -76,7 +82,7 @@ async def start_consultation(
     data: ConsultationStart,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """
     Start new consultation - creates draft with patient and specialty.
     Called from: "Add New Consult" button or consultation search flow.
@@ -145,7 +151,7 @@ async def auto_save_consultation(
     data: ConsultationAutoSave,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """
     Auto-save consultation data every 60 seconds from frontend.
     Updates structured_data, audio fields, and last_autosave_at timestamp.
@@ -194,7 +200,7 @@ async def update_consultation_specialty(
     specialty: str,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """
     Change specialty mid-consultation.
     Validates doctor has access to new specialty.
@@ -252,7 +258,7 @@ async def update_consultation_status(
     status: str,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """
     Update consultation status: draft → in_progress → completed
     Validates status transitions.
@@ -325,7 +331,7 @@ async def update_consultation_status(
 async def get_draft_consultations(
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> List[ConsultationListItem]:
     """
     Get all draft consultations for current doctor.
     Used for "Resume Draft" functionality.
@@ -345,12 +351,12 @@ async def get_draft_consultations(
 # ----------------------------
 # Cancel Consultation (Soft Delete)
 # ----------------------------
-@router.delete("/{consultation_id}/cancel")
+@router.delete("/{consultation_id}/cancel", response_model=ApiMessageResponse)
 async def cancel_consultation(
     consultation_id: str,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ApiMessageResponse:
     """
     Cancel consultation (soft delete - sets status to cancelled).
     Only allowed for draft/in_progress consultations.
@@ -392,7 +398,8 @@ async def cancel_consultation(
     db.add(audit_log)
     db.commit()
     
-    return {"message": "Consultation cancelled successfully"}
+    return ApiMessageResponse(message="Consultation cancelled successfully")
+
 
 # ----------------------------
 # Get Patient History for Split View
@@ -479,7 +486,7 @@ async def create_consultation(
     consultation_data: ConsultationCreate,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """Legacy endpoint - use /start instead"""
     current_user = get_user_from_header(db, request)
     
@@ -518,7 +525,7 @@ async def get_consultations(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
-):
+)-> List[ConsultationResponse]:
     """Get consultations with optional filters"""
     current_user = get_user_from_header(db, request)
     
@@ -543,7 +550,7 @@ async def get_consultation(
     consultation_id: str,
     request:Request,
     db: Session = Depends(get_db),
-):
+)-> ConsultationResponse:
     """Get specific consultation"""
     current_user = get_user_from_header(db, request)
     
@@ -563,7 +570,7 @@ async def update_consultation(
     consultation_data: ConsultationUpdate,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """Update consultation - legacy endpoint"""
     current_user = get_user_from_header(db, request)
     
@@ -596,8 +603,11 @@ async def update_consultation(
     
     return consultation
 
-@router.get("/today/stats")
-async def get_today_stats(request:Request, db: Session = Depends(get_db)):
+@router.get("/today/stats", response_model=ConsultationTodayStatsResponse)
+async def get_today_stats(
+    request: Request,
+    db: Session = Depends(get_db),
+)-> ConsultationTodayStatsResponse:
     """Get today's consultation statistics"""
     current_user = get_user_from_header(db, request)
     
@@ -609,7 +619,8 @@ async def get_today_stats(request:Request, db: Session = Depends(get_db)):
         func.date(Consultation.consultation_date) == today
     ).distinct().count()
     
-    return {"patients_today": patients_today}
+    return ConsultationTodayStatsResponse(patients_today=patients_today)
+
 
 
 @router.get("/templates/{specialty}")
@@ -625,13 +636,13 @@ async def get_consultation_template(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/{consultation_id}/pre-fill")
+@router.post("/{consultation_id}/pre-fill", response_model=ConsultationResponse)
 async def pre_fill_consultation(
     consultation_id: str,
     request:Request,
     selected_documents: Optional[List[str]] = None,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """
     Pre-fill consultation with patient history.
     Called after doctor selects which documents to include.
@@ -665,13 +676,13 @@ async def pre_fill_consultation(
     
     return consultation
     
-@router.post("/{consultation_id}/audio/upload")
+@router.post("/{consultation_id}/audio/upload", response_model=ConsultationAudioUploadResponse)
 async def upload_consultation_audio(
     consultation_id: str,
     request:Request,
     audio_file: UploadFile = File(...),
     db: Session = Depends(get_db)
-):
+)-> ConsultationAudioUploadResponse:
     """
     Upload audio file for consultation.
     Stores file temporarily for processing.
@@ -728,18 +739,18 @@ async def upload_consultation_audio(
     
     db.commit()
     
-    return {
-        "message": "Audio uploaded successfully",
-        "audio_file_path": str(audio_path),
-        "audio_duration_seconds": audio_duration
-    }
+    return ConsultationAudioUploadResponse(
+        message="Audio uploaded successfully",
+        audio_file_path=str(audio_path),
+        audio_duration_seconds=audio_duration,
+    )
 
-@router.post("/{consultation_id}/audio/process")
+@router.post("/{consultation_id}/audio/process", response_model=ConsultationAudioProcessResponse)
 async def process_consultation_audio(
     consultation_id: str,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationAudioProcessResponse:
     """
     Process uploaded audio: transcribe and extract fields.
     This is the main endpoint called when doctor clicks "End Recording".
@@ -840,12 +851,12 @@ async def process_consultation_audio(
         db.add(audit_log)
         db.commit()
         
-        return {
-            "message": "Audio processed successfully",
-            "transcript": transcript,
-            "extracted_data": merged_data,
-            "audio_deleted": True
-        }
+        return ConsultationAudioProcessResponse(
+            message="Audio processed successfully",
+            transcript=transcript,
+            extracted_data=merged_data,
+            audio_deleted=True,
+        )
         
     except Exception as e:
         app_logger.error(f"Audio processing failed for consultation {consultation_id}: {str(e)}")
@@ -900,12 +911,12 @@ def _deep_merge_with_confidence(
     
     return merged
 
-@router.get("/{consultation_id}/audio/transcript")
+@router.get("/{consultation_id}/audio/transcript", response_model=ConsultationTranscriptResponse)
 async def get_consultation_transcript(
     consultation_id: str,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationTranscriptResponse:
     """Get audio transcript for consultation (for review/editing)"""
     current_user = get_user_from_header(db, request)
     
@@ -917,8 +928,8 @@ async def get_consultation_transcript(
     if not consultation:
         raise HTTPException(status_code=404, detail="Consultation not found")
     
-    return {
-        "consultation_id": consultation_id,
-        "transcript": consultation.audio_transcript,
-        "duration_seconds": consultation.audio_duration_seconds
-    }
+    return ConsultationTranscriptResponse(
+        consultation_id=consultation_id,
+        transcript=consultation.audio_transcript,
+        duration_seconds=consultation.audio_duration_seconds,
+    )

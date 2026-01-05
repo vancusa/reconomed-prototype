@@ -6,14 +6,7 @@ import { DocumentManager } from './documents.js';
 import { ConsultationManager } from './consultations.js';
 import { showLoading, hideLoading, showToast, showModal, hideModal} from './ui.js';
 import { startLiveClock } from './utils.js';
-//import { initDocumentTabs } from './document-manager.js';
 import { ClinicManager } from './clinics.js';   
-
-//import { initConsultationTabs } from './consultations.js';
-//import { loadPatientDocuments, renderDocuments } from './document-manager.js';
-//import { handleFileSelect, setupUploadArea } from './upload-handler.js';
-//import { compressImage } from './image-compression.js';
-
 
 // =========================================================================
 // API CONFIGURATION 
@@ -26,7 +19,7 @@ const API_CONFIG = {
         auth: '/auth/',
         clinics:'/clinics/',
         consultations: '/consultations/',
-        //clinicConsultations: '/:clinicId/consultations/',
+        consultationCounts: '/consultations/counts',
         dashboard: '/dashboard/',
         documents: '/documents/', 
         patients: '/patients/',
@@ -225,9 +218,9 @@ class ReconoMedApp {
             console.debug(response);
             if (response.ok) {
                 const counts = await response.json();
-                document.getElementById('active-consultations').textContent = counts.active_consultations || 0;
-                document.getElementById('review-pending').textContent = counts.review_pending || 0;
-                document.getElementById('discharge-ready').textContent = counts.discharge_ready || 0;
+                document.getElementById('active-consultations').textContent = counts.active_consultations ?? 0;
+                document.getElementById('review-pending').textContent = counts.review_pending ?? 0;
+                document.getElementById('discharge-ready').textContent = counts.discharge_ready ?? 0;
             }
         } catch (err) {
             console.error('Failed to load consultation counts:', err);

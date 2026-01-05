@@ -42,6 +42,16 @@ class PaginatedPatientsResponse(BaseModel):
     has_next: bool
     has_prev: bool
 
+class ConsentStatusResponse(BaseModel):
+    message: str
+    consent_status: Dict[str, Any]
+
+
+class ConsentHistoryItem(BaseModel):
+    timestamp: str
+    action: str
+    details: Dict[str, Any]
+
 # ----------------------------
 # User Schemas
 # ----------------------------
@@ -63,6 +73,15 @@ class UserResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+class CurrentUserInfoResponse(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    role: str
+    specialties: Optional[List[str]] = []
+    clinic_id: str
+    clinic_name: Optional[str] = None
 
 # ----------------------------
 # Consultation Schemas
@@ -120,6 +139,38 @@ class ConsultationResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+class ConsultationCountsResponse(BaseModel):
+    active_consultations: int
+    discharge_ready: int
+    review_pending: int
+
+
+class ConsultationTodayStatsResponse(BaseModel):
+    patients_today: int
+
+
+class ConsultationAudioUploadResponse(BaseModel):
+    message: str
+    audio_file_path: str
+    audio_duration_seconds: Optional[int]
+
+
+class ConsultationAudioProcessResponse(BaseModel):
+    message: str
+    transcript: str
+    extracted_data: Dict[str, Any]
+    audio_deleted: bool
+
+
+class ConsultationTranscriptResponse(BaseModel):
+    consultation_id: str
+    transcript: Optional[str]
+    duration_seconds: Optional[int]
+
+
+class ApiMessageResponse(BaseModel):
+    message: str
 
 class ConsultationListItem(BaseModel):
     """Lightweight consultation for lists"""
@@ -348,7 +399,23 @@ class UploadRejectResponse(BaseModel):
     deleted: bool
     upload_id: str
 
+class UploadCardResponse(BaseModel):
+    """UI-friendly upload card data."""
+    id: str
+    clinic_id: str
+    filename: str
+    file_size: Optional[int]
+    document_type: Optional[str]
+    job_state: str
+    patient_id: Optional[str]
+    uploaded_at: datetime
+    expires_at: Optional[datetime] = None
+    preview_url: Optional[str]
+    ocr_snippet: Optional[str]
 
+    model_config = ConfigDict(from_attributes=True)
+
+    
 # ----------------------------
 # Queue/Worker (Internal)
 # ----------------------------

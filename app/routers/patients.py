@@ -9,7 +9,10 @@ import uuid
 from app.database import get_db
 from app.auth import get_current_user, get_any_staff, get_user_from_header
 from app.models import Patient, User, GDPRAuditLog
-from app.schemas import PatientCreate, PatientUpdate, PatientResponse, PaginatedPatientsResponse
+from app.schemas import (
+    PatientCreate, PatientUpdate, PatientResponse, PaginatedPatientsResponse,
+    ConsentStatusResponse, ConsentHistoryItem
+)
 
 from app.utils.romanian_validation import (
     validate_cnp, extract_birth_date_from_cnp, extract_gender_from_cnp,
@@ -465,13 +468,13 @@ async def validate_cnp_endpoint(cnp: str):
         "gender": extract_gender_from_cnp(cnp)
     }
 
-@router.post("/{patient_id}/gdpr/grant-consent")
+@router.post("/{patient_id}/gdpr/grant-consent", response_model=ConsentStatusResponse)
 async def grant_patient_consent(
     patient_id: str,
     consent_data: dict,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsentStatusResponse:
     """Grant specific GDPR consent for patient"""
     
     # Get demo doctor for testing
@@ -525,18 +528,18 @@ async def grant_patient_consent(
     db.add(audit_log)
     db.commit()
     
-    return {
-        "message": f"Consent '{consent_type}' granted successfully",
-        "consent_status": patient.gdpr_consents[consent_type]
-    }
+    return ConsentStatusResponse(
+        message=f"Consent '{consent_type}' granted successfully",
+        consent_status=patient.gdpr_consents[consent_type],
+    )
 
-@router.post("/{patient_id}/gdpr/renew-consent")
+@router.post("/{patient_id}/gdpr/renew-consent", response_model=ConsentStatusResponse)
 async def renew_patient_consent(
     patient_id: str,
     consent_data: dict,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsentStatusResponse:
     """Renew withdrawn consent for patient"""
     
     # Get demo doctor
@@ -587,18 +590,18 @@ async def renew_patient_consent(
     db.add(audit_log)
     db.commit()
     
-    return {
-        "message": f"Consent '{consent_type}' renewed successfully",
-        "consent_status": patient.gdpr_consents[consent_type]
-    }
+    return ConsentStatusResponse(
+        message=f"Consent '{consent_type}' renewed successfully",
+        consent_status=patient.gdpr_consents[consent_type],
+    )
 
-@router.post("/{patient_id}/gdpr/withdraw-consent")
+@router.post("/{patient_id}/gdpr/withdraw-consent", response_model=ConsentStatusResponse)
 async def withdraw_patient_consent(
     patient_id: str,
     withdrawal_data: dict, 
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsentStatusResponse:
     """Withdraw specific GDPR consent for patient"""
     
     # Get demo doctor (same as other endpoints)
@@ -675,17 +678,17 @@ async def withdraw_patient_consent(
 
     #db.commit()
     
-    return {
-        "message": f"Consent '{consent_type}' withdrawn successfully",
-        "consent_status": patient.gdpr_consents[consent_type]
-    }
+    return ConsentStatusResponse(
+        message=f"Consent '{consent_type}' withdrawn successfully",
+        consent_status=patient.gdpr_consents[consent_type],
+    )
 
-@router.get("/{patient_id}/gdpr/consent-history")
+@router.get("/{patient_id}/gdpr/consent-history", response_model=List[ConsentHistoryItem])
 async def get_consent_history(
     patient_id: str,
     request:Request,
     db: Session = Depends(get_db)
-):
+)-> List[ConsentHistoryItem]:
     """Get audit log of all consent changes"""
     
     # Get demo doctor
@@ -708,10 +711,10 @@ async def get_consent_history(
     ).order_by(GDPRAuditLog.created_at.desc()).all()
     
     return [
-        {
-            "timestamp": log.created_at.isoformat(),
-            "action": log.action,
-            "details": log.details
-        }
+        ConsentHistoryItem(
+            timestamp=log.created_at.isoformat(),
+            action=log.action,
+            details=log.details or {},
+        )
         for log in history
     ]

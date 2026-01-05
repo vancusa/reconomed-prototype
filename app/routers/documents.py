@@ -93,6 +93,24 @@ def _make_upload_list_item(db: Session, upload: Upload) -> UploadListItem:
         ocr_snippet=snippet,
     )
 
+def _make_upload_card(db: Session, upload: Upload) -> UploadCardResponse:
+    """
+    Build a UI card payload for an upload, mirroring list data.
+    """
+    list_item = _make_upload_list_item(db, upload)
+    return UploadCardResponse(
+        id=list_item.id,
+        clinic_id=list_item.clinic_id,
+        filename=list_item.filename,
+        file_size=list_item.file_size,
+        document_type=list_item.document_type,
+        job_state=list_item.job_state,
+        patient_id=list_item.patient_id,
+        uploaded_at=list_item.uploaded_at,
+        expires_at=list_item.expires_at,
+        preview_url=list_item.preview_url,
+        ocr_snippet=list_item.ocr_snippet,
+    )
 
 def _make_upload_detail(db: Session, upload: Upload) -> UploadDetailResponse:
     """
@@ -353,17 +371,17 @@ def complete_upload_assign_and_approve(
     upload.patient_id = payload.patient_id
     doc.patient_id = payload.patient_id
 
+    # Mark validation as approved
+    doc.validation_status = ValidationStatus.APPROVED.value
+    doc.validated_by = user.email
+    doc.validated_at = datetime.utcnow()
+
     if payload.document_type:
         upload.document_type = payload.document_type
         doc.document_type = payload.document_type
 
     if payload.edited_ocr_text is not None:
         doc.ocr_text = payload.edited_ocr_text
-
-    # Approve validation (human layer)
-    doc.validation_status = ValidationStatus.APPROVED.value
-    doc.validated_by = user.email
-    doc.validated_at = datetime.utcnow()
 
     db.commit()
     db.refresh(upload)

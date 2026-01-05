@@ -1012,9 +1012,9 @@ class ConsultationManager {
       if (!res.ok) throw new Error('Failed to fetch counts');
       const counts = await res.json();
 
-      this._setCount('active-consultations', counts.active || 0);
-      this._setCount('review-pending', counts.review_pending || 0);
-      this._setCount('discharge-ready', counts.discharge_ready || 0);
+      this._setCount('active-consultations', counts.active_consultations ?? 0);
+      this._setCount('review-pending', counts.review_pending ?? 0);
+      this._setCount('discharge-ready', counts.discharge_ready ?? 0);
     } catch (err) {
       console.warn('updateCounters error', err);
       // gracefully fallback to zero

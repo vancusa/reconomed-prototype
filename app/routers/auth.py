@@ -12,6 +12,7 @@ from app.auth import (
 )
 from app.models import User, Clinic
 from pydantic import BaseModel, EmailStr
+from app.schemas import CurrentUserInfoResponse
 
 router = APIRouter(
     #prefix="/auth",
@@ -180,16 +181,20 @@ async def change_password(
     
     return {"message": "Password updated successfully"}
 
-@router.get("/me")
-async def get_current_user_info(request: Request, db: Session = Depends(get_db)):
+@router.get("/me", response_model=CurrentUserInfoResponse)
+async def get_current_user_info(
+    request: Request,
+    db: Session = Depends(get_db),
+)-> CurrentUserInfoResponse:
     """Get current authenticated user info"""
     user = get_user_from_header(db, request)
         
-    return {
-        "id": user.id,
-        "email": user.email,
-        "full_name": user.full_name,
-        "role": user.role,
-        "specialties": user.specialties or ["internal_medicine", "cardiology", "respiratory", "gynecology"],
-        "clinic_id": user.clinic_id
-    }
+    return CurrentUserInfoResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        specialties=user.specialties or ["internal_medicine", "cardiology", "respiratory", "gynecology"],
+        clinic_id=user.clinic_id,
+        clinic_name=getattr(user, "clinic", None).name if getattr(user, "clinic", None) else None,
+    )
