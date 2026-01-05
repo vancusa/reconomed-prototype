@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Upload, Document, Patient, User
+from app.auth import get_user_from_header
 
 from app.schemas import (
     # Enums
@@ -60,22 +61,6 @@ processing_svc = UploadProcessingService(max_attempts=3, stale_timeout_seconds=6
 # ----------------------------
 # Helpers
 # ----------------------------
-
-def _get_current_user(db: Session, request: Request) -> User:
-    """
-    Resolve current user by X-User email.
-    For MVP: fail hard if missing; do not silently fall back to demo user.
-    """
-    user_email = request.headers.get("X-User")
-    if not user_email:
-        raise HTTPException(status_code=400, detail="Missing X-User header")
-
-    user = db.query(User).filter(User.email == user_email).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="User not found")
-
-    return user
-
 
 def _preview_url(upload_id: str) -> str:
     """
@@ -170,7 +155,7 @@ async def upload_files(
     - Sets job_state=queued immediately (server-side auto OCR)
     - Returns UploadListItem cards for UI rendering
     """
-    user = _get_current_user(db, request)
+    user = get_user_from_header(db, request)
 
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -231,7 +216,7 @@ def list_uploads_by_tab(
     - completed: job_state == ocr_done AND patient_id not null AND document.validation_status == approved
     - error: job_state == ocr_failed
     """
-    user = _get_current_user(db, request)
+    user = get_user_from_header(db, request)
 
     q = db.query(Upload).filter(Upload.clinic_id == user.clinic_id)
 
@@ -283,7 +268,7 @@ def get_upload_detail(
     Fetch upload details + document summary.
     Used by the Validation screen when opening a card.
     """
-    user = _get_current_user(db, request)
+    user = get_user_from_header(db, request)
 
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
@@ -303,7 +288,7 @@ def get_upload_ocr_text(
     Fetch full OCR text for an upload.
     This is separate from list endpoints to keep list payloads small.
     """
-    user = _get_current_user(db, request)
+    user = get_user_from_header(db, request)
 
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
@@ -342,7 +327,7 @@ def complete_upload_assign_and_approve(
 
     This is the only doctor-facing "complete" action required for MVP.
     """
-    user = _get_current_user(db, request)
+    user = get_user_from_header(db, request)
 
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
@@ -397,7 +382,7 @@ def reject_and_delete_upload(
     - Immediate deletion of Upload + linked Document + file on disk.
     No reason/motive required in v1.
     """
-    user = _get_current_user(db, request)
+    user = get_user_from_header(db, request)
 
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
@@ -434,7 +419,7 @@ def download_upload_file(
     Download the original uploaded file.
     Useful for previewing in UI (PDF) and for debugging OCR.
     """
-    user = _get_current_user(db, request)
+    user = get_user_from_header(db, request)
 
     upload = db.query(Upload).filter(Upload.id == upload_id).first()
     if not upload:
@@ -466,7 +451,7 @@ def run_next_ocr_job_for_clinic(
     - Claims next queued job for the current clinic and processes it.
     In production, the background worker should handle this automatically.
     """
-    user = _get_current_user(db, request)
+    user = get_user_from_header(db, request)
 
     # Optional stale recovery for this clinic
     processing_svc.recover_stale_jobs(db, clinic_id=user.clinic_id)

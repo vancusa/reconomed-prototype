@@ -1,5 +1,5 @@
 """Enhanced patient management with Romanian fields and GDPR compliance"""
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
 from sqlalchemy.orm.attributes import flag_modified
@@ -7,7 +7,7 @@ from typing import List, Optional
 import uuid
 
 from app.database import get_db
-from app.auth import get_current_user, get_any_staff
+from app.auth import get_current_user, get_any_staff, get_user_from_header
 from app.models import Patient, User, GDPRAuditLog
 from app.schemas import PatientCreate, PatientUpdate, PatientResponse, PaginatedPatientsResponse
 
@@ -28,17 +28,11 @@ router = APIRouter(
 async def create_patient(
     patient_data: PatientCreate,
     #current_user: User = Depends(get_current_user), #This is commented out for now
+    request: Request,
     db: Session = Depends(get_db)
 ):
-    #TEMPORAY CURRENT USER DEPENDANCE
-    # Get demo doctor for testing
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-
-    #TEMPORARY OUTPUT OF ERRORS:
-    print(f"Received patient data: {patient_data}")
-
+    current_user = get_user_from_header(db, request)
+  
     """Create new patient with Romanian validation and GDPR compliance"""
     
     # Validate Romanian-specific fields
@@ -152,75 +146,15 @@ async def create_patient(
         created_at=new_patient.created_at
     )
 
-""" OLD ROUTE
-@router.get("/", response_model=List[PatientResponse])
-async def get_patients(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=1000),
-    search: Optional[str] = Query(None, min_length=2, max_length=100),
-    #current_user: User = Depends(get_current_user), #This is commented out for now
-    db: Session = Depends(get_db)
-):
-    #TEMPORAY CURRENT USER DEPENDENCE
-    # Get demo doctor for testing
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-
-    #Get patients for current user's clinic with search capability
-    
-    # Base query - clinic isolation
-    query = db.query(Patient).filter(Patient.clinic_id == current_user.clinic_id)
-    
-    # Add search filter
-    if search:
-        search_term = f"%{search.strip().lower()}%"
-        query = query.filter(
-            db.or_(
-                Patient.family_name.ilike(search_term),
-                Patient.given_name.ilike(search_term),
-                Patient.cnp.like(f"%{search.strip()}%"),
-                Patient.phone.like(f"%{search.strip()}%")
-            )
-        )
-    
-    # Apply pagination and ordering
-    patients = query.order_by(Patient.family_name, Patient.given_name).offset(skip).limit(limit).all()
-    
-    return [
-        PatientResponse(
-            id=patient.id,
-            clinic_id=patient.clinic_id,
-            family_name=patient.family_name,
-            given_name=patient.given_name,
-            birth_date=patient.birth_date,
-            cnp=patient.cnp,
-            insurance_number=patient.insurance_number,
-            insurance_house=patient.insurance_house,
-            phone=patient.phone,
-            email=patient.email,
-            address=patient.address,
-            gdpr_consents=patient.gdpr_consents,
-            created_at=patient.created_at
-        )
-        for patient in patients
-    ]
-"""
 
 @router.get("/{patient_id}", response_model=PatientResponse)
 async def get_patient(
     patient_id: str,
-    #current_user: User = Depends(get_current_user), #This is commented out for now
+    request:Request,
     db: Session = Depends(get_db)
 ):
-    #TEMPORAY CURRENT USER DEPENDANCE
-    # Get demo doctor for testing
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-
-
     """Get specific patient with clinic isolation and GDPR audit"""
+    current_user = get_user_from_header(db, request)
     
     patient = db.query(Patient).filter(
         Patient.id == patient_id,
@@ -278,14 +212,13 @@ async def get_patient(
 async def update_patient(
     patient_id: str, 
     patient_data: PatientUpdate, 
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Update patient information"""
     # Get demo doctor for testing
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-    
+    current_user = get_user_from_header(db, request)
+     
     # Find patient with clinic isolation
     patient = db.query(Patient).filter(
         Patient.id == patient_id,
@@ -536,14 +469,13 @@ async def validate_cnp_endpoint(cnp: str):
 async def grant_patient_consent(
     patient_id: str,
     consent_data: dict,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Grant specific GDPR consent for patient"""
     
     # Get demo doctor for testing
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
+    current_user = get_user_from_header(db, request)
     
     patient = db.query(Patient).filter(
         Patient.id == patient_id,
@@ -602,14 +534,13 @@ async def grant_patient_consent(
 async def renew_patient_consent(
     patient_id: str,
     consent_data: dict,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Renew withdrawn consent for patient"""
     
     # Get demo doctor
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
+    current_user = get_user_from_header(db, request)
     
     patient = db.query(Patient).filter(
         Patient.id == patient_id,
@@ -665,14 +596,13 @@ async def renew_patient_consent(
 async def withdraw_patient_consent(
     patient_id: str,
     withdrawal_data: dict, 
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Withdraw specific GDPR consent for patient"""
     
     # Get demo doctor (same as other endpoints)
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
+    current_user = get_user_from_header(db, request)
     
     patient = db.query(Patient).filter(
         Patient.id == patient_id,
@@ -753,14 +683,13 @@ async def withdraw_patient_consent(
 @router.get("/{patient_id}/gdpr/consent-history")
 async def get_consent_history(
     patient_id: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Get audit log of all consent changes"""
     
     # Get demo doctor
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
+    current_user = get_user_from_header(db, request)
     
     # Verify patient exists and belongs to clinic
     patient = db.query(Patient).filter(

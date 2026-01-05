@@ -1,10 +1,10 @@
 """Clinic management endpoints"""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict
 
 from app.database import get_db
-from app.auth import get_admin, get_current_user
+from app.auth import get_admin,  get_user_from_header
 from app.models import Clinic, User, Patient
 from app.schemas import ClinicCreate, ClinicResponse
 
@@ -75,18 +75,9 @@ DEFAULT_RETENTION_POLICY={
 }
 
 @router.get("/my-clinic", response_model=ClinicResponse, summary="Get current user's clinic info with defaults")
-async def get_my_clinic(db: Session = Depends(get_db)):
+async def get_my_clinic(request: Request, db: Session = Depends(get_db)):
     """Get current user's clinic information including consent templates and retention policies, return defaults if not any"""
-    
-    # TODO REPLACE LATER WITH PROPER AUTHENTICATION - THE FUNCTION IS IN auth.py and is called get_current_active_user
-    # TODO: current_user: User = Depends(get_current_active_user)
-    # TODO clinic_service: ClinicService = Depends(get_clinic_service)
-
-    # Get demo doctor for testing
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-    
+    current_user = get_user_from_header(db, request)
     # Get clinic
     clinic = db.query(Clinic).filter(Clinic.id == current_user.clinic_id).first()
     if not clinic:
@@ -94,8 +85,6 @@ async def get_my_clinic(db: Session = Depends(get_db)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Clinic not found"
         )
-    
-    # KEEP from here
 
     # If clinic doesn't have consent templates, use defaults
     gdpr_templates = clinic.gdpr_templates if hasattr(clinic, 'gdpr_templates') and clinic.gdpr_templates else DEFAULT_CONSENT_TEMPLATES

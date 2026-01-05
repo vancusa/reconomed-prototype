@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 import os
@@ -89,6 +89,24 @@ get_doctor = require_role(["doctor", "admin"])
 get_helper = require_role(["helper", "doctor", "admin"])
 get_admin = require_role(["admin"])
 get_any_staff = require_role(["doctor", "helper", "admin", "billing"])
+
+def get_user_from_header(db: Session, request: Request) -> User:
+    """Resolve current user from the X-User header.
+
+    This helper is used across endpoints that rely on header-based context
+    instead of JWT authentication. It rejects missing headers or unknown
+    users to avoid silently falling back to demo accounts.
+    """
+    user_email = request.headers.get("X-User")
+    if not user_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing X-User header")
+
+    user = db.query(User).filter(User.email == user_email).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User not found")
+
+    return user
+
 
 #TODO - this is needed later, for proper authentication instead of the demo user:
 # In auth.py or dependencies.py

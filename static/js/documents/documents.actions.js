@@ -17,7 +17,7 @@ export const DocumentActions = {
     try {
       const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents,'uploads'), {
         method: 'POST',
-        'X-User': window.app.currentUser.username,
+        headers: {},
         body: formData,
       });
       if (!response.ok) throw new Error('Upload failed');
@@ -87,7 +87,7 @@ export const DocumentActions = {
         const query = `uploads/${encodeURIComponent(id)}/type?document_type=${encodeURIComponent(documentType)}`;
         return fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, query), {
           method: 'PUT',
-          'X-User': window.app.currentUser.username,
+          headers: {}
         });
       });
 

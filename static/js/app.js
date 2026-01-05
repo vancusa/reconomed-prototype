@@ -61,6 +61,45 @@ if (typeof window !== 'undefined') {
   window.API_CONFIG = API_CONFIG;
   window.apiUrl = apiUrl;
 }
+
+// =========================================================================
+// Request helpers: ensure X-User header is present for backend context
+// =========================================================================
+function getStoredUserEmail() {
+  if (typeof window === 'undefined') return null;
+  // Prefer the hydrated app instance
+  if (window.app?.currentUser?.username) return window.app.currentUser.username;
+
+  // Fallback to localStorage (used by login screen)
+  try {
+    const raw = localStorage.getItem('reconomed_user');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed?.username || parsed?.email || null;
+    }
+  } catch (e) {
+    // ignore parsing errors, return null
+  }
+  return null;
+}
+
+function withUserHeader(init = {}) {
+  const headers = new Headers(init.headers || {});
+  const email = getStoredUserEmail();
+
+  if (email && !headers.has('X-User')) {
+    headers.set('X-User', email);
+  }
+
+  return { ...init, headers };
+}
+
+// Patch fetch globally to always include X-User unless already provided
+if (typeof window !== 'undefined' && window.fetch && !window._reconomedFetchPatched) {
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => originalFetch(input, withUserHeader(init));
+  window._reconomedFetchPatched = true;
+}
 // =========================================================================
 // END API CONFIGURATION
 // =========================================================================

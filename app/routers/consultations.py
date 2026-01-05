@@ -1,6 +1,6 @@
 
 """Consultation management endpoints - Phase 4A"""
-from fastapi import APIRouter, Depends, HTTPException, Query,UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query,UploadFile, File, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from typing import List, Optional, Dict, Any
@@ -12,6 +12,7 @@ from pathlib import Path
 import os
 
 from app.database import get_db
+from app.auth import get_user_from_header
 from app.models import Consultation, User, Patient, GDPRAuditLog, Document
 from app.schemas import (
     ConsultationStart, ConsultationAutoSave, ConsultationCreate, 
@@ -34,28 +35,15 @@ app_logger = logging.getLogger("reconomed.app")
 audio_service = AudioTranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
 llm_service = LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
 
-
-# ----------------------------
-# Helper: Get Current User
-# ----------------------------
-def get_current_user(db: Session) -> User:
-    """Get demo doctor for MVP"""
-    user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-    return user
-
 #--------------
 # Get counts
 #------------------
 @router.get("/counts")
-async def get_consultation_counts(db: Session = Depends(get_db)):
+async def get_consultation_counts(request:Request,db: Session = Depends(get_db)):
     """Get consultation counts for tab badges"""
     # Get demo doctor
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-    
+    current_user = get_user_from_header(db, request)
+
     active_count = db.query(Consultation).filter(
         Consultation.clinic_id == current_user.clinic_id,
         Consultation.status == "in_progress"
@@ -86,13 +74,14 @@ async def get_consultation_counts(db: Session = Depends(get_db)):
 @router.post("/start", response_model=ConsultationResponse)
 async def start_consultation(
     data: ConsultationStart,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
     Start new consultation - creates draft with patient and specialty.
     Called from: "Add New Consult" button or consultation search flow.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     # Verify patient exists
     patient = db.query(Patient).filter(
@@ -154,13 +143,14 @@ async def start_consultation(
 async def auto_save_consultation(
     consultation_id: str,
     data: ConsultationAutoSave,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
     Auto-save consultation data every 60 seconds from frontend.
     Updates structured_data, audio fields, and last_autosave_at timestamp.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db,request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -202,13 +192,14 @@ async def auto_save_consultation(
 async def update_consultation_specialty(
     consultation_id: str,
     specialty: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
     Change specialty mid-consultation.
     Validates doctor has access to new specialty.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db,request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -259,13 +250,14 @@ async def update_consultation_specialty(
 async def update_consultation_status(
     consultation_id: str,
     status: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
     Update consultation status: draft → in_progress → completed
     Validates status transitions.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     valid_statuses = ["draft", "in_progress", "completed", "discharged", "cancelled"]
     if status not in valid_statuses:
@@ -331,13 +323,14 @@ async def update_consultation_status(
 # ----------------------------
 @router.get("/drafts", response_model=List[ConsultationListItem])
 async def get_draft_consultations(
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
     Get all draft consultations for current doctor.
     Used for "Resume Draft" functionality.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     drafts = db.query(Consultation).filter(
         Consultation.clinic_id == current_user.clinic_id,
@@ -355,13 +348,14 @@ async def get_draft_consultations(
 @router.delete("/{consultation_id}/cancel")
 async def cancel_consultation(
     consultation_id: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
     Cancel consultation (soft delete - sets status to cancelled).
     Only allowed for draft/in_progress consultations.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -406,6 +400,7 @@ async def cancel_consultation(
 @router.get("/{consultation_id}/patient-history")
 async def get_patient_history_for_consultation(
     consultation_id: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
@@ -413,7 +408,7 @@ async def get_patient_history_for_consultation(
     Used for left panel in Step 2 split view.
     Returns same structure as View Patient Modal's Documents & History tab.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -482,10 +477,11 @@ async def get_patient_history_for_consultation(
 @router.post("/", response_model=ConsultationResponse)
 async def create_consultation(
     consultation_data: ConsultationCreate,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Legacy endpoint - use /start instead"""
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     patient = db.query(Patient).filter(
         Patient.id == consultation_data.patient_id,
@@ -516,14 +512,15 @@ async def create_consultation(
 
 @router.get("/", response_model=List[ConsultationResponse])
 async def get_consultations(
+    request:Request,
     patient_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get consultations with optional filters"""
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     query = db.query(Consultation).filter(
         Consultation.clinic_id == current_user.clinic_id
@@ -544,10 +541,11 @@ async def get_consultations(
 @router.get("/{consultation_id}", response_model=ConsultationResponse)
 async def get_consultation(
     consultation_id: str,
-    db: Session = Depends(get_db)
+    request:Request,
+    db: Session = Depends(get_db),
 ):
     """Get specific consultation"""
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -563,10 +561,11 @@ async def get_consultation(
 async def update_consultation(
     consultation_id: str,
     consultation_data: ConsultationUpdate,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Update consultation - legacy endpoint"""
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -598,9 +597,9 @@ async def update_consultation(
     return consultation
 
 @router.get("/today/stats")
-async def get_today_stats(db: Session = Depends(get_db)):
+async def get_today_stats(request:Request, db: Session = Depends(get_db)):
     """Get today's consultation statistics"""
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     from datetime import date
     today = date.today()
@@ -629,6 +628,7 @@ async def get_consultation_template(
 @router.post("/{consultation_id}/pre-fill")
 async def pre_fill_consultation(
     consultation_id: str,
+    request:Request,
     selected_documents: Optional[List[str]] = None,
     db: Session = Depends(get_db)
 ):
@@ -636,7 +636,7 @@ async def pre_fill_consultation(
     Pre-fill consultation with patient history.
     Called after doctor selects which documents to include.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -668,6 +668,7 @@ async def pre_fill_consultation(
 @router.post("/{consultation_id}/audio/upload")
 async def upload_consultation_audio(
     consultation_id: str,
+    request:Request,
     audio_file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
@@ -675,7 +676,7 @@ async def upload_consultation_audio(
     Upload audio file for consultation.
     Stores file temporarily for processing.
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -736,6 +737,7 @@ async def upload_consultation_audio(
 @router.post("/{consultation_id}/audio/process")
 async def process_consultation_audio(
     consultation_id: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
@@ -749,7 +751,7 @@ async def process_consultation_audio(
     4. Update consultation with extracted data
     5. Delete audio file (GDPR requirement)
     """
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
@@ -901,10 +903,11 @@ def _deep_merge_with_confidence(
 @router.get("/{consultation_id}/audio/transcript")
 async def get_consultation_transcript(
     consultation_id: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Get audio transcript for consultation (for review/editing)"""
-    current_user = get_current_user(db)
+    current_user = get_user_from_header(db, request)
     
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,

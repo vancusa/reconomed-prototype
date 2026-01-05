@@ -1,5 +1,5 @@
 """Authentication endpoints"""
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Form, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
@@ -8,7 +8,7 @@ from typing import Optional
 from app.database import get_db
 from app.auth import (
     verify_password, get_password_hash, create_access_token, 
-    get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
+    get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES, get_user_from_header
 )
 from app.models import User, Clinic
 from pydantic import BaseModel, EmailStr
@@ -181,14 +181,10 @@ async def change_password(
     return {"message": "Password updated successfully"}
 
 @router.get("/me")
-async def get_current_user_info(db: Session = Depends(get_db)):
+async def get_current_user_info(request: Request, db: Session = Depends(get_db)):
     """Get current authenticated user info"""
-    # Get demo doctor for MVP
-    user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
+    user = get_user_from_header(db, request)
+        
     return {
         "id": user.id,
         "email": user.email,
