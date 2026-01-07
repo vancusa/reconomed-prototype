@@ -47,9 +47,15 @@
                 <button class="tab-button" data-tab="validation">
                     Validation <span class="tab-count" id="validation-count">0</span>
                 </button>
+                <button class="tab-button" data-tab="completed">
+                    Completed <span class="tab-count" id="completed-count">0</span>
+                </button>
+                <button class="tab-button" data-tab="error">
+                    Error <span class="tab-count" id="error-count">0</span>
+                </button>
             </div>
 
-            <div class="document-tabs__content">
+             <div class="document-tabs__content">
                 <!-- Unprocessed Tab -->
                 <div id="unprocessed-tab" class="tab-content active">
                     <div class="uploads-toolbar">
@@ -113,14 +119,30 @@
                     </div>
                     <div id="processing-list" class="processing-list"></div>
                 </div>
-
-                <!-- Validation Tab -->
                 <div id="validation-tab" class="tab-content">
                     <div class="validation-summary">
                         <h3><span id="validation-pending">0</span> documents need validation</h3>
                         <p>Review OCR results and approve or correct them</p>
                     </div>
                     <div id="validation-list" class="validation-list"></div>
+                </div>
+
+                <!-- Completed Tab -->
+                <div id="completed-tab" class="tab-content">
+                    <div class="validation-summary">
+                        <h3><span id="completed-total">0</span> documents completed</h3>
+                        <p>These uploads have been assigned and approved</p>
+                    </div>
+                    <div id="completed-list" class="validation-list"></div>
+                </div>
+
+                <!-- Error Tab -->
+                <div id="error-tab" class="tab-content">
+                    <div class="validation-summary">
+                        <h3><span id="error-total">0</span> documents with errors</h3>
+                        <p>These uploads failed OCR; consider deleting or re-uploading</p>
+                    </div>
+                    <div id="error-list" class="validation-list"></div>
                 </div>
             </div>
         </div>
@@ -129,19 +151,41 @@
         <div id="validation-modal" class="validation-modal" style="display: none;">
             <div class="validation-modal__content">
                 <div class="validation-modal__header">
-                    <button id="validation-back" class="back-button">← Back to list</button>
-                    <h3 id="validation-title">Document Validation</h3>
+                    <div class="modal-title">
+                        <h3 id="validation-title">Document Validation</h3>
+                        <p id="validation-filename" class="muted"></p>
+                    </div>
+                    <button id="validation-close" class="back-button">✕</button>
                 </div>
                 <div class="validation-modal__body">
-                    <div class="validation-image">
-                        <img id="validation-preview" src="" alt="Document preview">
+                    <div class="validation-preview">
+                        <a id="validation-preview-link" href="#" target="_blank" rel="noopener" class="btn-secondary">
+                            Open document preview
+                        </a>
                     </div>
                     <div class="validation-form">
-                        <h4>OCR Results - Please verify and correct:</h4>
-                        <div id="validation-fields"></div>
+                        <label for="validation-ocr-text">OCR Text (editable)</label>
+                        <textarea id="validation-ocr-text" rows="8" placeholder="OCR text will appear here"></textarea>
+
+                        <label for="validation-patient-search">Assign to patient</label>
+                        <input id="validation-patient-search" type="search" placeholder="Search patient..." />
+                        <select id="validation-patient-select">
+                            <option value="">Select patient...</option>
+                        </select>
+
+                        <label for="validation-document-type">Document type (optional)</label>
+                        <select id="validation-document-type">
+                            <option value="">Select type...</option>
+                            <option value="lab_result">Lab result</option>
+                            <option value="imagistic_result">Imagistic result</option>
+                            <option value="pharmacy">Pharmacy</option>
+                            <option value="doctors_note">Doctor's note</option>
+                            <option value="discharge">Discharge</option>
+                        </select>
+
                         <div class="validation-actions">
-                            <button id="approve-validation" class="btn-success">Approve & Save</button>
-                            <button id="reject-validation" class="btn-danger">Reject - Manual Entry</button>
+                            <button id="validation-complete" class="btn-success" disabled>Assign patient &amp; complete</button>
+                            <button id="validation-reject" class="btn-danger">Reject</button>
                         </div>
                     </div>
                 </div>

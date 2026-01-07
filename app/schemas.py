@@ -275,37 +275,6 @@ class UploadUpdate(BaseModel):
     patient_id: Optional[str] = None
 
 
-class UploadListItem(BaseModel):
-    """
-    Payload for tab lists (cards). Keep it light.
-    """
-    id: str
-    clinic_id: str
-    filename: str
-    file_size: Optional[int] = None
-    document_type: Optional[str] = None
-
-    job_state: JobState
-    uploaded_at: datetime
-    expires_at: datetime
-
-    # Derived/UX fields
-    patient_id: Optional[str] = None
-    preview_url: Optional[str] = None
-    # Small snippet for list views (optional; keep short)
-    ocr_snippet: Optional[str] = Field(default=None, max_length=500)
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class UploadListResponse(BaseModel):
-    """
-    Standard list wrapper (so you can add counts/paging later).
-    """
-    items: List[UploadListItem]
-    total: int
-
-
 # ----------------------------
 # Document (Internal Artifact) Schemas (reachable via Upload)
 # ----------------------------
@@ -406,15 +375,22 @@ class UploadCardResponse(BaseModel):
     filename: str
     file_size: Optional[int]
     document_type: Optional[str]
-    job_state: str
+    job_state: JobState
     patient_id: Optional[str]
     uploaded_at: datetime
     expires_at: Optional[datetime] = None
     preview_url: Optional[str]
-    ocr_snippet: Optional[str]
+    ocr_snippet: Optional[str]= Field(default=None, max_length=500)
+
 
     model_config = ConfigDict(from_attributes=True)
 
+class UploadListResponse(BaseModel):
+    """
+    Standard list wrapper for tab content.
+    """
+    items: List[UploadCardResponse]
+    total: int
     
 # ----------------------------
 # Queue/Worker (Internal)

@@ -6,13 +6,49 @@ import { showToast } from '../ui.js';
 
 export const DocumentNavigation = {
   currentView: 'grid',
+  activeTab: 'unprocessed',
+  tabs: [],
+  tabCounts: {},
+  contentArea: null,
+  validationModal: null,
+  validationInitialOcrText: '',
+  patientSearchTimeout: null,
 
   /**
    * Initialize tab and event bindings
    */
+  async init() {
+    this.tabs = Array.from(document.querySelectorAll('.document-tabs .tab-button'));
+    this.contentArea = document.querySelector('.document-tabs__content');
+    this.tabCounts = {
+      unprocessed: document.getElementById('unprocessed-count'),
+      processing: document.getElementById('processing-count'),
+      validation: document.getElementById('validation-count'),
+      completed: document.getElementById('completed-count'),
+      error: document.getElementById('error-count'),
+    };
+    // Modal elements
+    this.validationModal = document.getElementById('validation-modal');
+    this.validationOcrField = document.getElementById('validation-ocr-text');
+    this.validationPreviewLink = document.getElementById('validation-preview-link');
+    this.validationPatientSelect = document.getElementById('validation-patient-select');
+    this.validationPatientSearch = document.getElementById('validation-patient-search');
+    this.validationDocumentTypeSelect = document.getElementById('validation-document-type');
+    this.validationFileName = document.getElementById('validation-filename');
+    this.validationCompleteBtn = document.getElementById('validation-complete');
+    this.validationRejectBtn = document.getElementById('validation-reject');
+
+    this.bindUIEvents();
+    await this.switchTab('unprocessed');
+  },
+
+  /**
+   * Initialize tab and modal listeners
+   */
+
   bindUIEvents() {
     // Tab switching
-    document.querySelectorAll('.document-tabs .tab-button').forEach(btn => {
+    this.tabs.forEach(btn => {
       btn.addEventListener('click', () => {
         this.switchTab(btn.dataset.tab);
       });
@@ -35,21 +71,20 @@ export const DocumentNavigation = {
           showToast('Select files and a patient first', 'warning');
           return;
         }
-        await DocumentActions.batchAssign(selected, patientId);
-        await this.refreshUnprocessedList();
+      if (typeof DocumentActions.batchAssign === 'function') {
+          await DocumentActions.batchAssign(selected, patientId);
+          await this.refreshUnprocessedList();
+        }
+        else {
+          showToast('Batch assign not available', 'warning');
+        }
       });
     }
 
     const startOCRBtn = document.getElementById('start-processing');
     if (startOCRBtn) {
       startOCRBtn.addEventListener('click', async () => {
-        const selected = this.getSelectedUploads();
-        if (!selected.length) {
-          showToast('Select files first', 'warning');
-          return;
-        }
-        await DocumentActions.startOCR(selected);
-        await this.refreshUnprocessedList();
+        showToast('Uploads are processed automatically after upload.', 'info');
       });
     }
 
@@ -80,7 +115,7 @@ export const DocumentNavigation = {
         const files = e.dataTransfer.files;
         if (!files.length) return;
         
-        const patientId = window.app?.documents?.currentUploadPatientId || null;
+        const patientId = window.app?.documentManager?.currentUploadPatientId || null;
         await DocumentActions.uploadFiles(files, patientId);
         await this.refreshUnprocessedList();
     });
@@ -97,34 +132,35 @@ export const DocumentNavigation = {
     });
     }
 
-    const approveBtn = document.getElementById('validation-approve');
-    if (approveBtn) {
-      approveBtn.addEventListener('click', () => this.approveValidation());
+    if (this.validationCompleteBtn) {
+      this.validationCompleteBtn.addEventListener('click', () => this.handleCompleteAction());
     }
 
-    const rejectBtn = document.getElementById('validation-reject');
-    if (rejectBtn) {
-      rejectBtn.addEventListener('click', () => this.rejectValidation());
+    if (this.validationRejectBtn) {
+      this.validationRejectBtn.addEventListener('click', () => this.confirmReject());
     }
 
-    setInterval(async () => {
-      const activeTab = document.querySelector('.tab-button.active')?.dataset.tab;
-      if (activeTab === 'processing') {
-        await this.refreshProcessingQueue();
-      }
-      if (activeTab === 'validation') {
-        await this.switchTab('validation');
-      }
-    }, 4000);
+    if (this.validationPatientSelect) {
+      this.validationPatientSelect.addEventListener('change', () => this.updateCompleteButtonState());
+    }
 
+    if (this.validationPatientSearch) {
+      this.validationPatientSearch.addEventListener('input', (e) => this.handlePatientSearch(e.target.value));
+    }
 
     const closeBtn = document.getElementById('validation-close');
     if (closeBtn) {
-      closeBtn.addEventListener('click', () => {
-        document.getElementById('validation-modal').classList.remove('open');
-      });
+      closeBtn.addEventListener('click', () => this.closeValidationModal());
     }
 
+    setInterval(async () => {
+      if (this.activeTab === 'processing') {
+        await this.switchTab('processing');
+      }
+      if (this.activeTab === 'validation') {
+        await this.switchTab('validation');
+      }
+    }, 4000);
   },
 
   /**
@@ -132,7 +168,7 @@ export const DocumentNavigation = {
    */
   async switchTab(tabKey) {
     // 1. UI: activate buttons + tab content
-    document.querySelectorAll('.document-tabs .tab-button').forEach(btn => {
+    this.tabs.forEach(btn => {
       btn.classList.toggle('active', btn.dataset.tab === tabKey);
     });
 
@@ -142,8 +178,7 @@ export const DocumentNavigation = {
 
     // 2. DATA LOADING based on tab
     // Update active tab styling
-    this.tabs.forEach(t => t.classList.remove('active'));
-    this.tabs.find(t => t.dataset.tab === tabKey)?.classList.add('active');
+    this.activeTab = tabKey;
     
     // Load data
     try {
@@ -165,25 +200,32 @@ export const DocumentNavigation = {
     const container = this.contentArea.querySelector(`#${tabKey}-tab`);
     if (!container) return;
     
+    this.updateTabCount(tabKey, uploads?.length || 0);
+
     switch(tabKey) {
       case 'unprocessed':
-        this.renderUploads(uploads);
+        this.renderUploads(uploads|| []);
         break;
       case 'processing':
-        this.renderProcessing(uploads);
+        this.renderProcessing(uploads|| []);
         break;
       case 'validation':
-        this.renderValidation(uploads);
+        this.renderValidation(uploads)|| [];
         break;
       case 'completed':
-        this.renderCompleted(uploads);
+        this.renderCompleted(uploads|| []);
         break;
       case 'error':
-        this.renderErrors(uploads);
+        this.renderErrors(uploads|| []);
         break;
     }
   },
 
+  renderError(tabKey, error) {
+    const container = this.contentArea?.querySelector(`#${tabKey}-tab`);
+    if (!container) return;
+    container.innerHTML = `<div class="error-message">Could not load ${tabKey} uploads. ${error?.message || ''}</div>`;
+  },
 
   /**
    * Toggle view mode (grid / list)
@@ -200,6 +242,27 @@ export const DocumentNavigation = {
     });
   },
 
+  updateTabCount(tabKey, count) {
+    if (this.tabCounts[tabKey]) {
+      this.tabCounts[tabKey].textContent = count;
+    }
+
+    if (tabKey === 'validation') {
+      const pending = document.getElementById('validation-pending');
+      if (pending) pending.textContent = count;
+    }
+
+    if (tabKey === 'completed') {
+      const completed = document.getElementById('completed-total');
+      if (completed) completed.textContent = count;
+    }
+
+    if (tabKey === 'error') {
+      const error = document.getElementById('error-total');
+      if (error) error.textContent = count;
+    }
+  },
+
   /**
    * Get IDs of selected uploads
    */
@@ -214,19 +277,9 @@ export const DocumentNavigation = {
   async refreshUnprocessedList() {
     console.log('refreshUnprocessedList() triggered');
     try {
-        const data = await DocumentActions.fetchTab("unprocessed");
-        console.log('Fetched unprocessed data:', data);
-
-        // Accept both a list and an object with documents key
-        const docs = Array.isArray(data) ? data : data.documents;
-
-        if (docs && docs.length > 0) {
-        console.log('Rendering uploads:', docs);
-        this.renderUploads(docs);
-        } else {
-        console.warn('No unprocessed documents found');
-        this.renderUploads([]); // still clears placeholder if needed
-        }
+        const docs = await DocumentActions.fetchTab("unprocessed");
+        console.log('Fetched unprocessed data:', docs);
+        this.renderUploads(docs || []);
     } catch (err) {
         console.error('refreshUnprocessedList error:', err);
     }
@@ -236,8 +289,9 @@ export const DocumentNavigation = {
     Refreshes the processing queue
   */
   async refreshProcessingQueue() {
-    const uploads = await DocumentActions.fetchProcessingQueue();
-    DocumentNavigation.renderProcessing(uploads);
+    const uploads = await DocumentActions.fetchTab('processing');
+    this.updateTabCount('processing', uploads?.length || 0);
+    this.renderProcessing(uploads || []);
   },
 
   /*
@@ -289,50 +343,30 @@ export const DocumentNavigation = {
     return `Uploaded at ${d.toLocaleDateString()} ${d.toLocaleTimeString(undefined, timeOpts)}`;
   },
 
-  /**
-   * Fetch processing queue (queued + processing uploads)
-   */
-  async fetchProcessingQueue() {
-    console.log('Fetching processing queue...');
-    try {
-      const res = await fetch(
-        apiUrl(API_CONFIG.ENDPOINTS.documents, 'processing-queue')
-      );
-      if (!res.ok) throw new Error('Failed to load processing queue');
-      return await res.json();
-    } catch (err) {
-      console.error('fetchProcessingQueue error:', err);
-      return [];
-    }
-  },
-
   /*
     Helper to standardize status text
   */
  getStatusConfig(context, doc) {
     // context: 'processing' | 'validation' | 'completed'
-    const ocr = doc.ocr_status;
-    const val = doc.validation_status;
+    const state = doc.job_state;
 
     if (context === 'processing') {
-      if (ocr === 'processing') {
+      if (state === 'processing') {
         return { text: 'Processing OCR…', variant: 'info', showDots: true };
       }
-      // queued or pending
       return { text: 'Queued for OCR', variant: 'muted', showDots: true };
     }
 
     if (context === 'validation') {
-      // later you can branch on confidence, etc.
       return { text: 'Ready for validation', variant: 'warning', showDots: false };
     }
 
     if (context === 'completed') {
-      if (val === 'rejected') {
-        return { text: 'Rejected', variant: 'danger', showDots: false };
-      }
-      // default: approved / validated
-      return { text: 'Validated', variant: 'success', showDots: false };
+      return { text: 'Completed', variant: 'success', showDots: false };
+    }
+
+    if (context === 'error') {
+      return { text: 'OCR failed', variant: 'danger', showDots: false };
     }
 
     return { text: null, variant: null, showDots: false };
@@ -345,16 +379,18 @@ export const DocumentNavigation = {
   createDocumentCard(doc, options = {}) {
     const {
       statusConfig = null,   // {text, variant, showDots}
-      showCancel = false,
-      onCancel = null,
       primaryActionLabel = null,
       onPrimaryAction = null,
+      secondaryActionLabel = null,
+      onSecondaryAction = null,
+      onCardClick = null,
     } = options;
 
     const category  = this.getUploadCategory(doc);
     const iconClass = this.getUploadIconClass(category);
-    const label     = this.getUploadLabel(category);
+    const label     = doc.document_type || this.getUploadLabel(category);
     const dateText  = this.formatUploadDate(doc.uploaded_at);
+    const patientText = doc.patient_id ? `Patient assigned` : 'Patient not assigned';
 
     const card = document.createElement('div');
     card.classList.add('upload-card');
@@ -369,6 +405,7 @@ export const DocumentNavigation = {
           <div class="upload-card-meta">
             <div class="upload-card-title">${label}</div>
             <div class="upload-card-date">${dateText}</div>
+            <div class="upload-card-patient">${patientText}</div>
             ${
               statusConfig && statusConfig.text
                 ? `<div class="upload-card-status status-${statusConfig.variant || 'muted'}">
@@ -381,6 +418,11 @@ export const DocumentNavigation = {
                   </div>`
                 : ''
             }
+            ${
+              doc.ocr_snippet
+                ? `<div class="upload-card-snippet">${doc.ocr_snippet}</div>`
+                : ''
+            }
           </div>
         </div>
         <div class="upload-card-actions">
@@ -390,13 +432,17 @@ export const DocumentNavigation = {
               : ''
           }
           ${
-            showCancel
-              ? `<button class="cancel-btn" data-role="cancel">Cancel</button>`
+            secondaryActionLabel
+              ? `<button class="cancel-btn" data-role="secondary">${secondaryActionLabel}</button>`
               : ''
           }
         </div>
       </div>
     `;
+
+    if (typeof onCardClick === 'function') {
+      card.addEventListener('click', () => onCardClick(doc));
+    }
 
     // Actions
     const primaryBtn = card.querySelector('button[data-role="primary"]');
@@ -407,11 +453,11 @@ export const DocumentNavigation = {
       });
     }
 
-    const cancelBtn = card.querySelector('button[data-role="cancel"]');
-    if (cancelBtn && typeof onCancel === 'function') {
-      cancelBtn.addEventListener('click', (e) => {
+    const secondaryBtn = card.querySelector('button[data-role="secondary"]');
+    if (secondaryBtn && typeof onSecondaryAction === 'function') {
+      secondaryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        onCancel(doc, cancelBtn);
+        onSecondaryAction(doc, secondaryBtn);
       });
     }
 
@@ -427,8 +473,6 @@ export const DocumentNavigation = {
     const container = document.getElementById('processing-list');
     const totalEl = document.getElementById('processing-total');
     const countBadge = document.getElementById('processing-count');
-    
-    const self = this;
 
     if (!container) {
       console.log('Processing container not found');
@@ -454,19 +498,7 @@ export const DocumentNavigation = {
       const statusConfig = this.getStatusConfig('processing', doc);
       const card = this.createDocumentCard(doc, {
         statusConfig,
-        showCancel: true,
-        onCancel: async (d) => {
-          const res = await fetch(
-            apiUrl(API_CONFIG.ENDPOINTS.documents, `processing/${d.id}`),
-            { method: 'DELETE' }
-          );
-          if (res.ok) {
-            showToast('Processing canceled', 'success');
-            self.refreshProcessingQueue();
-          } else {
-            showToast('Could not cancel this', 'error');
-          }
-        },
+        onCardClick: () => window.open(doc.preview_url || '#', '_blank')
       });
 
       container.appendChild(card);
@@ -492,6 +524,9 @@ export const DocumentNavigation = {
         statusConfig,
         primaryActionLabel: 'Review',
         onPrimaryAction: (d) => this.openValidationForm(d),
+        secondaryActionLabel: 'Reject',
+        onSecondaryAction: (d) => this.confirmReject(d),
+        onCardClick: (d) => this.openValidationForm(d),
       });
 
       container.appendChild(card);
@@ -499,11 +534,11 @@ export const DocumentNavigation = {
   },
 
   renderCompleted(docs) {
-    const container = document.getElementById('validation-list');
+    const container = document.getElementById('completed-list');
     container.innerHTML = '';
 
     if (!docs.length) {
-      container.innerHTML = '<div class="empty-message">No documents to validate.</div>';
+      container.innerHTML = '<div class="empty-message">No completed documents.</div>';
       return;
     }
 
@@ -512,14 +547,37 @@ export const DocumentNavigation = {
 
       const card = this.createDocumentCard(doc, {
         statusConfig,
-        primaryActionLabel: 'Review',
-        onPrimaryAction: (d) => this.openValidationForm(d),
+        primaryActionLabel: 'Preview',
+        onPrimaryAction: (d) => window.open(d.preview_url || '#', '_blank'),
+        onCardClick: (d) => window.open(d.preview_url || '#', '_blank'),
       });
 
       container.appendChild(card);
     });
   },
 
+  renderErrors(docs) {
+    const container = document.getElementById('error-list');
+    container.innerHTML = '';
+
+    if (!docs.length) {
+      container.innerHTML = '<div class="empty-message">No OCR errors.</div>';
+      return;
+    }
+
+    docs.forEach(doc => {
+      const statusConfig = this.getStatusConfig('error', doc);
+      const card = this.createDocumentCard(doc, {
+        statusConfig,
+        primaryActionLabel: 'Preview',
+        onPrimaryAction: (d) => window.open(d.preview_url || '#', '_blank'),
+        secondaryActionLabel: 'Delete',
+        onSecondaryAction: (d) => this.confirmReject(d),
+        onCardClick: (d) => window.open(d.preview_url || '#', '_blank'),
+      });
+      container.appendChild(card);
+    });
+  },
 
   /**
    * Render uploaded documents in the Unprocessed tab
@@ -535,6 +593,7 @@ export const DocumentNavigation = {
     }
 
     container.innerHTML = '';
+    this.updateTabCount('unprocessed', documents.length);
 
     if (!documents.length) {
       if (empty) empty.style.display = 'block';
@@ -544,7 +603,13 @@ export const DocumentNavigation = {
     if (empty) empty.style.display = 'none';
 
     documents.forEach(doc => {
-      const card = this.createDocumentCard(doc); // no status, no cancel
+      const card = this.createDocumentCard(doc,{
+        onCardClick: () => {
+          if (doc.preview_url) {
+            window.open(doc.preview_url, '_blank');
+          }
+        }
+      });
       container.appendChild(card);
     });
   },
@@ -554,72 +619,198 @@ export const DocumentNavigation = {
    */
   async openValidationForm(upload) {
     try {
-      const res = await fetch(
-        apiUrl(API_CONFIG.ENDPOINTS.documents, `validation/${upload.id}`)
-      );
-      if (!res.ok) throw new Error('Failed to load validation details');
+      const { metadata, ocr, previewUrl } = await DocumentActions.fetchUploadDetails(upload.id);
+      if (!metadata) throw new Error('No details available');
+      if (metadata.job_state && metadata.job_state !== 'ocr_done') {
+        showToast('OCR not finished yet. Check the Processing tab.', 'warning');
+        await this.switchTab('processing');
+        return;
+      }
 
-      const data = await res.json();
+      this.validationInitialOcrText = ocr?.ocr_text || '';
 
-      // SHOW MODAL (you already have a modal component; if not, we add it next)
-      const modal = document.getElementById('validation-modal');
-      const textEl = document.getElementById('ocr-text');
-      const jsonEl = document.getElementById('ocr-json');
+      if (this.validationModal) {
+        this.validationModal.dataset.uploadId = upload.id;
+        this.validationModal.style.display = 'flex';
+        this.validationModal.classList.add('open');
+      }
 
-      if (textEl) textEl.value = data.ocr_text || '';
-      if (jsonEl) jsonEl.value = JSON.stringify(data.extracted_data || {}, null, 2);
+      if (this.validationOcrField) {
+        this.validationOcrField.value = this.validationInitialOcrText;
+      }
+      
+      if (this.validationPreviewLink) {
+        this.validationPreviewLink.href = metadata.preview_url || previewUrl || '#';
+      }
 
-      modal.dataset.uploadId = upload.id;
-      modal.classList.add('open');
+      if (this.validationFileName) {
+        this.validationFileName.textContent = metadata.filename || '';
+      }
+
+      if (this.validationDocumentTypeSelect) {
+        this.validationDocumentTypeSelect.value = metadata.document_type || '';
+      }
+
+      if (this.validationPatientSearch) {
+        this.validationPatientSearch.value = '';
+      }
+
+      await this.populatePatientSelect(metadata.patient_id);
+      this.updateCompleteButtonState();
     } catch (err) {
       console.error('openValidationForm error:', err);
       showToast('Error loading validation data', 'error');
     }
   },
 
-  async approveValidation() {
-    const modal = document.getElementById('validation-modal');
-    const uploadId = modal.dataset.uploadId;
+  async populatePatientSelect(selectedId = null) {
+    if (!this.validationPatientSelect) return;
 
-    const corrected = JSON.parse(document.getElementById('ocr-json').value || '{}');
+    const patientManager = window.app?.patientManager;
+    let patients = patientManager?.patients || [];
 
-    const res = await fetch(
-      apiUrl(API_CONFIG.ENDPOINTS.documents, `validation/${uploadId}/approve`),
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ corrected_fields: corrected })
+    if ((!patients || !patients.length) && patientManager?.fetchPatientsRaw) {
+      const raw = await patientManager.fetchPatientsRaw();
+      patients = raw?.patients || [];
+    }
+
+    const preselected = selectedId || window.app?.documentManager?.currentUploadPatientId || '';
+
+    this.validationPatientSelect.innerHTML = '<option value=\"\">Select patient...</option>';
+    patients.forEach(p => {
+      const fullName = [p.family_name, p.given_name].filter(Boolean).join(' ').trim() || 'Unnamed';
+      const option = document.createElement('option');
+      option.value = p.id;
+      option.textContent = fullName;
+      if (preselected && p.id === preselected) {
+        option.selected = true;
       }
-    );
-
-    if (res.ok) {
-      showToast('Document approved', 'success');
-      modal.classList.remove('open');
-      await this.refreshValidationQueue?.();
-    } else {
-      showToast('Approval failed', 'error');
+      this.validationPatientSelect.appendChild(option);
+    });
+    
+    
+     const hasPreselected = preselected && patients.some(p => p.id === preselected);
+    if (preselected && !hasPreselected && patientManager?.getPatientById) {
+      const patient = await patientManager.getPatientById(preselected);
+      if (patient) {
+        const option = document.createElement('option');
+        option.value = patient.id;
+        option.textContent = [patient.family_name, patient.given_name].filter(Boolean).join(' ').trim() || 'Selected patient';
+        option.selected = true;
+        this.validationPatientSelect.appendChild(option);
+      }
     }
   },
 
-  async rejectValidation() {
-    const modal = document.getElementById('validation-modal');
-    const uploadId = modal.dataset.uploadId;
+  handlePatientSearch(value) {
+    if (!window.app?.patientManager?.searchPatients) return;
+    clearTimeout(this.patientSearchTimeout);
+    this.patientSearchTimeout = setTimeout(async () => {
+      const results = await window.app.patientManager.searchPatients(value || '');
+      this.validationPatientSelect.innerHTML = '<option value=\"\">Select patient...</option>';
+      results.forEach(p => {
+        const fullName = [p.family_name, p.given_name].filter(Boolean).join(' ').trim() || 'Unnamed';
+        const option = document.createElement('option');
+        option.value = p.id;
+        option.textContent = fullName;
+        this.validationPatientSelect.appendChild(option);
+      });
+      this.updateCompleteButtonState();
+    }, 200);
+  },
 
-    const res = await fetch(
-      apiUrl(API_CONFIG.ENDPOINTS.documents, `validation/${uploadId}/reject`),
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: 'Invalid OCR' })
+  updateCompleteButtonState() {
+    if (this.validationCompleteBtn && this.validationPatientSelect) {
+      this.validationCompleteBtn.disabled = !this.validationPatientSelect.value;
+    }
+  },
+
+  closeValidationModal() {
+    if (this.validationModal) {
+      this.validationModal.classList.remove('open');
+      this.validationModal.style.display = 'none';
+      this.validationModal.dataset.uploadId = '';
+    }
+    this.validationInitialOcrText = '';
+    if (this.validationOcrField) this.validationOcrField.value = '';
+    if (this.validationPatientSelect) this.validationPatientSelect.value = '';
+    if (this.validationPatientSearch) this.validationPatientSearch.value = '';
+    this.updateCompleteButtonState();
+  },
+
+ async handleCompleteAction() {
+    if (!this.validationModal) return;
+    const uploadId = this.validationModal.dataset.uploadId;
+    const patientId = this.validationPatientSelect?.value;
+    const editedText = this.validationOcrField?.value || '';
+    const documentType = this.validationDocumentTypeSelect?.value || null;
+
+    if (!patientId) {
+      showToast('Select a patient first', 'warning');
+      return;
+    }
+
+    try {
+      if (this.validationCompleteBtn) {
+        this.validationCompleteBtn.disabled = true;
+        this.validationCompleteBtn.textContent = 'Completing...';
       }
-    );
+      const editedOcrText = editedText !== this.validationInitialOcrText ? editedText : null;
+      await DocumentActions.completeUpload(uploadId, patientId, editedOcrText, documentType);
+      showToast('Completed', 'success');
+      this.closeValidationModal();
+      await this.switchTab('validation');
+      await this.switchTab('completed');
+    } catch (err) {
+      console.error('Complete error', err);
+      if (err.status === 409) {
+        showToast('OCR not finished. Please retry later.', 'warning');
+      } else if (err.status === 404) {
+        showToast('Patient not found. Refresh patient list.', 'error');
+        await this.populatePatientSelect();
+      } else if (err.status === 403) {
+        showToast('Not allowed for this clinic.', 'error');
+      } else {
+        showToast(err.message || 'Could not complete upload', 'error');
+      }
+    } finally {
+      if (this.validationCompleteBtn) {
+        this.validationCompleteBtn.disabled = false;
+        this.validationCompleteBtn.textContent = 'Assign patient & complete';
+      }
+    }
+  },
 
-    if (res.ok) {
-      showToast('Document rejected', 'warning');
-      modal.classList.remove('open');
-      await this.refreshValidationQueue?.();
-    } else {
-      showToast('Rejection failed', 'error');
+  async confirmReject(upload) {
+    const id = upload?.id || this.validationModal?.dataset?.uploadId;
+    if (!id) return;
+    const confirmed = window.confirm('Reject & delete this upload permanently?');
+    if (!confirmed) return;
+
+    try {
+      if (this.validationRejectBtn) {
+        this.validationRejectBtn.disabled = true;
+      }
+      await DocumentActions.rejectUpload(id);
+      showToast('Deleted', 'success');
+      this.closeValidationModal();
+      if (this.activeTab) {
+        await this.switchTab(this.activeTab);
+      } else {
+        await this.switchTab('validation');
+      }
+    } catch (err) {
+      console.error('Reject failed', err);
+      if (err.status === 404) {
+        showToast('Already deleted. Refreshing list.', 'warning');
+        await this.switchTab(this.activeTab || 'validation');
+      } else {
+        showToast('Could not delete, try again', 'error');
+      }
+    } finally {
+      if (this.validationRejectBtn) {
+        this.validationRejectBtn.disabled = false;
+      }
     }
   },
 }

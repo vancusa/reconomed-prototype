@@ -4,6 +4,30 @@
 import { apiUrl, API_CONFIG } from '../app.js';
 import { showToast } from '../ui.js';
 
+function currentUserEmail() {
+  if (typeof window === 'undefined') return null;
+  if (window.app?.currentUser?.username) return window.app.currentUser.username;
+  try {
+    const raw = localStorage.getItem('reconomed_user');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed?.username || parsed?.email || null;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+function withUserHeaders(baseHeaders = {}) {
+  const headers = new Headers(baseHeaders);
+  const email = currentUserEmail();
+  if (email && !headers.has('X-User')) {
+    headers.set('X-User', email);
+  }
+  return headers;
+}
+
 export const DocumentActions = {
   /**
    * Upload one or multiple files (no patient required)
@@ -17,16 +41,13 @@ export const DocumentActions = {
     try {
       const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents,'uploads'), {
         method: 'POST',
-        headers: {},
+        headers: withUserHeaders(),
         body: formData,
       });
       if (!response.ok) throw new Error('Upload failed');
 
       const data = await response.json();
       showToast('Files uploaded successfully', 'success');
-      
-      //start OCR imediatly automatic
-      await this.startOCR(patientId);
       
       return data;
     }
@@ -38,16 +59,14 @@ export const DocumentActions = {
   },
 
   async fetchTab(tab) {
+    const tabParam = encodeURIComponent(tab);
     const response = await fetch(
-      `/api/documents/uploads?tab=${tab}`,
-      {
-        headers: {
-          "X-User": window.app.currentUser.username
-        }
-      }
+      apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads?tab=${tabParam}`),
+      { headers: withUserHeaders() }
     );
     if (!response.ok) throw new Error(`Failed to fetch ${tab} uploads`);
-    return response.json();
+    const data = await response.json();
+    return data?.items || [];
   },
 
   /**
@@ -59,17 +78,22 @@ export const DocumentActions = {
    * @returns {Promise<Object>} Completed document
    */
   async completeUpload(uploadId, patientId, editedOcrText = null, documentType = null) {
-    const response = await fetch(`/api/uploads/${uploadId}/complete`, {
+    const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/complete`), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withUserHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ 
         patient_id: patientId,
         edited_ocr_text: editedOcrText,
         document_type: documentType
       })
     });
-    if (!response.ok) throw new Error('Failed to complete upload');
-    return response.json();
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const err = new Error(data?.detail || 'Failed to complete upload');
+      err.status = response.status;
+      throw err;
+    }
+    return data;
   }, 
 
   /**
@@ -112,11 +136,24 @@ export const DocumentActions = {
    * @returns {Promise<{metadata: Object, ocr: Object, previewUrl: string}>}
    */
   async fetchUploadDetails(uploadId) {
-    const [metadata, ocr] = await Promise.all([
-      fetch(`/api/uploads/${uploadId}`).then(r => r.json()),
-      fetch(`/api/uploads/${uploadId}/ocr`).then(r => r.json())
-    ]);
-    return { metadata, ocr, previewUrl: `/api/uploads/${uploadId}/download` };
+    const detailRes = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`), {
+      headers: withUserHeaders()
+    });
+    if (!detailRes.ok) {
+      const body = await detailRes.json().catch(() => ({}));
+      const err = new Error(body?.detail || 'Failed to load upload detail');
+      err.status = detailRes.status;
+      throw err;
+    }
+
+    const metadata = await detailRes.json();
+
+    const ocrRes = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/ocr`), {
+      headers: withUserHeaders()
+    });
+    const ocr = ocrRes.ok ? await ocrRes.json() : null;
+
+    return { metadata, ocr, previewUrl: apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/download`) };
   },
 
   /**
@@ -131,4 +168,29 @@ export const DocumentActions = {
     // Right: Display metadata + ocr.text with confidence highlighting
   },
 
+  /**
+   * Reject and delete an upload immediately.
+   * @param {string} uploadId
+   */
+  async rejectUpload(uploadId) {
+    const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`), {
+      method: 'DELETE',
+      headers: withUserHeaders(),
+    });
+
+    if (res.status === 404) {
+      const err = new Error('Already deleted');
+      err.status = 404;
+      throw err;
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const err = new Error(body?.detail || 'Failed to delete upload');
+      err.status = res.status;
+      throw err;
+    }
+
+    return res.json();
+  },
 };

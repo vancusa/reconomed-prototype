@@ -158,7 +158,7 @@ class ReconoMedApp {
         try {
             this.navigation.init();        // Set up nav click handlers
             this.patientManager.init();    // Set up form submissions, search
-            this.documentManager.init();   // Set up upload handlers
+            await this.documentManager.init();   // Set up upload handlers
             this.consultationManager.init(); // Set up consultation event listeners
            } catch (err) {
             console.error('UI initialization failed:', err);

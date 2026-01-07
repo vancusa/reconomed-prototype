@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Query
 from fastapi.responses import FileResponse
@@ -39,7 +39,7 @@ from app.schemas import (
     # Enums
     JobState, ValidationStatus, TabName,
     # Upload list/detail schemas
-    UploadListItem, UploadListResponse,
+    UploadCardResponse, UploadListResponse,
     UploadDocumentSummary, UploadDetailResponse,
     UploadOCRResponse,
     # Workflow actions
@@ -69,17 +69,16 @@ def _preview_url(upload_id: str) -> str:
     """
     return f"/documents/uploads/{upload_id}/download"
 
-
-def _make_upload_list_item(db: Session, upload: Upload) -> UploadListItem:
+def _make_upload_card(db: Session, upload: Upload) -> UploadCardResponse:
     """
-    Build UploadListItem, including optional OCR snippet from the linked Document.
+    Build UploadCardResponse, including optional OCR snippet from the linked Document.
     """
     doc = db.query(Document).filter(Document.upload_id == upload.id).first()
     snippet = None
     if doc and getattr(doc, "ocr_text", None):
         snippet = (doc.ocr_text or "")[:500]
 
-    return UploadListItem(
+    return UploadCardResponse(
         id=upload.id,
         clinic_id=upload.clinic_id,
         filename=upload.filename,
@@ -91,25 +90,6 @@ def _make_upload_list_item(db: Session, upload: Upload) -> UploadListItem:
         patient_id=getattr(upload, "patient_id", None),
         preview_url=_preview_url(upload.id),
         ocr_snippet=snippet,
-    )
-
-def _make_upload_card(db: Session, upload: Upload) -> UploadCardResponse:
-    """
-    Build a UI card payload for an upload, mirroring list data.
-    """
-    list_item = _make_upload_list_item(db, upload)
-    return UploadCardResponse(
-        id=list_item.id,
-        clinic_id=list_item.clinic_id,
-        filename=list_item.filename,
-        file_size=list_item.file_size,
-        document_type=list_item.document_type,
-        job_state=list_item.job_state,
-        patient_id=list_item.patient_id,
-        uploaded_at=list_item.uploaded_at,
-        expires_at=list_item.expires_at,
-        preview_url=list_item.preview_url,
-        ocr_snippet=list_item.ocr_snippet,
     )
 
 def _make_upload_detail(db: Session, upload: Upload) -> UploadDetailResponse:
@@ -159,7 +139,7 @@ def _require_same_clinic(user: User, upload: Upload) -> None:
 # Upload endpoints
 # ----------------------------
 
-@router.post("/uploads", response_model=List[UploadListItem])
+@router.post("/uploads", response_model=List[UploadCardResponse])
 async def upload_files(
     request: Request,
     files: List[UploadFile] = File(...),
@@ -171,7 +151,7 @@ async def upload_files(
     - Saves file to disk
     - Creates Upload rows in DB
     - Sets job_state=queued immediately (server-side auto OCR)
-    - Returns UploadListItem cards for UI rendering
+    - Returns UploadCardResponse cards for UI rendering
     """
     user = get_user_from_header(db, request)
 
@@ -214,7 +194,7 @@ async def upload_files(
         db.refresh(u)
 
     # Return cards (UI can drop them into Unprocessed tab)
-    return [_make_upload_list_item(db, u) for u in created]
+    return [_make_upload_card(db, u) for u in created]
 
 
 @router.get("/uploads", response_model=UploadListResponse)
@@ -271,7 +251,7 @@ def list_uploads_by_tab(
 
     # order newest first for UI
     uploads = q.order_by(Upload.uploaded_at.desc()).all()
-    items = [_make_upload_list_item(db, u) for u in uploads]
+    items = [_make_upload_card(db, u) for u in uploads]
 
     return UploadListResponse(items=items, total=len(items))
 
