@@ -292,13 +292,61 @@
                         <button class="tab-button" data-tab="completed">
                             Completed <span class="tab-count" id="completed-count">0</span>
                         </button>
+                        <button class="tab-button" data-tab="error">
+                            Error <span class="tab-count" id="error-count">0</span>
+                        </button>
                     </div>
 
-                    <div class="upload-tab" class="tab-content">
+                    <div class="document-tabs__content">
+                        <div id="unprocessed-tab" class="tab-content active">
+                            <div class="uploads-toolbar">
+                                <div class="uploads-toolbar__left">
+                                    <label class="select-all">
+                                        <input type="checkbox" id="select-all">
+                                        Select All (<span id="total-uploads">0</span>)
+                                    </label>
+                                </div>
+                                <div class="uploads-toolbar__right">
+                                    <button class="view-toggle active" data-view="grid">⊞</button>
+                                    <button class="view-toggle" data-view="list">☰</button>
+                                </div>
+                            </div>
+
+                            <div id="batch-actions" class="batch-actions" style="display: none;">
+                                <div class="batch-actions__header">
+                                    <h4><span id="selected-count">0</span> files selected</h4>
+                                </div>
+                                <div class="batch-actions__controls">
+                                    <div class="batch-control-group">
+                                        <label>Assign to Patient:</label>
+                                        <div class="batch-control-row">
+                                            <select id="batch-patient">
+                                                <option value="">Select Patient...</option>
+                                            </select>
+                                            <button id="apply-batch-patient" class="btn-secondary">Apply</button>
+                                        </div>
+                                    </div>
+                                    <div class="batch-control-group">
+                                        <label>Set Document Type:</label>
+                                        <div class="batch-control-row">
+                                            <select id="batch-document-type">
+                                                <option value="">Document Type...</option>
+                                                <option value="romanian_id">Romanian ID</option>
+                                                <option value="lab_result">Lab Result</option>
+                                                <option value="discharge_note">Discharge Note</option>
+                                            </select>
+                                            <button id="apply-batch-type" class="btn-secondary">Apply</button>
+                                        </div>
+                                    </div>
+                                    <div class="batch-control-group">
+                                        <button id="start-processing" class="btn-primary">Start OCR Processing</button>
+                                    </div>
+                                </div>
+                            </div>
                             <div id="file-container" class="file-container grid"></div>
                             <div id="empty-state" class="empty-state">
                             </div>
-                    </div>
+                        </div>
 
                         <!-- Processing Tab -->
                         <div id="processing-tab" class="tab-content">
@@ -336,6 +384,63 @@
                                 </div>
                             </div>
                             <div id="completed-list" class="completed-list"></div>
+                        </div>
+                        <!-- Error Tab -->
+                        <div id="error-tab" class="tab-content">
+                            <div class="validation-summary">
+                                <h3><span id="error-total">0</span> documents with errors</h3>
+                                <p>These uploads failed OCR; consider deleting or re-uploading</p>
+                            </div>
+                            <div id="error-list" class="validation-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Validation Detail Modal -->
+            <div id="validation-modal" class="validation-modal" style="display: none;">
+                <div class="validation-modal__content">
+                    <div class="validation-modal__header">
+                        <div class="modal-title">
+                            <h3 id="validation-title">Document Validation</h3>
+                            <p id="validation-filename" class="muted"></p>
+                        </div>
+                        <button id="validation-close" class="back-button">✕</button>
+                    </div>
+                    <div class="validation-modal__body">
+                        <div class="validation-form">
+                            <label for="validation-ocr-text">OCR Text (editable)</label>
+                            <div id="validation-ocr-snippet" class="validation-ocr-snippet"></div>
+                            <button id="validation-expand-ocr" class="btn-secondary" type="button">Show full OCR / Preview</button>
+                            <div id="validation-expanded" style="display: none;">
+                                <div class="validation-preview">
+                                    <a id="validation-preview-link" href="#" target="_blank" rel="noopener" class="btn-secondary">
+                                        Open document preview
+                                    </a>
+                                </div>
+                                <textarea id="validation-ocr-text" rows="8" placeholder="OCR text will appear here"></textarea>
+                            </div>
+
+                            <label for="validation-patient-search">Assign to patient</label>
+                            <input id="validation-patient-search" type="search" placeholder="Search patient..." />
+                            <select id="validation-patient-select">
+                                <option value="">Select patient...</option>
+                            </select>
+
+                            <label for="validation-document-type">Document type (optional)</label>
+                            <select id="validation-document-type">
+                                <option value="">Select type...</option>
+                                <option value="lab_result">Lab result</option>
+                                <option value="imagistic_result">Imagistic result</option>
+                                <option value="pharmacy">Pharmacy</option>
+                                <option value="doctors_note">Doctor's note</option>
+                                <option value="discharge">Discharge</option>
+                            </select>
+
+                            <div class="validation-actions">
+                                <button id="validation-complete" class="btn-success" disabled>Assign patient &amp; complete</button>
+                                <button id="validation-reject" class="btn-danger">Reject</button>
+                            </div>
                         </div>
                     </div>
                 </div>

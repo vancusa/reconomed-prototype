@@ -82,7 +82,7 @@ export class Navigation {
         }
 
         //Set patient context for documents if provided
-        if (patientId && sectionId === 'documents' && this.app?.documents) {
+        if (patientId && sectionId === 'documents' && this.app?.documentManager) {
             this.app.documentManager.setUploadContext(patientId);
         }
         

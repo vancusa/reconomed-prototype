@@ -61,14 +61,14 @@ if (typeof window !== 'undefined') {
 function getStoredUserEmail() {
   if (typeof window === 'undefined') return null;
   // Prefer the hydrated app instance
-  if (window.app?.currentUser?.username) return window.app.currentUser.username;
+  if (window.app?.currentUser?.email) return window.app.currentUser.email;
 
   // Fallback to localStorage (used by login screen)
   try {
     const raw = localStorage.getItem('reconomed_user');
     if (raw) {
       const parsed = JSON.parse(raw);
-      return parsed?.username || parsed?.email || null;
+      return parsed?.email || parsed?.username || null;
     }
   } catch (e) {
     // ignore parsing errors, return null

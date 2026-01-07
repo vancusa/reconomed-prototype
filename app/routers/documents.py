@@ -45,6 +45,8 @@ from app.schemas import (
     # Workflow actions
     UploadCompleteRequest, UploadCompleteResponse,
     UploadRejectResponse,
+    UploadBatchAssignRequest,
+    UploadBatchTypeRequest,
 )
 
 # File utils (adjust these imports to your actual module paths/names)
@@ -56,7 +58,6 @@ from app.services.upload_processing import UploadProcessingService
 router = APIRouter(tags=["documents"])
 
 processing_svc = UploadProcessingService(max_attempts=3, stale_timeout_seconds=600)
-
 
 # ----------------------------
 # Helpers
@@ -126,14 +127,12 @@ def _make_upload_detail(db: Session, upload: Upload) -> UploadDetailResponse:
         document=doc_summary,
     )
 
-
 def _require_same_clinic(user: User, upload: Upload) -> None:
     """
     Multi-tenant guard: user can only act within their clinic.
     """
     if upload.clinic_id != user.clinic_id:
         raise HTTPException(status_code=403, detail="Forbidden (wrong clinic)")
-
 
 # ----------------------------
 # Upload endpoints
@@ -196,7 +195,6 @@ async def upload_files(
     # Return cards (UI can drop them into Unprocessed tab)
     return [_make_upload_card(db, u) for u in created]
 
-
 @router.get("/uploads", response_model=UploadListResponse)
 def list_uploads_by_tab(
     request: Request,
@@ -255,6 +253,74 @@ def list_uploads_by_tab(
 
     return UploadListResponse(items=items, total=len(items))
 
+@router.post("/uploads/batch/assign", response_model=UploadListResponse)
+def batch_assign_uploads(
+    request: Request,
+    payload: UploadBatchAssignRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Assign a patient to multiple uploads in a single call.
+    Updates associated Document.patient_id when present.
+    """
+    user = get_user_from_header(db, request)
+
+    patient = db.query(Patient).filter(
+        Patient.id == payload.patient_id,
+        Patient.clinic_id == user.clinic_id,
+    ).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    upload_ids = list(dict.fromkeys(payload.upload_ids))
+    uploads = db.query(Upload).filter(
+        Upload.clinic_id == user.clinic_id,
+        Upload.id.in_(upload_ids),
+    ).all()
+
+    if len(uploads) != len(upload_ids):
+        raise HTTPException(status_code=404, detail="One or more uploads not found")
+
+    for upload in uploads:
+        upload.patient_id = patient.id
+        if upload.document:
+            upload.document.patient_id = patient.id
+
+    db.commit()
+
+    items = [_make_upload_card(db, u) for u in uploads]
+    return UploadListResponse(items=items, total=len(items))
+
+@router.post("/uploads/batch/type", response_model=UploadListResponse)
+def batch_update_upload_type(
+    request: Request,
+    payload: UploadBatchTypeRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Update document_type for multiple uploads in a single call.
+    Updates associated Document.document_type when present.
+    """
+    user = get_user_from_header(db, request)
+
+    upload_ids = list(dict.fromkeys(payload.upload_ids))
+    uploads = db.query(Upload).filter(
+        Upload.clinic_id == user.clinic_id,
+        Upload.id.in_(upload_ids),
+    ).all()
+
+    if len(uploads) != len(upload_ids):
+        raise HTTPException(status_code=404, detail="One or more uploads not found")
+
+    for upload in uploads:
+        upload.document_type = payload.document_type
+        if upload.document:
+            upload.document.document_type = payload.document_type
+
+    db.commit()
+
+    items = [_make_upload_card(db, u) for u in uploads]
+    return UploadListResponse(items=items, total=len(items))
 
 @router.get("/uploads/{upload_id}", response_model=UploadDetailResponse)
 def get_upload_detail(
@@ -274,7 +340,6 @@ def get_upload_detail(
 
     _require_same_clinic(user, upload)
     return _make_upload_detail(db, upload)
-
 
 @router.get("/uploads/{upload_id}/ocr", response_model=UploadOCRResponse)
 def get_upload_ocr_text(
@@ -307,7 +372,6 @@ def get_upload_ocr_text(
         ocr_text=doc.ocr_text or "",
         ocr_metadata=None,
     )
-
 
 @router.post("/uploads/{upload_id}/complete", response_model=UploadCompleteResponse)
 def complete_upload_assign_and_approve(
@@ -368,7 +432,6 @@ def complete_upload_assign_and_approve(
 
     return UploadCompleteResponse(upload=_make_upload_detail(db, upload))
 
-
 @router.delete("/uploads/{upload_id}", response_model=UploadRejectResponse)
 def reject_and_delete_upload(
     upload_id: str,
@@ -406,7 +469,6 @@ def reject_and_delete_upload(
 
     return UploadRejectResponse(deleted=True, upload_id=upload_id)
 
-
 @router.get("/uploads/{upload_id}/download")
 def download_upload_file(
     upload_id: str,
@@ -433,7 +495,6 @@ def download_upload_file(
         filename=upload.filename,
         media_type="application/octet-stream",
     )
-
 
 # ----------------------------
 # Optional debug/admin endpoints (keep for now, can remove later)

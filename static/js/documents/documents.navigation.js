@@ -31,12 +31,20 @@ export const DocumentNavigation = {
     this.validationModal = document.getElementById('validation-modal');
     this.validationOcrField = document.getElementById('validation-ocr-text');
     this.validationPreviewLink = document.getElementById('validation-preview-link');
+    this.validationSnippet = document.getElementById('validation-ocr-snippet');
+    this.validationExpandBtn = document.getElementById('validation-expand-ocr');
+    this.validationExpandedPanel = document.getElementById('validation-expanded');
     this.validationPatientSelect = document.getElementById('validation-patient-select');
     this.validationPatientSearch = document.getElementById('validation-patient-search');
     this.validationDocumentTypeSelect = document.getElementById('validation-document-type');
     this.validationFileName = document.getElementById('validation-filename');
     this.validationCompleteBtn = document.getElementById('validation-complete');
     this.validationRejectBtn = document.getElementById('validation-reject');
+
+     if (!this.contentArea) {
+      console.warn('Document tabs content area not found. Skipping document navigation init.');
+      return;
+    }
 
     this.bindUIEvents();
     await this.switchTab('unprocessed');
@@ -126,10 +134,14 @@ export const DocumentNavigation = {
         const files = e.target.files;
         if (!files.length) return;
         
-        const patientId = window.app?.documents?.currentUploadPatientId || null;
+        const patientId = window.app?.documentManager?.currentUploadPatientId || null;
         await DocumentActions.uploadFiles(files, patientId);
         await this.refreshUnprocessedList();
     });
+    }
+
+    if (this.validationExpandBtn) {
+      this.validationExpandBtn.addEventListener('click', () => this.setValidationExpanded(true));
     }
 
     if (this.validationCompleteBtn) {
@@ -197,7 +209,13 @@ export const DocumentNavigation = {
    * @returns nothing
    */
   renderTab(tabKey, uploads) {
-    const container = this.contentArea.querySelector(`#${tabKey}-tab`);
+    let container = null;
+    if (this.contentArea) {
+      container = this.contentArea.querySelector(`#${tabKey}-tab`);
+    }
+    if (!container) {
+      container = document.getElementById(`${tabKey}-tab`);
+    }
     if (!container) return;
     
     this.updateTabCount(tabKey, uploads?.length || 0);
@@ -510,6 +528,7 @@ export const DocumentNavigation = {
   */
   renderValidation(docs) {
     const container = document.getElementById('validation-list');
+    if (!container) return;
     container.innerHTML = '';
 
     if (!docs.length) {
@@ -522,11 +541,13 @@ export const DocumentNavigation = {
 
       const card = this.createDocumentCard(doc, {
         statusConfig,
-        primaryActionLabel: 'Review',
-        onPrimaryAction: (d) => this.openValidationForm(d),
+        primaryActionLabel: 'Assign & complete',
+        onPrimaryAction: (d) => this.openValidationForm(d, { confirmFirst: true }),
+        secondaryActionLabel: 'Review / Edit',
+        onSecondaryAction: (d) => this.openValidationForm(d, { confirmFirst: false }),
         secondaryActionLabel: 'Reject',
         onSecondaryAction: (d) => this.confirmReject(d),
-        onCardClick: (d) => this.openValidationForm(d),
+        onCardClick: (d) => this.openValidationForm(d, { confirmFirst: false }),
       });
 
       container.appendChild(card);
@@ -617,7 +638,7 @@ export const DocumentNavigation = {
   /**
    * Open validation form (modal or panel)
    */
-  async openValidationForm(upload) {
+  async openValidationForm(upload, options = {}) {
     try {
       const { metadata, ocr, previewUrl } = await DocumentActions.fetchUploadDetails(upload.id);
       if (!metadata) throw new Error('No details available');
@@ -627,7 +648,9 @@ export const DocumentNavigation = {
         return;
       }
 
+      const confirmFirst = options.confirmFirst === true;
       this.validationInitialOcrText = ocr?.ocr_text || '';
+      this.setValidationExpanded(!confirmFirst);
 
       if (this.validationModal) {
         this.validationModal.dataset.uploadId = upload.id;
@@ -639,6 +662,10 @@ export const DocumentNavigation = {
         this.validationOcrField.value = this.validationInitialOcrText;
       }
       
+      if (this.validationSnippet) {
+        this.validationSnippet.textContent = upload?.ocr_snippet || 'No OCR snippet available yet.';
+      }
+
       if (this.validationPreviewLink) {
         this.validationPreviewLink.href = metadata.preview_url || previewUrl || '#';
       }
@@ -725,6 +752,18 @@ export const DocumentNavigation = {
     }
   },
 
+  setValidationExpanded(expanded) {
+    if (this.validationExpandedPanel) {
+      this.validationExpandedPanel.style.display = expanded ? 'block' : 'none';
+    }
+    if (this.validationSnippet) {
+      this.validationSnippet.style.display = expanded ? 'none' : 'block';
+    }
+    if (this.validationExpandBtn) {
+      this.validationExpandBtn.style.display = expanded ? 'none' : 'inline-flex';
+    }
+  },
+
   closeValidationModal() {
     if (this.validationModal) {
       this.validationModal.classList.remove('open');
@@ -735,6 +774,7 @@ export const DocumentNavigation = {
     if (this.validationOcrField) this.validationOcrField.value = '';
     if (this.validationPatientSelect) this.validationPatientSelect.value = '';
     if (this.validationPatientSearch) this.validationPatientSearch.value = '';
+    this.setValidationExpanded(true);
     this.updateCompleteButtonState();
   },
 

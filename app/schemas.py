@@ -46,7 +46,6 @@ class ConsentStatusResponse(BaseModel):
     message: str
     consent_status: Dict[str, Any]
 
-
 class ConsentHistoryItem(BaseModel):
     timestamp: str
     action: str
@@ -145,16 +144,13 @@ class ConsultationCountsResponse(BaseModel):
     discharge_ready: int
     review_pending: int
 
-
 class ConsultationTodayStatsResponse(BaseModel):
     patients_today: int
-
 
 class ConsultationAudioUploadResponse(BaseModel):
     message: str
     audio_file_path: str
     audio_duration_seconds: Optional[int]
-
 
 class ConsultationAudioProcessResponse(BaseModel):
     message: str
@@ -162,12 +158,10 @@ class ConsultationAudioProcessResponse(BaseModel):
     extracted_data: Dict[str, Any]
     audio_deleted: bool
 
-
 class ConsultationTranscriptResponse(BaseModel):
     consultation_id: str
     transcript: Optional[str]
     duration_seconds: Optional[int]
-
 
 class ApiMessageResponse(BaseModel):
     message: str
@@ -222,12 +216,10 @@ class JobState(str, Enum):
     OCR_DONE = "ocr_done"
     OCR_FAILED = "ocr_failed"
 
-
 class ValidationStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
-
 
 # ----------------------------
 # Upload (Public) Schemas
@@ -246,7 +238,6 @@ class UploadBase(BaseModel):
     document_type: Optional[str] = None
     patient_id: Optional[str] = None
 
-
 class UploadCreate(BaseModel):
     """
     Internal use: creation payload once the file is saved.
@@ -259,7 +250,6 @@ class UploadCreate(BaseModel):
     document_type: Optional[str] = None
     patient_id: Optional[str] = None  # usually None in v1
     expires_at: Optional[datetime] = None  # server sets now + 30 days if omitted
-
 
 class UploadUpdate(BaseModel):
     """
@@ -293,7 +283,6 @@ class UploadDocumentSummary(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-
 class UploadDetailResponse(BaseModel):
     """
     Upload details + document summary.
@@ -320,7 +309,6 @@ class UploadDetailResponse(BaseModel):
     document: Optional[UploadDocumentSummary] = None
 
     model_config = ConfigDict(from_attributes=True)
-
 
 class UploadOCRResponse(BaseModel):
     """
@@ -353,13 +341,11 @@ class UploadCompleteRequest(BaseModel):
     document_type: Optional[str] = None
     edited_ocr_text: Optional[str] = None  # if doctor edited the OCR result
 
-
 class UploadCompleteResponse(BaseModel):
     """
     Return updated card-friendly payload after completion.
     """
     upload: UploadDetailResponse
-
 
 class UploadRejectResponse(BaseModel):
     """
@@ -367,6 +353,22 @@ class UploadRejectResponse(BaseModel):
     """
     deleted: bool
     upload_id: str
+
+class UploadBatchAssignRequest(BaseModel):
+    """
+    Assign a patient to multiple uploads at once.
+    Recommended for: POST /uploads/batch/assign
+    """
+    upload_ids: List[str] = Field(..., min_length=1)
+    patient_id: str = Field(..., min_length=1)
+
+class UploadBatchTypeRequest(BaseModel):
+    """
+    Update document_type for multiple uploads at once.
+    Recommended for: POST /uploads/batch/type
+    """
+    upload_ids: List[str] = Field(..., min_length=1)
+    document_type: str = Field(..., min_length=1)
 
 class UploadCardResponse(BaseModel):
     """UI-friendly upload card data."""
@@ -402,12 +404,10 @@ class ClaimJobRequest(BaseModel):
     max_attempts: int = Field(default=3, ge=1, le=10)
     stale_timeout_seconds: int = Field(default=600, ge=60, le=86400)
 
-
 class ClaimJobResponse(BaseModel):
     claimed: bool
     upload_id: Optional[str] = None
     message: Optional[str] = None
-
 
 class JobStats(BaseModel):
     queued: int
@@ -416,7 +416,6 @@ class JobStats(BaseModel):
     ocr_failed: int
     total: int
     oldest_queued: Optional[datetime] = None
-
 
 # ----------------------------
 # Validators (optional, but helpful)

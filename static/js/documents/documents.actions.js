@@ -6,12 +6,12 @@ import { showToast } from '../ui.js';
 
 function currentUserEmail() {
   if (typeof window === 'undefined') return null;
-  if (window.app?.currentUser?.username) return window.app.currentUser.username;
+  if (window.app?.currentUser?.email) return window.app.currentUser.email;
   try {
     const raw = localStorage.getItem('reconomed_user');
     if (raw) {
       const parsed = JSON.parse(raw);
-      return parsed?.username || parsed?.email || null;
+      return parsed?.email || parsed?.username || null;
     }
   } catch (e) {
     return null;
