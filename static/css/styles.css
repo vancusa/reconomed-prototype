@@ -904,7 +904,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  white-space: nowrap;
   min-width: 0;
   overflow:hidden;
 }
@@ -934,6 +933,8 @@ body {
 .upload-card-actions {
   display: flex;
   align-items: flex-start;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .cancel-btn {
@@ -949,6 +950,58 @@ body {
   text-decoration: underline;
 }
 
+.upload-card-snippet {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.35rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp:3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.upload-card-document-type,
+.upload-card-completed-at {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.uploads-toolbar.is-hidden {
+  display: none;
+}
+
+.view-toggle {
+  background: var(--bg-content);
+  border: 1px solid var(--border-default);
+  border-radius: var(--border-radius-sm);
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: var(--transition-fast);
+}
+
+.view-toggle.active {
+  background: var(--primary);
+  color: var(--bg-content);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.view-toggle:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.upload-card-actions .btn-secondary.action-muted {
+  opacity: 0.7;
+}
+
+.upload-card-actions .btn-secondary.action-muted:hover {
+  opacity: 1;
+}
 
 /* ================================================================
    DOCUMENTS
@@ -1180,6 +1233,149 @@ body {
 
 .modal.active {
     display: flex;
+}
+
+body.modal-open {
+    overflow: hidden;
+}
+
+.validation-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    z-index: 1100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+}
+
+.validation-modal.open {
+    display: flex;
+}
+
+.validation-modal__content {
+    background: var(--bg-content);
+    border-radius: var(--border-radius);
+    width: min(1000px, 96vw);
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow-lg);
+    position: relative;
+}
+
+.validation-modal__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.validation-modal__body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    display: grid;
+    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.validation-modal--fullscreen .validation-modal__content {
+    width: 95vw;
+    max-height: 92vh;
+}
+
+.validation-modal--fullscreen .validation-modal__body {
+    max-height: calc(92vh - 70px);
+}
+
+.validation-modal--review .validation-preview {
+    border: 1px solid var(--primary);
+    border-radius: var(--border-radius);
+    padding: 0.75rem;
+    background: var(--primary-light);
+}
+
+.validation-form textarea#validation-ocr-text {
+    min-height: 240px;
+    width: 100%;
+    resize: vertical;
+}
+
+.validation-modal--fullscreen .validation-form textarea#validation-ocr-text {
+    min-height: 320px;
+}
+
+.validation-ocr-snippet {
+    background: var(--bg-main);
+    border: 1px solid var(--border-light);
+    border-radius: var(--border-radius);
+    padding: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.validation-preview {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 0.75rem;
+}
+
+.validation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.patient-search-selector {
+    position: relative;
+}
+
+.patient-search-results {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--bg-content);
+    border: 1px solid var(--border-default);
+    border-radius: var(--border-radius-sm);
+    box-shadow: var(--shadow);
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 1200;
+    display: none;
+}
+
+.patient-search-results.is-open {
+    display: block;
+}
+
+.patient-search-result {
+    padding: 0.65rem 0.75rem;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.patient-search-result:hover,
+.patient-search-result.active {
+    background: var(--primary-light);
+}
+
+.patient-search-result .patient-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.patient-search-result .patient-meta {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
 }
 
 .modal-content {

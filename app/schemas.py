@@ -379,8 +379,10 @@ class UploadCardResponse(BaseModel):
     document_type: Optional[str]
     job_state: JobState
     patient_id: Optional[str]
+    patient_name: Optional[str] = None
     uploaded_at: datetime
     expires_at: Optional[datetime] = None
+    validated_at: Optional[datetime] = None
     preview_url: Optional[str]
     ocr_snippet: Optional[str]= Field(default=None, max_length=500)
 

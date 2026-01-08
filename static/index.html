@@ -299,11 +299,11 @@
 
                     <div class="document-tabs__content">
                         <div id="unprocessed-tab" class="tab-content active">
-                            <div class="uploads-toolbar">
+                            <div class="uploads-toolbar" id="uploads-toolbar">
                                 <div class="uploads-toolbar__left">
                                     <label class="select-all">
-                                        <input type="checkbox" id="select-all">
-                                        Select All (<span id="total-uploads">0</span>)
+                                        <input type="checkbox" id="select-all">␊
+                                        <span id="select-all-label">Select all (<span id="total-uploads">0</span>)</span>
                                     </label>
                                 </div>
                                 <div class="uploads-toolbar__right">
@@ -351,11 +351,8 @@
                         <!-- Processing Tab -->
                         <div id="processing-tab" class="tab-content">
                             <div class="queue-summary">
-                                <h3>Processing <span id="processing-total">0</span> documents</h3>
-                                <p>Documents are processed automatically in order</p>
-                                <button class="btn-secondary" onclick="app.documentManager.nav.refreshProcessingQueue()">
-                                    <i class="fas fa-sync-alt"></i> Refresh Queue
-                                </button>
+                                <h3 id="processing-title">Processing</h3>
+                                <p id="processing-body">Documents are processing automatically.</p>
                             </div>
                             <div id="processing-list" class="processing-list"></div>
                         </div>
@@ -399,47 +396,66 @@
 
             <!-- Validation Detail Modal -->
             <div id="validation-modal" class="validation-modal" style="display: none;">
-                <div class="validation-modal__content">
+                <div class="validation-modal__content" role="dialog" aria-modal="true" aria-labelledby="validation-title">
                     <div class="validation-modal__header">
                         <div class="modal-title">
                             <h3 id="validation-title">Document Validation</h3>
                             <p id="validation-filename" class="muted"></p>
                         </div>
-                        <button id="validation-close" class="back-button">✕</button>
+                        <button id="validation-close" class="modal-close" type="button" aria-label="Close validation modal">
+                            <i class="fas fa-times"></i>
+                        </button>
                     </div>
                     <div class="validation-modal__body">
                         <div class="validation-form">
                             <label for="validation-ocr-text">OCR Text (editable)</label>
                             <div id="validation-ocr-snippet" class="validation-ocr-snippet"></div>
-                            <button id="validation-expand-ocr" class="btn-secondary" type="button">Show full OCR / Preview</button>
+                            <button id="validation-expand-ocr" class="btn-secondary" type="button">
+                                <i class="fas fa-eye"></i>
+                                Show full OCR / Preview
+                            </button>
                             <div id="validation-expanded" style="display: none;">
                                 <div class="validation-preview">
                                     <a id="validation-preview-link" href="#" target="_blank" rel="noopener" class="btn-secondary">
+                                        <i class="fas fa-file-alt"></i>
                                         Open document preview
                                     </a>
                                 </div>
-                                <textarea id="validation-ocr-text" rows="8" placeholder="OCR text will appear here"></textarea>
+                                <textarea id="validation-ocr-text" rows="12" placeholder="OCR text will appear here"></textarea>
+                                <button id="validation-toggle-fullscreen" class="btn-secondary" type="button">
+                                    <i class="fas fa-expand"></i>
+                                    Expand OCR
+                                </button>
                             </div>
 
                             <label for="validation-patient-search">Assign to patient</label>
-                            <input id="validation-patient-search" type="search" placeholder="Search patient..." />
-                            <select id="validation-patient-select">
-                                <option value="">Select patient...</option>
-                            </select>
+                            <div class="patient-search-selector">
+                                <input id="validation-patient-search" type="search" placeholder="Search by name, phone, or CNP…" autocomplete="off" />
+                                <div id="validation-patient-results" class="patient-search-results" role="listbox"></div>
+                            </div>
 
                             <label for="validation-document-type">Document type (optional)</label>
                             <select id="validation-document-type">
                                 <option value="">Select type...</option>
                                 <option value="lab_result">Lab result</option>
                                 <option value="imagistic_result">Imagistic result</option>
+
                                 <option value="pharmacy">Pharmacy</option>
+
                                 <option value="doctors_note">Doctor's note</option>
+
                                 <option value="discharge">Discharge</option>
-                            </select>
+                                </select>
 
                             <div class="validation-actions">
-                                <button id="validation-complete" class="btn-success" disabled>Assign patient &amp; complete</button>
-                                <button id="validation-reject" class="btn-danger">Reject</button>
+                                <button id="validation-complete" class="btn-primary" disabled>
+                                    <i class="fas fa-check"></i>
+                                    Assign &amp; complete
+                                </button>
+                                <button id="validation-reject" class="btn-danger" type="button">
+                                    <i class="fas fa-trash"></i>
+                                    Reject
+                                </button>
                             </div>
                         </div>
                     </div>

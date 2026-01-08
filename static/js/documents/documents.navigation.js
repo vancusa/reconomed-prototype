@@ -13,6 +13,9 @@ export const DocumentNavigation = {
   validationModal: null,
   validationInitialOcrText: '',
   patientSearchTimeout: null,
+  validationSelectedPatientId: null,
+  patientSearchResults: [],
+  patientSearchActiveIndex: -1,
 
   /**
    * Initialize tab and event bindings
@@ -27,6 +30,12 @@ export const DocumentNavigation = {
       completed: document.getElementById('completed-count'),
       error: document.getElementById('error-count'),
     };
+    this.uploadsToolbar = document.getElementById('uploads-toolbar');
+    this.selectAllLabel = document.getElementById('select-all-label');
+    this.selectAllCheckbox = document.getElementById('select-all');
+    this.totalUploads = document.getElementById('total-uploads');
+    this.processingTitle = document.getElementById('processing-title');
+    this.processingBody = document.getElementById('processing-body');
     // Modal elements
     this.validationModal = document.getElementById('validation-modal');
     this.validationOcrField = document.getElementById('validation-ocr-text');
@@ -34,12 +43,13 @@ export const DocumentNavigation = {
     this.validationSnippet = document.getElementById('validation-ocr-snippet');
     this.validationExpandBtn = document.getElementById('validation-expand-ocr');
     this.validationExpandedPanel = document.getElementById('validation-expanded');
-    this.validationPatientSelect = document.getElementById('validation-patient-select');
     this.validationPatientSearch = document.getElementById('validation-patient-search');
+    this.validationPatientResults = document.getElementById('validation-patient-results');
     this.validationDocumentTypeSelect = document.getElementById('validation-document-type');
     this.validationFileName = document.getElementById('validation-filename');
     this.validationCompleteBtn = document.getElementById('validation-complete');
     this.validationRejectBtn = document.getElementById('validation-reject');
+    this.validationToggleFullscreen = document.getElementById('validation-toggle-fullscreen');
 
      if (!this.contentArea) {
       console.warn('Document tabs content area not found. Skipping document navigation init.');
@@ -63,11 +73,12 @@ export const DocumentNavigation = {
     });
 
     // View toggles
-    //document.querySelectorAll('.view-toggle').forEach(btn => {
-      //btn.addEventListener('click', () => {
-        //this.toggleView(btn.dataset.view);
-      //});
-    //});
+     document.querySelectorAll('.view-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.toggleView(btn.dataset.view);
+      });
+    });
+    this.toggleView(this.currentView);
 
     // Batch actions
     const applyPatientBtn = document.getElementById('apply-batch-patient');
@@ -152,18 +163,34 @@ export const DocumentNavigation = {
       this.validationRejectBtn.addEventListener('click', () => this.confirmReject());
     }
 
-    if (this.validationPatientSelect) {
-      this.validationPatientSelect.addEventListener('change', () => this.updateCompleteButtonState());
-    }
-
     if (this.validationPatientSearch) {
       this.validationPatientSearch.addEventListener('input', (e) => this.handlePatientSearch(e.target.value));
+      this.validationPatientSearch.addEventListener('keydown', (e) => this.handlePatientSearchKeydown(e));
     }
 
     const closeBtn = document.getElementById('validation-close');
     if (closeBtn) {
       closeBtn.addEventListener('click', () => this.closeValidationModal());
     }
+
+    if (this.validationToggleFullscreen) {
+      this.validationToggleFullscreen.addEventListener('click', () => this.toggleValidationFullscreen());
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && this.validationModal?.classList.contains('open')) {
+        this.closeValidationModal();
+      }
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!this.validationPatientResults || !this.validationPatientSearch) return;
+      const clickedInsideResults = this.validationPatientResults.contains(event.target);
+      const clickedInsideInput = this.validationPatientSearch.contains(event.target);
+      if (!clickedInsideResults && !clickedInsideInput) {
+        this.clearPatientResults();
+      }
+    });
 
     setInterval(async () => {
       if (this.activeTab === 'processing') {
@@ -195,7 +222,7 @@ export const DocumentNavigation = {
     // Load data
     try {
       const uploads = await DocumentActions.fetchTab(tabKey);
-      this.renderTab(tabKey, uploads);
+      await this.renderTab(tabKey, uploads);
     } catch (error) {
       console.error(`Error loading ${tabKey} tab:`, error);
       this.renderError(tabKey, error);
@@ -208,7 +235,7 @@ export const DocumentNavigation = {
     * @param {Array} uploads - Upload objects from backend
    * @returns nothing
    */
-  renderTab(tabKey, uploads) {
+  async renderTab(tabKey, uploads) {
     let container = null;
     if (this.contentArea) {
       container = this.contentArea.querySelector(`#${tabKey}-tab`);
@@ -225,7 +252,7 @@ export const DocumentNavigation = {
         this.renderUploads(uploads|| []);
         break;
       case 'processing':
-        this.renderProcessing(uploads|| []);
+        await this.renderProcessing(uploads|| []);
         break;
       case 'validation':
         this.renderValidation(uploads)|| [];
@@ -309,7 +336,7 @@ export const DocumentNavigation = {
   async refreshProcessingQueue() {
     const uploads = await DocumentActions.fetchTab('processing');
     this.updateTabCount('processing', uploads?.length || 0);
-    this.renderProcessing(uploads || []);
+    await this.renderProcessing(uploads || []);
   },
 
   /*
@@ -361,6 +388,13 @@ export const DocumentNavigation = {
     return `Uploaded at ${d.toLocaleDateString()} ${d.toLocaleTimeString(undefined, timeOpts)}`;
   },
 
+  formatValidatedDate(isoString) {
+    if (!isoString) return null;
+    const d = new Date(isoString);
+    if (Number.isNaN(d.getTime())) return null;
+    return `Completed ${d.toLocaleDateString()} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+  },
+
   /*
     Helper to standardize status text
   */
@@ -390,17 +424,14 @@ export const DocumentNavigation = {
     return { text: null, variant: null, showDots: false };
   },
 
-
   /*
    Factory for single card creation
   */
   createDocumentCard(doc, options = {}) {
     const {
       statusConfig = null,   // {text, variant, showDots}
-      primaryActionLabel = null,
-      onPrimaryAction = null,
-      secondaryActionLabel = null,
-      onSecondaryAction = null,
+      actions = [],
+      showCompletedMeta = false,
       onCardClick = null,
     } = options;
 
@@ -408,7 +439,13 @@ export const DocumentNavigation = {
     const iconClass = this.getUploadIconClass(category);
     const label     = doc.document_type || this.getUploadLabel(category);
     const dateText  = this.formatUploadDate(doc.uploaded_at);
-    const patientText = doc.patient_id ? `Patient assigned` : 'Patient not assigned';
+    const patientText = doc.patient_name
+      ? `Patient: ${doc.patient_name}`
+      : doc.patient_id
+        ? 'Patient assigned'
+        : 'Patient not assigned';
+    const completedAt = this.formatValidatedDate(doc.validated_at);
+    const showDocType = showCompletedMeta && doc.document_type;
 
     const card = document.createElement('div');
     card.classList.add('upload-card');
@@ -424,6 +461,16 @@ export const DocumentNavigation = {
             <div class="upload-card-title">${label}</div>
             <div class="upload-card-date">${dateText}</div>
             <div class="upload-card-patient">${patientText}</div>
+            ${
+              showDocType
+                ? `<div class="upload-card-document-type">Document type: ${doc.document_type}</div>`
+                : ''
+            }
+            ${
+              showCompletedMeta && completedAt
+                ? `<div class="upload-card-completed-at">${completedAt}</div>`
+                : ''
+            }
             ${
               statusConfig && statusConfig.text
                 ? `<div class="upload-card-status status-${statusConfig.variant || 'muted'}">
@@ -445,14 +492,19 @@ export const DocumentNavigation = {
         </div>
         <div class="upload-card-actions">
           ${
-            primaryActionLabel
-              ? `<button class="primary-btn" data-role="primary">${primaryActionLabel}</button>`
-              : ''
-          }
-          ${
-            secondaryActionLabel
-              ? `<button class="cancel-btn" data-role="secondary">${secondaryActionLabel}</button>`
-              : ''
+           actions
+              .map((action, index) => {
+                const variantClass = action.variant === 'danger'
+                  ? 'btn-danger'
+                  : action.variant === 'secondary'
+                    ? 'btn-secondary'
+                    : 'btn-primary';
+                const mutedClass = action.muted ? 'action-muted' : '';
+                const disabledAttr = action.disabled ? 'disabled' : '';
+                const iconMarkup = action.icon ? `<i class="fas ${action.icon}"></i>` : '';
+                return `<button class="btn-small ${variantClass} ${mutedClass}" data-action-index="${index}" ${disabledAttr}>${iconMarkup}${action.label}</button>`;
+              })
+              .join('')
           }
         </div>
       </div>
@@ -463,33 +515,24 @@ export const DocumentNavigation = {
     }
 
     // Actions
-    const primaryBtn = card.querySelector('button[data-role="primary"]');
-    if (primaryBtn && typeof onPrimaryAction === 'function') {
-      primaryBtn.addEventListener('click', (e) => {
+    card.querySelectorAll('button[data-action-index]').forEach(btn => {
+      const action = actions[Number(btn.dataset.actionIndex)];
+      if (!action || typeof action.onClick !== 'function') return;
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        onPrimaryAction(doc, primaryBtn);
+        action.onClick(doc, btn);
       });
-    }
-
-    const secondaryBtn = card.querySelector('button[data-role="secondary"]');
-    if (secondaryBtn && typeof onSecondaryAction === 'function') {
-      secondaryBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        onSecondaryAction(doc, secondaryBtn);
-      });
-    }
+    });
 
     return card;
   },
 
-
   /*
     Renders processing queue
   */
-  renderProcessing(queue) {
+  async renderProcessing(queue) {
     console.log('Render processing queue...');
     const container = document.getElementById('processing-list');
-    const totalEl = document.getElementById('processing-total');
     const countBadge = document.getElementById('processing-count');
 
     if (!container) {
@@ -498,19 +541,34 @@ export const DocumentNavigation = {
     }
 
     container.innerHTML = '';
+    const processingCount = queue?.length || 0;
+    let queuedCount = 0;
+    if (processingCount === 0) {
+      try {
+        const queuedUploads = await DocumentActions.fetchTab('unprocessed');
+        queuedCount = queuedUploads?.length || 0;
+      } catch (error) {
+        console.warn('Could not load queued count', error);
+      }
+    }
+    if (countBadge) countBadge.textContent = processingCount;
 
-    if (!queue || !queue.length) {
-      if (totalEl) totalEl.textContent = '0';
-      if (countBadge) countBadge.textContent = '0';
-      container.innerHTML = `
-        <div class="empty-message">
-          No documents are currently being processed.
-        </div>`;
-      return;
+    if (this.processingTitle && this.processingBody) {
+      if (processingCount > 0) {
+        this.processingTitle.textContent = 'Processing';
+        this.processingBody.textContent = `Processing ${processingCount} documents automatically.`;
+      } else if (queuedCount > 0) {
+        this.processingTitle.textContent = 'Queue';
+        this.processingBody.textContent = `No documents are processing right now. ${queuedCount} are queued and will run automatically.`;
+      } else {
+        this.processingTitle.textContent = 'Nothing to process';
+        this.processingBody.textContent = 'There are no queued documents.';
+      }
     }
 
-    if (totalEl) totalEl.textContent = queue.length;
-    if (countBadge) countBadge.textContent = queue.length;
+    if (!processingCount) {
+      return;
+    }
 
     queue.forEach(doc => {
       const statusConfig = this.getStatusConfig('processing', doc);
@@ -539,15 +597,34 @@ export const DocumentNavigation = {
     docs.forEach(doc => {
       const statusConfig = this.getStatusConfig('validation', doc);
 
+      const actions = [
+        {
+          label: 'Assign & complete',
+          icon: 'fa-check',
+          variant: 'primary',
+          disabled: doc.job_state !== 'ocr_done',
+          onClick: (d) => this.openValidationForm(d, { confirmFirst: true }),
+        },
+        {
+          label: 'Review / Edit',
+          icon: 'fa-pen',
+          variant: 'secondary',
+          muted: true,
+          onClick: (d) => this.openValidationForm(d, { confirmFirst: false, reviewMode: true }),
+        },
+        {
+          label: 'Reject',
+          icon: 'fa-trash',
+          variant: 'danger',
+          onClick: (d) => this.confirmReject(d),
+        },
+      ];
+
+
       const card = this.createDocumentCard(doc, {
         statusConfig,
-        primaryActionLabel: 'Assign & complete',
-        onPrimaryAction: (d) => this.openValidationForm(d, { confirmFirst: true }),
-        secondaryActionLabel: 'Review / Edit',
-        onSecondaryAction: (d) => this.openValidationForm(d, { confirmFirst: false }),
-        secondaryActionLabel: 'Reject',
-        onSecondaryAction: (d) => this.confirmReject(d),
-        onCardClick: (d) => this.openValidationForm(d, { confirmFirst: false }),
+        actions,
+        onCardClick: (d) => this.openValidationForm(d, { confirmFirst: false, reviewMode: true }),
       });
 
       container.appendChild(card);
@@ -565,11 +642,20 @@ export const DocumentNavigation = {
 
     docs.forEach(doc => {
       const statusConfig = this.getStatusConfig('completed', doc);
+      const actions = [
+        {
+          label: 'Preview',
+          icon: 'fa-eye',
+          variant: 'secondary',
+          muted: true,
+          onClick: (d) => window.open(d.preview_url || '#', '_blank'),
+        },
+      ];
 
       const card = this.createDocumentCard(doc, {
         statusConfig,
-        primaryActionLabel: 'Preview',
-        onPrimaryAction: (d) => window.open(d.preview_url || '#', '_blank'),
+        actions,
+        showCompletedMeta: true,
         onCardClick: (d) => window.open(d.preview_url || '#', '_blank'),
       });
 
@@ -588,12 +674,24 @@ export const DocumentNavigation = {
 
     docs.forEach(doc => {
       const statusConfig = this.getStatusConfig('error', doc);
+      const actions = [
+        {
+          label: 'Preview',
+          icon: 'fa-eye',
+          variant: 'secondary',
+          muted: true,
+          onClick: (d) => window.open(d.preview_url || '#', '_blank'),
+        },
+        {
+          label: 'Delete',
+          icon: 'fa-trash',
+          variant: 'danger',
+          onClick: (d) => this.confirmReject(d),
+        },
+      ];
       const card = this.createDocumentCard(doc, {
         statusConfig,
-        primaryActionLabel: 'Preview',
-        onPrimaryAction: (d) => window.open(d.preview_url || '#', '_blank'),
-        secondaryActionLabel: 'Delete',
-        onSecondaryAction: (d) => this.confirmReject(d),
+        actions,
         onCardClick: (d) => window.open(d.preview_url || '#', '_blank'),
       });
       container.appendChild(card);
@@ -607,6 +705,7 @@ export const DocumentNavigation = {
     console.log('Render unprocessed uploads...');
     const container = document.getElementById('file-container');
     const empty = document.getElementById('empty-state');
+    const count = documents.length;
 
     if (!container) {
       console.error('File container not found in Unprocessed tab');
@@ -614,7 +713,20 @@ export const DocumentNavigation = {
     }
 
     container.innerHTML = '';
-    this.updateTabCount('unprocessed', documents.length);
+    this.updateTabCount('unprocessed', count);
+    if (this.totalUploads) {
+      this.totalUploads.textContent = count;
+    }
+    if (this.uploadsToolbar) {
+      this.uploadsToolbar.classList.toggle('is-hidden', count === 0);
+    }
+    if (this.selectAllLabel) {
+      this.selectAllLabel.style.display = count > 0 ? 'inline-flex' : 'none';
+    }
+    if (this.selectAllCheckbox) {
+      this.selectAllCheckbox.checked = false;
+      this.selectAllCheckbox.disabled = count === 0;
+    }
 
     if (!documents.length) {
       if (empty) empty.style.display = 'block';
@@ -649,13 +761,17 @@ export const DocumentNavigation = {
       }
 
       const confirmFirst = options.confirmFirst === true;
+      const reviewMode = options.reviewMode === true;
       this.validationInitialOcrText = ocr?.ocr_text || '';
       this.setValidationExpanded(!confirmFirst);
+      this.setValidationMode({ reviewMode });
 
       if (this.validationModal) {
         this.validationModal.dataset.uploadId = upload.id;
         this.validationModal.style.display = 'flex';
         this.validationModal.classList.add('open');
+        this.validationModal.classList.remove('validation-modal--fullscreen');
+        document.body.classList.add('modal-open');
       }
 
       if (this.validationOcrField) {
@@ -680,9 +796,18 @@ export const DocumentNavigation = {
 
       if (this.validationPatientSearch) {
         this.validationPatientSearch.value = '';
+        this.validationPatientSearch.dataset.patientId = '';
       }
 
-      await this.populatePatientSelect(metadata.patient_id);
+       if (this.validationToggleFullscreen) {
+        this.validationToggleFullscreen.innerHTML = '<i class="fas fa-expand"></i> Expand OCR';
+      }
+
+      this.clearSelectedPatient();
+      const preselectedPatientId = metadata.patient_id || window.app?.documentManager?.currentUploadPatientId || null;
+      if (preselectedPatientId) {
+        await this.setSelectedPatientById(preselectedPatientId);
+      }
       this.updateCompleteButtonState();
     } catch (err) {
       console.error('openValidationForm error:', err);
@@ -690,65 +815,128 @@ export const DocumentNavigation = {
     }
   },
 
-  async populatePatientSelect(selectedId = null) {
-    if (!this.validationPatientSelect) return;
+ setValidationMode({ reviewMode = false } = {}) {
+    if (!this.validationModal) return;
+    this.validationModal.classList.toggle('validation-modal--review', reviewMode);
+  },
 
+   async setSelectedPatientById(patientId) {
+    if (!patientId) return;
     const patientManager = window.app?.patientManager;
-    let patients = patientManager?.patients || [];
-
-    if ((!patients || !patients.length) && patientManager?.fetchPatientsRaw) {
-      const raw = await patientManager.fetchPatientsRaw();
-      patients = raw?.patients || [];
+    let patient = null;
+    if (patientManager?.getPatientById) {
+      patient = await patientManager.getPatientById(patientId);
     }
+    if (!patient && patientManager?.patients) {
+      patient = patientManager.patients.find(p => p.id === patientId) || null;
+    }
+    if (patient) {
+      this.setSelectedPatient(patient);
+    }
+  },
 
-    const preselected = selectedId || window.app?.documentManager?.currentUploadPatientId || '';
+   buildPatientLabel(patient) {
+    return [patient?.given_name, patient?.family_name].filter(Boolean).join(' ').trim() || 'Unnamed';
+  },
 
-    this.validationPatientSelect.innerHTML = '<option value=\"\">Select patient...</option>';
-    patients.forEach(p => {
-      const fullName = [p.family_name, p.given_name].filter(Boolean).join(' ').trim() || 'Unnamed';
-      const option = document.createElement('option');
-      option.value = p.id;
-      option.textContent = fullName;
-      if (preselected && p.id === preselected) {
-        option.selected = true;
+  buildPatientMeta(patient) {
+    return patient?.phone || patient?.cnp || patient?.birth_date || 'No secondary identifier';
+  },
+
+  setSelectedPatient(patient) {
+    if (!patient || !this.validationPatientSearch) return;
+    const label = this.buildPatientLabel(patient);
+    this.validationSelectedPatientId = patient.id;
+    this.validationPatientSearch.value = label;
+    this.validationPatientSearch.dataset.patientId = patient.id;
+    this.clearPatientResults();
+    this.updateCompleteButtonState();
+  },
+
+  clearSelectedPatient() {
+    this.validationSelectedPatientId = null;
+    if (this.validationPatientSearch) {
+      this.validationPatientSearch.dataset.patientId = '';
+    }
+    this.updateCompleteButtonState();
+  },
+
+  renderPatientResults(results = []) {
+    if (!this.validationPatientResults) return;
+    this.validationPatientResults.innerHTML = '';
+    if (!results.length) {
+      this.validationPatientResults.classList.remove('is-open');
+      return;
+    }
+    results.forEach((patient, index) => {
+      const item = document.createElement('div');
+      item.className = 'patient-search-result';
+      if (index === this.patientSearchActiveIndex) {
+        item.classList.add('active');
       }
-      this.validationPatientSelect.appendChild(option);
+      item.dataset.index = index;
+      item.innerHTML = `
+        <span class="patient-name">${this.buildPatientLabel(patient)}</span>
+        <span class="patient-meta">${this.buildPatientMeta(patient)}</span>
+      `;
+      item.addEventListener('click', () => this.setSelectedPatient(patient));
+      this.validationPatientResults.appendChild(item);
     });
-    
-    
-     const hasPreselected = preselected && patients.some(p => p.id === preselected);
-    if (preselected && !hasPreselected && patientManager?.getPatientById) {
-      const patient = await patientManager.getPatientById(preselected);
-      if (patient) {
-        const option = document.createElement('option');
-        option.value = patient.id;
-        option.textContent = [patient.family_name, patient.given_name].filter(Boolean).join(' ').trim() || 'Selected patient';
-        option.selected = true;
-        this.validationPatientSelect.appendChild(option);
-      }
-    }
+    this.validationPatientResults.classList.add('is-open');
+  },
+
+  clearPatientResults() {
+    if (!this.validationPatientResults) return;
+    this.validationPatientResults.innerHTML = '';
+    this.validationPatientResults.classList.remove('is-open');
+    this.patientSearchResults = [];
+    this.patientSearchActiveIndex = -1;
   },
 
   handlePatientSearch(value) {
     if (!window.app?.patientManager?.searchPatients) return;
     clearTimeout(this.patientSearchTimeout);
+    this.clearSelectedPatient();
+    const query = value.trim();
+    if (!query) {
+      this.clearPatientResults();
+      return;
+    }
     this.patientSearchTimeout = setTimeout(async () => {
-      const results = await window.app.patientManager.searchPatients(value || '');
-      this.validationPatientSelect.innerHTML = '<option value=\"\">Select patient...</option>';
-      results.forEach(p => {
-        const fullName = [p.family_name, p.given_name].filter(Boolean).join(' ').trim() || 'Unnamed';
-        const option = document.createElement('option');
-        option.value = p.id;
-        option.textContent = fullName;
-        this.validationPatientSelect.appendChild(option);
-      });
-      this.updateCompleteButtonState();
+      const results = await window.app.patientManager.searchPatients(query || '');
+      this.patientSearchResults = results || [];
+      this.patientSearchActiveIndex = this.patientSearchResults.length ? 0 : -1;
+      this.renderPatientResults(this.patientSearchResults);
     }, 200);
   },
 
+  handlePatientSearchKeydown(event) {
+    if (!this.patientSearchResults.length) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      this.patientSearchActiveIndex = Math.min(
+        this.patientSearchActiveIndex + 1,
+        this.patientSearchResults.length - 1
+      );
+      this.renderPatientResults(this.patientSearchResults);
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.patientSearchActiveIndex = Math.max(this.patientSearchActiveIndex - 1, 0);
+      this.renderPatientResults(this.patientSearchResults);
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const selected = this.patientSearchResults[this.patientSearchActiveIndex];
+      if (selected) {
+        this.setSelectedPatient(selected);
+      }
+    }
+  },
+
   updateCompleteButtonState() {
-    if (this.validationCompleteBtn && this.validationPatientSelect) {
-      this.validationCompleteBtn.disabled = !this.validationPatientSelect.value;
+    if (this.validationCompleteBtn) {
+      this.validationCompleteBtn.disabled = !this.validationSelectedPatientId;
     }
   },
 
@@ -764,24 +952,37 @@ export const DocumentNavigation = {
     }
   },
 
+  toggleValidationFullscreen() {
+    if (!this.validationModal || !this.validationToggleFullscreen) return;
+    const isFullscreen = this.validationModal.classList.toggle('validation-modal--fullscreen');
+    this.validationToggleFullscreen.innerHTML = isFullscreen
+      ? '<i class="fas fa-compress"></i> Exit full-screen'
+      : '<i class="fas fa-expand"></i> Expand OCR';
+  },
+
   closeValidationModal() {
     if (this.validationModal) {
-      this.validationModal.classList.remove('open');
+      this.validationModal.classList.remove('open', 'validation-modal--review', 'validation-modal--fullscreen');
       this.validationModal.style.display = 'none';
       this.validationModal.dataset.uploadId = '';
     }
     this.validationInitialOcrText = '';
     if (this.validationOcrField) this.validationOcrField.value = '';
-    if (this.validationPatientSelect) this.validationPatientSelect.value = '';
     if (this.validationPatientSearch) this.validationPatientSearch.value = '';
+    this.clearSelectedPatient();
+    this.clearPatientResults();
+    document.body.classList.remove('modal-open');
     this.setValidationExpanded(true);
+    if (this.validationCompleteBtn) {
+      this.validationCompleteBtn.innerHTML = '<i class="fas fa-check"></i> Assign &amp; complete';
+    }
     this.updateCompleteButtonState();
   },
 
- async handleCompleteAction() {
+  async handleCompleteAction() {
     if (!this.validationModal) return;
     const uploadId = this.validationModal.dataset.uploadId;
-    const patientId = this.validationPatientSelect?.value;
+    const patientId = this.validationSelectedPatientId || this.validationPatientSearch?.dataset?.patientId;
     const editedText = this.validationOcrField?.value || '';
     const documentType = this.validationDocumentTypeSelect?.value || null;
 
@@ -807,7 +1008,7 @@ export const DocumentNavigation = {
         showToast('OCR not finished. Please retry later.', 'warning');
       } else if (err.status === 404) {
         showToast('Patient not found. Refresh patient list.', 'error');
-        await this.populatePatientSelect();
+        this.clearSelectedPatient();
       } else if (err.status === 403) {
         showToast('Not allowed for this clinic.', 'error');
       } else {
@@ -816,7 +1017,7 @@ export const DocumentNavigation = {
     } finally {
       if (this.validationCompleteBtn) {
         this.validationCompleteBtn.disabled = false;
-        this.validationCompleteBtn.textContent = 'Assign patient & complete';
+        this.validationCompleteBtn.innerHTML = '<i class="fas fa-check"></i> Assign &amp; complete';
       }
     }
   },

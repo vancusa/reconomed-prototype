@@ -79,16 +79,24 @@ def _make_upload_card(db: Session, upload: Upload) -> UploadCardResponse:
     if doc and getattr(doc, "ocr_text", None):
         snippet = (doc.ocr_text or "")[:500]
 
+    patient_name = None
+    if upload.patient:
+        patient_name = " ".join(
+            part for part in [upload.patient.given_name, upload.patient.family_name] if part
+        ).strip() or None
+
     return UploadCardResponse(
         id=upload.id,
         clinic_id=upload.clinic_id,
         filename=upload.filename,
         file_size=getattr(upload, "file_size", None),
-        document_type=getattr(upload, "document_type", None),
+        document_type=getattr(upload, "document_type", None) or getattr(doc, "document_type", None),
         job_state=upload.job_state,
         uploaded_at=upload.uploaded_at,
         expires_at=upload.expires_at,
         patient_id=getattr(upload, "patient_id", None),
+        patient_name=patient_name,
+        validated_at=getattr(doc, "validated_at", None),
         preview_url=_preview_url(upload.id),
         ocr_snippet=snippet,
     )

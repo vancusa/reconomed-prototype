@@ -68,7 +68,7 @@ os.makedirs("static", exist_ok=True)
 
 # Serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/components", StaticFiles(directory="static/components"), name="components")
+#app.mount("/components", StaticFiles(directory="static/components"), name="components")
 
 # Enable CORS
 app.add_middleware(
