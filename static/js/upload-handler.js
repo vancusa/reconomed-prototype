@@ -2,6 +2,7 @@
 // ES Module version
 // Handles file selection, compression, and uploading documents
 
+import { apiFetch, apiUrl, API_CONFIG } from './app.js';
 import { compressImage } from './image-compression.js';
 import { showToast } from './ui.js'; // UI helper for notifications
 
@@ -42,7 +43,7 @@ export async function uploadFile(file, patientId, apiBase = '/') {
         formData.append('file', fileToUpload);
 
         // Perform upload
-        const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `/upload?patient_id=${patientId}`), {
+        const response = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `/upload?patient_id=${patientId}`), {
             method: 'POST',
             body: formData
         });

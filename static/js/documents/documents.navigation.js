@@ -34,6 +34,8 @@ export const DocumentNavigation = {
     this.selectAllLabel = document.getElementById('select-all-label');
     this.selectAllCheckbox = document.getElementById('select-all');
     this.totalUploads = document.getElementById('total-uploads');
+    this.uploadArea = document.getElementById('upload-area');
+    this.uploadCountBadge = document.getElementById('upload-count');
     this.processingTitle = document.getElementById('processing-title');
     this.processingBody = document.getElementById('processing-body');
     // Modal elements
@@ -50,13 +52,16 @@ export const DocumentNavigation = {
     this.validationCompleteBtn = document.getElementById('validation-complete');
     this.validationRejectBtn = document.getElementById('validation-reject');
     this.validationToggleFullscreen = document.getElementById('validation-toggle-fullscreen');
+    this.tabCountCache = { unprocessed: 0, processing: 0, validation: 0 };
+    this.maxUploads = window.clinicManager?.clinicData?.max_uploads || 20;
 
-     if (!this.contentArea) {
+    if (!this.contentArea) {
       console.warn('Document tabs content area not found. Skipping document navigation init.');
       return;
     }
 
     this.bindUIEvents();
+    this.updateUploadQuotaBadge();
     await this.switchTab('unprocessed');
   },
 
@@ -177,6 +182,13 @@ export const DocumentNavigation = {
       this.validationToggleFullscreen.addEventListener('click', () => this.toggleValidationFullscreen());
     }
 
+    if (this.validationPreviewLink) {
+      this.validationPreviewLink.addEventListener('click', async (event) => {
+        event.preventDefault();
+        await DocumentActions.openPreview(this.validationPreviewLink.href);
+      });
+    }
+
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && this.validationModal?.classList.contains('open')) {
         this.closeValidationModal();
@@ -218,6 +230,9 @@ export const DocumentNavigation = {
     // 2. DATA LOADING based on tab
     // Update active tab styling
     this.activeTab = tabKey;
+    if (this.uploadArea) {
+      this.uploadArea.classList.toggle('is-hidden', tabKey !== 'unprocessed');
+    }
     
     // Load data
     try {
@@ -292,6 +307,11 @@ export const DocumentNavigation = {
       this.tabCounts[tabKey].textContent = count;
     }
 
+    if (this.tabCountCache && Object.prototype.hasOwnProperty.call(this.tabCountCache, tabKey)) {
+      this.tabCountCache[tabKey] = count;
+      this.updateUploadQuotaBadge();
+    }
+
     if (tabKey === 'validation') {
       const pending = document.getElementById('validation-pending');
       if (pending) pending.textContent = count;
@@ -306,6 +326,13 @@ export const DocumentNavigation = {
       const error = document.getElementById('error-total');
       if (error) error.textContent = count;
     }
+  },
+
+  updateUploadQuotaBadge() {
+    if (!this.uploadCountBadge) return;
+    const maxUploads = window.clinicManager?.clinicData?.max_uploads || this.maxUploads || 20;
+    const total = Object.values(this.tabCountCache || {}).reduce((sum, value) => sum + (value || 0), 0);
+    this.uploadCountBadge.textContent = `${total}/${maxUploads} uploads used`;
   },
 
   /**
@@ -572,10 +599,7 @@ export const DocumentNavigation = {
 
     queue.forEach(doc => {
       const statusConfig = this.getStatusConfig('processing', doc);
-      const card = this.createDocumentCard(doc, {
-        statusConfig,
-        onCardClick: () => window.open(doc.preview_url || '#', '_blank')
-      });
+      const card = this.createDocumentCard(doc, { statusConfig });
 
       container.appendChild(card);
     });
@@ -642,21 +666,10 @@ export const DocumentNavigation = {
 
     docs.forEach(doc => {
       const statusConfig = this.getStatusConfig('completed', doc);
-      const actions = [
-        {
-          label: 'Preview',
-          icon: 'fa-eye',
-          variant: 'secondary',
-          muted: true,
-          onClick: (d) => window.open(d.preview_url || '#', '_blank'),
-        },
-      ];
 
       const card = this.createDocumentCard(doc, {
         statusConfig,
-        actions,
         showCompletedMeta: true,
-        onCardClick: (d) => window.open(d.preview_url || '#', '_blank'),
       });
 
       container.appendChild(card);
@@ -676,13 +689,6 @@ export const DocumentNavigation = {
       const statusConfig = this.getStatusConfig('error', doc);
       const actions = [
         {
-          label: 'Preview',
-          icon: 'fa-eye',
-          variant: 'secondary',
-          muted: true,
-          onClick: (d) => window.open(d.preview_url || '#', '_blank'),
-        },
-        {
           label: 'Delete',
           icon: 'fa-trash',
           variant: 'danger',
@@ -692,7 +698,6 @@ export const DocumentNavigation = {
       const card = this.createDocumentCard(doc, {
         statusConfig,
         actions,
-        onCardClick: (d) => window.open(d.preview_url || '#', '_blank'),
       });
       container.appendChild(card);
     });
@@ -736,13 +741,7 @@ export const DocumentNavigation = {
     if (empty) empty.style.display = 'none';
 
     documents.forEach(doc => {
-      const card = this.createDocumentCard(doc,{
-        onCardClick: () => {
-          if (doc.preview_url) {
-            window.open(doc.preview_url, '_blank');
-          }
-        }
-      });
+      const card = this.createDocumentCard(doc);
       container.appendChild(card);
     });
   },

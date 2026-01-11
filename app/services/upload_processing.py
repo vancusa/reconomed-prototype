@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
@@ -113,6 +114,33 @@ class UploadProcessingService:
         if count:
             db.commit()
         return count
+
+    def cleanup_expired_uploads(self, db: Session, clinic_id: Optional[str] = None) -> int:
+        """
+        Delete expired uploads immediately (and remove files on disk).
+        """
+        now = datetime.utcnow()
+        q = db.query(Upload).filter(Upload.expires_at < now)
+        if clinic_id:
+            q = q.filter(Upload.clinic_id == clinic_id)
+
+        expired = q.all()
+        if not expired:
+            return 0
+
+        for upload in expired:
+            if upload.file_path and os.path.exists(upload.file_path):
+                try:
+                    file_path = Path(upload.file_path)
+                    file_path.unlink(missing_ok=True)
+                    if file_path.parent.exists() and not any(file_path.parent.iterdir()):
+                        file_path.parent.rmdir()
+                except Exception:
+                    pass
+            db.delete(upload)
+
+        db.commit()
+        return len(expired)
 
     def claim_next(self, db: Session, clinic_id: Optional[str] = None, worker_id: Optional[str] = None) -> Optional[Upload]:
         """

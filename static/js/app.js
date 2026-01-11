@@ -46,13 +46,18 @@ function apiUrl(endpoint, path = '',params = {}) {
     return url;
 }
 
+function apiFetch(input, init = {}) {
+  return fetch(input, withUserHeader(init));
+}
+
 // Export for ES modules
-export { API_CONFIG, apiUrl };
+export { API_CONFIG, apiUrl, apiFetch };
 
 // Keep backward compatibility for legacy scripts
 if (typeof window !== 'undefined') {
   window.API_CONFIG = API_CONFIG;
   window.apiUrl = apiUrl;
+  window.apiFetch = apiFetch;
 }
 
 // =========================================================================
@@ -189,18 +194,8 @@ class ReconoMedApp {
             
             // Load patients from backend
             await this.patientManager.loadPatients();
-            
-            //Fetch consultation stats from backend
-            const statsResponse = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'today/stats'));
-            if (!statsResponse.ok) {
-                throw new Error(`HTTP error! status: ${statsResponse.status}`);
-            }
-            const todayStats = await statsResponse.json(); // Data is: { "patients_today": N }
-
-            this.updateDashboardStats(todayStats); // Pass the new stats to the update function
-
-            // Load consultation tab counts
-            await this.loadConsultationCounts(); 
+            this.updateDashboardStats();
+            await this.loadTodayConsultations();
 
         } catch (err) {
             console.error('Data loading failed:', err);
@@ -211,73 +206,81 @@ class ReconoMedApp {
         }
     }
 
-    async loadConsultationCounts() {
-        try {
-            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'counts'));
-            //print response
-            console.debug(response);
-            if (response.ok) {
-                const counts = await response.json();
-                document.getElementById('active-consultations').textContent = counts.active_consultations ?? 0;
-                document.getElementById('review-pending').textContent = counts.review_pending ?? 0;
-                document.getElementById('discharge-ready').textContent = counts.discharge_ready ?? 0;
-            }
-        } catch (err) {
-            console.error('Failed to load consultation counts:', err);
-        }
-    }
-    
     async refreshActivity() {
-        try {
-            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'activity/recent'));
-            if (!response.ok) throw new Error('Failed to load activity');
-            
-            const data = await response.json();
-            this.renderRecentActivity(data.activities);
-        } catch (err) {
-            console.error('Failed to refresh activity:', err);
-            showToast('Failed to refresh activity', 'error');
-        }
-    }
-
-    renderRecentActivity(activities) {
-        const container = document.getElementById('recent-activity');
-        if (!container) return;
-        
-        if (activities.length === 0) {
-            container.innerHTML = '<p class="text-secondary">No recent activity</p>';
-            return;
-        }
-        
-        container.innerHTML = activities.map(activity => `
-            <div class="activity-item">
-                <i class="${activity.icon}"></i>
-                <div class="activity-info">
-                    <div class="activity-title">${activity.title}</div>
-                    <div class="activity-time">${new Date(activity.timestamp).toLocaleString('ro-RO')}</div>
-                </div>
-            </div>
-        `).join('');
+        await this.loadTodayConsultations();
     }
 
     // =========================================================================
     // UTILITY METHODS: Application Logic
     // =========================================================================
-    updateDashboardStats(newStats) {
+    updateDashboardStats() {
         // 1. Update total patients (existing logic)
         const totalPatientsEl = document.getElementById('total-patients');
         if (totalPatientsEl) {
             totalPatientsEl.textContent = this.patients.length;
         }
+    }
 
-        // 2. NEW LOGIC: Update Patients Today
-        const patientsTodayEl = document.getElementById('patients-today');
-        
-        // Check if the element exists AND if the data was passed in
-        if (patientsTodayEl && newStats && newStats.patients_today !== undefined) {
-            // Use the value from the fetched object
-            patientsTodayEl.textContent = newStats.patients_today;
+    async loadTodayConsultations() {
+        try {
+            const queueRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'today/queue'));
+            if (!queueRes.ok) throw new Error('Failed to load today consultations');
+            const queue = await queueRes.json();
+
+            const validationRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, 'uploads?tab=validation'));
+            if (!validationRes.ok) throw new Error('Failed to load validation uploads');
+            const validationData = await validationRes.json();
+            const validationCount = validationData?.items?.length || 0;
+
+            this.updateDashboardTodayCards(queue, validationCount);
+            this.renderTodayConsultations(queue);
+        } catch (err) {
+            console.error('Failed to load today consultations:', err);
         }
+    }
+
+    updateDashboardTodayCards(queue, validationCount) {
+        const doneEl = document.getElementById('consults-done-today');
+        if (doneEl) doneEl.textContent = queue?.completed?.length ?? 0;
+
+        const remainingEl = document.getElementById('consults-remaining-today');
+        if (remainingEl) remainingEl.textContent = queue?.remaining?.length ?? 0;
+
+        const validationEl = document.getElementById('docs-needing-validation');
+        if (validationEl) validationEl.textContent = validationCount ?? 0;
+    }
+
+    renderTodayConsultations(queue) {
+        const remainingContainer = document.getElementById('today-consultations-remaining');
+        const completedContainer = document.getElementById('today-consultations-completed');
+        if (!remainingContainer || !completedContainer) return;
+
+        const remaining = queue?.remaining || [];
+        const completed = queue?.completed || [];
+
+        remainingContainer.innerHTML = this.buildConsultationList(remaining, 'No remaining consultations today.');
+        completedContainer.innerHTML = this.buildConsultationList(completed, 'No completed consultations yet.');
+    }
+
+    buildConsultationList(items, emptyMessage) {
+        if (!items.length) {
+            return `<div class="empty-message">${emptyMessage}</div>`;
+        }
+        return items.map(item => {
+            const timeText = item.consultation_date
+                ? new Date(item.consultation_date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+                : 'No time';
+            const statusText = (item.status || '').replace('_', ' ');
+            return `
+                <div class="consultation-item">
+                    <div class="consultation-item__info">
+                        <div class="consultation-item__title">${item.patient_name}</div>
+                        <div class="consultation-item__meta">${item.specialty} · ${timeText}</div>
+                    </div>
+                    <span class="consultation-item__status">${statusText || 'status'}</span>
+                </div>
+            `;
+        }).join('');
     }
 }
 

@@ -465,7 +465,7 @@ body {
 }
 
 .stat-icon.documents { 
-    background: var(--info-text); 
+    background: var(--warning-accent); 
 }
 
 .stat-icon.pending { 
@@ -544,6 +544,61 @@ body {
 .activity-list {
     max-height: 300px;
     overflow-y: auto;
+}
+
+.today-consultations {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.consultation-section h4 {
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+}
+
+.consultation-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.consultation-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    border: 1px solid var(--border-light);
+    border-radius: var(--border-radius);
+    background: var(--bg-content);
+}
+
+.consultation-item__info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.consultation-item__title {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.consultation-item__meta {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.consultation-item__status {
+    font-size: 0.75rem;
+    text-transform: capitalize;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    white-space: nowrap;
 }
 
 .activity-item {
@@ -832,6 +887,10 @@ body {
     align-items: center;
 }
 
+.upload-area.is-hidden {
+    display: none;
+}
+
 .spinner {
     width: 40px;
     height: 40px;
@@ -1011,6 +1070,20 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 1rem; /* space between cards */
     align-items: start;
+}
+
+.file-container.list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.validation-list,
+.completed-list,
+.error-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
 }
 
 .documents-list {

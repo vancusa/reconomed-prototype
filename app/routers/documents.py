@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
+from uuid import uuid4
 from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Query
@@ -142,6 +144,20 @@ def _require_same_clinic(user: User, upload: Upload) -> None:
     if upload.clinic_id != user.clinic_id:
         raise HTTPException(status_code=403, detail="Forbidden (wrong clinic)")
 
+
+def _remove_upload_file(upload: Upload) -> None:
+    if not upload.file_path:
+        return
+    try:
+        file_path = Path(upload.file_path)
+        if file_path.exists():
+            file_path.unlink()
+        if file_path.parent.exists() and not any(file_path.parent.iterdir()):
+            file_path.parent.rmdir()
+    except Exception:
+        # In MVP: do not block delete if file removal fails.
+        pass
+
 # ----------------------------
 # Upload endpoints
 # ----------------------------
@@ -169,14 +185,20 @@ async def upload_files(
 
     for f in files:
         # Validate file type (pdf/jpg/png/etc.)
-        if not validate_file_type(f.filename):
+        if not validate_file_type(f.content_type, f.filename):
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {f.filename}")
 
         # Save to disk
-        file_path, file_size = await save_uploaded_file(f, clinic_id=user.clinic_id)
+        upload_id = str(uuid4())
+        file_path, file_size = await save_uploaded_file(
+            f,
+            clinic_id=user.clinic_id,
+            upload_id=upload_id,
+        )
 
         # Create upload row (auto-queue)
         upload = Upload(
+            id=upload_id,
             clinic_id=user.clinic_id,
             filename=f.filename,
             file_path=file_path,
@@ -221,6 +243,8 @@ def list_uploads_by_tab(
     - error: job_state == ocr_failed
     """
     user = get_user_from_header(db, request)
+
+    processing_svc.cleanup_expired_uploads(db, clinic_id=user.clinic_id)
 
     q = db.query(Upload).filter(Upload.clinic_id == user.clinic_id)
 
@@ -438,6 +462,8 @@ def complete_upload_assign_and_approve(
     db.commit()
     db.refresh(upload)
 
+    _remove_upload_file(upload)
+
     return UploadCompleteResponse(upload=_make_upload_detail(db, upload))
 
 @router.delete("/uploads/{upload_id}", response_model=UploadRejectResponse)
@@ -465,12 +491,7 @@ def reject_and_delete_upload(
         db.delete(doc)
 
     # delete file from disk
-    if upload.file_path and os.path.exists(upload.file_path):
-        try:
-            os.remove(upload.file_path)
-        except Exception:
-            # In MVP: do not block delete if file removal fails; log later if you have logging.
-            pass
+    _remove_upload_file(upload)
 
     db.delete(upload)
     db.commit()
@@ -496,7 +517,7 @@ def download_upload_file(
     _require_same_clinic(user, upload)
 
     if not upload.file_path or not os.path.exists(upload.file_path):
-        raise HTTPException(status_code=404, detail="File not found on disk")
+        raise HTTPException(status_code=404, detail="File unavailable")
 
     return FileResponse(
         upload.file_path,

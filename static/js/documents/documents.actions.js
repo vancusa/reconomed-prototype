@@ -1,32 +1,8 @@
 // documents.actions.js
 // Handles backend calls and data-level operations for the Documents module
 
-import { apiUrl, API_CONFIG } from '../app.js';
+import { apiUrl, API_CONFIG, apiFetch } from '../app.js';
 import { showToast } from '../ui.js';
-
-function currentUserEmail() {
-  if (typeof window === 'undefined') return null;
-  if (window.app?.currentUser?.email) return window.app.currentUser.email;
-  try {
-    const raw = localStorage.getItem('reconomed_user');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return parsed?.email || parsed?.username || null;
-    }
-  } catch (e) {
-    return null;
-  }
-  return null;
-}
-
-function withUserHeaders(baseHeaders = {}) {
-  const headers = new Headers(baseHeaders);
-  const email = currentUserEmail();
-  if (email && !headers.has('X-User')) {
-    headers.set('X-User', email);
-  }
-  return headers;
-}
 
 export const DocumentActions = {
   /**
@@ -39,9 +15,8 @@ export const DocumentActions = {
     }
 
     try {
-      const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents,'uploads'), {
+      const response = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents,'uploads'), {
         method: 'POST',
-        headers: withUserHeaders(),
         body: formData,
       });
       if (!response.ok) throw new Error('Upload failed');
@@ -60,9 +35,8 @@ export const DocumentActions = {
 
   async fetchTab(tab) {
     const tabParam = encodeURIComponent(tab);
-    const response = await fetch(
-      apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads?tab=${tabParam}`),
-      { headers: withUserHeaders() }
+    const response = await apiFetch(
+      apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads?tab=${tabParam}`)
     );
     if (!response.ok) throw new Error(`Failed to fetch ${tab} uploads`);
     const data = await response.json();
@@ -78,9 +52,9 @@ export const DocumentActions = {
    * @returns {Promise<Object>} Completed document
    */
   async completeUpload(uploadId, patientId, editedOcrText = null, documentType = null) {
-    const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/complete`), {
+    const response = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/complete`), {
       method: 'POST',
-      headers: withUserHeaders({ 'Content-Type': 'application/json' }),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         patient_id: patientId,
         edited_ocr_text: editedOcrText,
@@ -109,9 +83,8 @@ export const DocumentActions = {
     try {
       const requests = uploadIds.map((id) => {
         const query = `uploads/${encodeURIComponent(id)}/type?document_type=${encodeURIComponent(documentType)}`;
-        return fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, query), {
+        return apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, query), {
           method: 'PUT',
-          headers: {}
         });
       });
 
@@ -136,9 +109,7 @@ export const DocumentActions = {
    * @returns {Promise<{metadata: Object, ocr: Object, previewUrl: string}>}
    */
   async fetchUploadDetails(uploadId) {
-    const detailRes = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`), {
-      headers: withUserHeaders()
-    });
+    const detailRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`));
     if (!detailRes.ok) {
       const body = await detailRes.json().catch(() => ({}));
       const err = new Error(body?.detail || 'Failed to load upload detail');
@@ -148,9 +119,7 @@ export const DocumentActions = {
 
     const metadata = await detailRes.json();
 
-    const ocrRes = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/ocr`), {
-      headers: withUserHeaders()
-    });
+    const ocrRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/ocr`));
     const ocr = ocrRes.ok ? await ocrRes.json() : null;
 
     return { metadata, ocr, previewUrl: apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/download`) };
@@ -173,9 +142,8 @@ export const DocumentActions = {
    * @param {string} uploadId
    */
   async rejectUpload(uploadId) {
-    const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`), {
+    const res = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`), {
       method: 'DELETE',
-      headers: withUserHeaders(),
     });
 
     if (res.status === 404) {
@@ -192,5 +160,36 @@ export const DocumentActions = {
     }
 
     return res.json();
+  },
+
+  async openPreview(url) {
+    if (!url || url === '#') {
+      showToast('File unavailable; re-upload', 'error');
+      return;
+    }
+
+    try {
+      const res = await apiFetch(url);
+      if (res.status === 403) {
+        showToast('Not allowed', 'error');
+        return;
+      }
+      if (res.status === 404) {
+        showToast('File unavailable; re-upload', 'error');
+        return;
+      }
+      if (!res.ok) {
+        showToast('Unable to open preview', 'error');
+        return;
+      }
+
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+    } catch (err) {
+      console.error('Preview error:', err);
+      showToast('File unavailable; re-upload', 'error');
+    }
   },
 };

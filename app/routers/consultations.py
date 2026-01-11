@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any
 import uuid
 import aiofiles
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 import os
 
@@ -18,6 +18,7 @@ from app.schemas import (
     ConsultationStart, ConsultationAutoSave, ConsultationCreate,
     ConsultationUpdate, ConsultationResponse, ConsultationListItem,
     ConsultationCountsResponse, ConsultationTodayStatsResponse,
+    ConsultationTodayQueueResponse, ConsultationTodayQueueItem,
     ConsultationAudioUploadResponse, ConsultationAudioProcessResponse,
     ConsultationTranscriptResponse, ApiMessageResponse
 )
@@ -610,8 +611,6 @@ async def get_today_stats(
 )-> ConsultationTodayStatsResponse:
     """Get today's consultation statistics"""
     current_user = get_user_from_header(db, request)
-    
-    from datetime import date
     today = date.today()
     
     patients_today = db.query(Consultation.patient_id).filter(
@@ -620,6 +619,62 @@ async def get_today_stats(
     ).distinct().count()
     
     return ConsultationTodayStatsResponse(patients_today=patients_today)
+
+
+@router.get("/today/queue", response_model=ConsultationTodayQueueResponse)
+async def get_today_consultation_queue(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ConsultationTodayQueueResponse:
+    """Get today's consultations split into remaining vs completed."""
+    current_user = get_user_from_header(db, request)
+    today = date.today()
+
+    base_q = db.query(Consultation, Patient).join(
+        Patient, Patient.id == Consultation.patient_id
+    ).filter(
+        Consultation.clinic_id == current_user.clinic_id,
+        func.date(Consultation.consultation_date) == today,
+    )
+
+    remaining_statuses = ("completed", "discharged", "cancelled")
+    completed_statuses = ("completed", "discharged")
+
+    remaining_rows = base_q.filter(
+        Consultation.status.notin_(remaining_statuses)
+    ).order_by(Consultation.consultation_date.asc()).all()
+
+    completed_rows = base_q.filter(
+        Consultation.status.in_(completed_statuses)
+    ).order_by(Consultation.consultation_date.desc()).all()
+
+    remaining = [
+        ConsultationTodayQueueItem(
+            id=consultation.id,
+            patient_name=" ".join(
+                part for part in [patient.given_name, patient.family_name] if part
+            ).strip() or "Unnamed patient",
+            specialty=consultation.specialty,
+            consultation_date=consultation.consultation_date,
+            status=consultation.status,
+        )
+        for consultation, patient in remaining_rows
+    ]
+
+    completed = [
+        ConsultationTodayQueueItem(
+            id=consultation.id,
+            patient_name=" ".join(
+                part for part in [patient.given_name, patient.family_name] if part
+            ).strip() or "Unnamed patient",
+            specialty=consultation.specialty,
+            consultation_date=consultation.consultation_date,
+            status=consultation.status,
+        )
+        for consultation, patient in completed_rows
+    ]
+
+    return ConsultationTodayQueueResponse(remaining=remaining, completed=completed)
 
 
 

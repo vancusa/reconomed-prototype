@@ -1,4 +1,6 @@
 // static/js/clinics.js
+import { apiFetch, apiUrl, API_CONFIG } from './app.js';
+
 class ClinicManager {
     constructor() {
         this.clinicData = null;
@@ -12,7 +14,7 @@ class ClinicManager {
 
     async loadClinicData() {
         try {
-            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.clinics, `my-clinic`));
+            const response = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.clinics, `my-clinic`));
             //console.log(response);
             if (!response.ok) throw new Error('Failed to load clinic data');
             

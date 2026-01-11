@@ -147,6 +147,20 @@ class ConsultationCountsResponse(BaseModel):
 class ConsultationTodayStatsResponse(BaseModel):
     patients_today: int
 
+class ConsultationTodayQueueItem(BaseModel):
+    id: str
+    patient_name: str
+    specialty: str
+    consultation_date: datetime
+    status: str
+
+    class Config:
+        from_attributes = True
+
+class ConsultationTodayQueueResponse(BaseModel):
+    remaining: List[ConsultationTodayQueueItem]
+    completed: List[ConsultationTodayQueueItem]
+
 class ConsultationAudioUploadResponse(BaseModel):
     message: str
     audio_file_path: str
