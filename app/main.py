@@ -1,4 +1,12 @@
 """ReconoMed FastAPI Application - Main Entry Point"""
+#initialize environment variables
+from dotenv import load_dotenv
+import os
+
+# Load .env file from the project root
+load_dotenv()
+
+#import the necessary packages
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -6,8 +14,6 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from threading import Thread
-
-import os
 
 #---SETUP LOGGING
 import logging
@@ -74,6 +80,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Configure for production
+    # "https://reconomed.com",
+    #"https://www.reconomed.com",
+    #    "https://psychic-winner-5gqx4qr9qgxj34rv5-8000.app.github.dev",  #  current dev URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

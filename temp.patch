@@ -1,1410 +1,1225 @@
-diff --git a/app/routers/consultations.py b/app/routers/consultations.py
-index 9ee8cb3b7b37ef4d8d57919e187c1d7d67d4bff7..09b14d6c5353587107d6839540c34fb8da428a32 100644
---- a/app/routers/consultations.py
-+++ b/app/routers/consultations.py
-@@ -1,45 +1,46 @@
+diff --git a/app/services/document.py b/app/services/document.py
+index bb8c757889c222ebc912945f3055d71c619e16ce..9170ccb292df5761e13cecd81ae9977738cba68f 100644
+--- a/app/services/document.py
++++ b/app/services/document.py
+@@ -1,96 +1,97 @@
+ # app/services/document.py
+ from __future__ import annotations
  
- """Consultation management endpoints - Phase 4A"""
- from fastapi import APIRouter, Depends, HTTPException, Query,UploadFile, File, Request
- from sqlalchemy.orm import Session
- from sqlalchemy import func, or_
- from typing import List, Optional, Dict, Any
- import uuid
- import aiofiles
+ from dataclasses import dataclass
+ from typing import Any, Dict, Optional
  import logging
--from datetime import datetime
-+from datetime import datetime, date
- from pathlib import Path
- import os
  
- from app.database import get_db
- from app.auth import get_user_from_header
- from app.models import Consultation, User, Patient, GDPRAuditLog, Document
- from app.schemas import (
-     ConsultationStart, ConsultationAutoSave, ConsultationCreate,
-     ConsultationUpdate, ConsultationResponse, ConsultationListItem,
-     ConsultationCountsResponse, ConsultationTodayStatsResponse,
-+    ConsultationTodayQueueResponse, ConsultationTodayQueueItem,
-     ConsultationAudioUploadResponse, ConsultationAudioProcessResponse,
-     ConsultationTranscriptResponse, ApiMessageResponse
- )
- from app.services.template_service import TemplateService
- from app.services.audio_service import AudioTranscriptionService
- from app.services.llm_extraction_service import LLMExtractionService
- from app.services.template_service import TemplateService
+-from app.services.bulk_ocr import RomanianBulkOCR
++from app.services.ocr_provider import OpenAIOCRProvider
++from app.utils.file import normalize_mime_type
  
- 
- router = APIRouter(tags=["consultations"])
- 
- # Loggers
- audit_logger = logging.getLogger("reconomed.audit")
  app_logger = logging.getLogger("reconomed.app")
  
  
- # Initialize services (use environment variables in production)
- audio_service = AudioTranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
- llm_service = LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
- 
- #--------------
- # Get counts
- #------------------
- @router.get("/counts", response_model=ConsultationCountsResponse)
- async def get_consultation_counts(
-@@ -588,62 +589,116 @@ async def update_consultation(
-     if consultation_data.consultation_date is not None:
-         consultation.consultation_date = consultation_data.consultation_date
-     if consultation_data.structured_data is not None:
-         consultation.structured_data = consultation_data.structured_data
-     if consultation_data.audio_transcript is not None:
-         consultation.audio_transcript = consultation_data.audio_transcript
-     if consultation_data.status is not None:
-         consultation.status = consultation_data.status
-     if consultation_data.is_signed is not None:
-         consultation.is_signed = consultation_data.is_signed
-         if consultation_data.is_signed:
-             consultation.signed_at = datetime.utcnow()
-     
-     db.commit()
-     db.refresh(consultation)
-     
-     return consultation
- 
- @router.get("/today/stats", response_model=ConsultationTodayStatsResponse)
- async def get_today_stats(
-     request: Request,
-     db: Session = Depends(get_db),
- )-> ConsultationTodayStatsResponse:
-     """Get today's consultation statistics"""
-     current_user = get_user_from_header(db, request)
--    
--    from datetime import date
-     today = date.today()
-     
-     patients_today = db.query(Consultation.patient_id).filter(
-         Consultation.clinic_id == current_user.clinic_id,
-         func.date(Consultation.consultation_date) == today
-     ).distinct().count()
-     
-     return ConsultationTodayStatsResponse(patients_today=patients_today)
- 
- 
-+@router.get("/today/queue", response_model=ConsultationTodayQueueResponse)
-+async def get_today_consultation_queue(
-+    request: Request,
-+    db: Session = Depends(get_db),
-+) -> ConsultationTodayQueueResponse:
-+    """Get today's consultations split into remaining vs completed."""
-+    current_user = get_user_from_header(db, request)
-+    today = date.today()
-+
-+    base_q = db.query(Consultation, Patient).join(
-+        Patient, Patient.id == Consultation.patient_id
-+    ).filter(
-+        Consultation.clinic_id == current_user.clinic_id,
-+        func.date(Consultation.consultation_date) == today,
-+    )
-+
-+    remaining_statuses = ("completed", "discharged", "cancelled")
-+    completed_statuses = ("completed", "discharged")
-+
-+    remaining_rows = base_q.filter(
-+        Consultation.status.notin_(remaining_statuses)
-+    ).order_by(Consultation.consultation_date.asc()).all()
-+
-+    completed_rows = base_q.filter(
-+        Consultation.status.in_(completed_statuses)
-+    ).order_by(Consultation.consultation_date.desc()).all()
-+
-+    remaining = [
-+        ConsultationTodayQueueItem(
-+            id=consultation.id,
-+            patient_name=" ".join(
-+                part for part in [patient.given_name, patient.family_name] if part
-+            ).strip() or "Unnamed patient",
-+            specialty=consultation.specialty,
-+            consultation_date=consultation.consultation_date,
-+            status=consultation.status,
-+        )
-+        for consultation, patient in remaining_rows
-+    ]
-+
-+    completed = [
-+        ConsultationTodayQueueItem(
-+            id=consultation.id,
-+            patient_name=" ".join(
-+                part for part in [patient.given_name, patient.family_name] if part
-+            ).strip() or "Unnamed patient",
-+            specialty=consultation.specialty,
-+            consultation_date=consultation.consultation_date,
-+            status=consultation.status,
-+        )
-+        for consultation, patient in completed_rows
-+    ]
-+
-+    return ConsultationTodayQueueResponse(remaining=remaining, completed=completed)
-+
-+
- 
- @router.get("/templates/{specialty}")
- async def get_consultation_template(
-     specialty: str,
-     db: Session = Depends(get_db)
- ):
-     """Get template definition for specialty"""
-     template_service = TemplateService(db)
-     try:
-         template = template_service.get_template(specialty)
-         return template
-     except ValueError as e:
-         raise HTTPException(status_code=400, detail=str(e))
- 
- @router.post("/{consultation_id}/pre-fill", response_model=ConsultationResponse)
- async def pre_fill_consultation(
-     consultation_id: str,
-     request:Request,
-     selected_documents: Optional[List[str]] = None,
-     db: Session = Depends(get_db)
- )-> ConsultationResponse:
+ @dataclass
+ class DocumentProcessingResult:
      """
-     Pre-fill consultation with patient history.
-     Called after doctor selects which documents to include.
+     v1 contract: Bulk OCR only. No templates, no document classification,
+     no ID-card logic, no lab interpretation.
+ 
+     Keep keys stable so routers/workers stay simple.
      """
-@@ -910,26 +965,26 @@ def _deep_merge_with_confidence(
-             merged[section_id] = merged_section
-     
-     return merged
+     success: bool
+     ocr_text: str
+     confidence_score: int
+     document_type: Optional[str]
+     structured_data: Dict[str, Any]
+     processing_metadata: Dict[str, Any]
+     error: Optional[str] = None
  
- @router.get("/{consultation_id}/audio/transcript", response_model=ConsultationTranscriptResponse)
- async def get_consultation_transcript(
-     consultation_id: str,
-     request:Request,
-     db: Session = Depends(get_db)
- )-> ConsultationTranscriptResponse:
-     """Get audio transcript for consultation (for review/editing)"""
-     current_user = get_user_from_header(db, request)
-     
-     consultation = db.query(Consultation).filter(
-         Consultation.id == consultation_id,
-         Consultation.clinic_id == current_user.clinic_id
-     ).first()
-     
-     if not consultation:
-         raise HTTPException(status_code=404, detail="Consultation not found")
-     
-     return ConsultationTranscriptResponse(
-         consultation_id=consultation_id,
-         transcript=consultation.audio_transcript,
-         duration_seconds=consultation.audio_duration_seconds,
--    )
-\ No newline at end of file
-+    )
-diff --git a/app/routers/documents.py b/app/routers/documents.py
-index 5223f8a3ddd021f7427caa33c18bc34f8a40ed66..b4a4f660886c95ea984bee8f04665b5e084be3f7 100644
---- a/app/routers/documents.py
-+++ b/app/routers/documents.py
-@@ -3,50 +3,52 @@
- #
- # Public API surface is Upload-first:
- # - Upload a file -> Upload row created with job_state=queued
- # - Worker claims and OCRs -> creates/updates 1 Document per Upload
- # - Doctor sees items by tab (derived server-side) -> assigns patient & completes
- # - Reject deletes immediately (Upload + Document + file)
- #
- # Internal/technical state:
- #   Upload.job_state: queued | processing | ocr_done | ocr_failed
- #
- # Human/clinical state:
- #   Document.validation_status: pending | approved | rejected
- #   Upload.patient_id indicates association
- #
- # Tabs are derived (not stored):
- # - unprocessed: job_state == queued
- # - processing: job_state == processing
- # - validation: job_state == ocr_done AND (patient_id is null OR document.validation_status != approved)
- # - completed: job_state == ocr_done AND patient_id not null AND document.validation_status == approved
- # - error: job_state == ocr_failed
  
- from __future__ import annotations
- 
- import os
- from datetime import datetime, timedelta
-+from pathlib import Path
-+from uuid import uuid4
- from typing import List
- 
- from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Query
- from fastapi.responses import FileResponse
- from sqlalchemy.orm import Session
- 
- from app.database import get_db
- from app.models import Upload, Document, Patient, User
- from app.auth import get_user_from_header
- 
- from app.schemas import (
-     # Enums
-     JobState, ValidationStatus, TabName,
-     # Upload list/detail schemas
-     UploadCardResponse, UploadListResponse,
-     UploadDocumentSummary, UploadDetailResponse,
-     UploadOCRResponse,
-     # Workflow actions
-     UploadCompleteRequest, UploadCompleteResponse,
-     UploadRejectResponse,
-     UploadBatchAssignRequest,
-     UploadBatchTypeRequest,
- )
- 
- # File utils (adjust these imports to your actual module paths/names)
-@@ -120,130 +122,152 @@ def _make_upload_detail(db: Session, upload: Upload) -> UploadDetailResponse:
-         id=upload.id,
-         clinic_id=upload.clinic_id,
-         filename=upload.filename,
-         file_path=upload.file_path,
-         file_size=getattr(upload, "file_size", None),
-         document_type=getattr(upload, "document_type", None),
-         job_state=upload.job_state,
-         attempts=getattr(upload, "attempts", 0) or 0,
-         claimed_at=getattr(upload, "claimed_at", None),
-         claimed_by=getattr(upload, "claimed_by", None),
-         error_message=getattr(upload, "error_message", None),
-         patient_id=getattr(upload, "patient_id", None),
-         uploaded_at=upload.uploaded_at,
-         expires_at=upload.expires_at,
-         preview_url=_preview_url(upload.id),
-         document=doc_summary,
-     )
- 
- def _require_same_clinic(user: User, upload: Upload) -> None:
+ class DocumentService:
      """
-     Multi-tenant guard: user can only act within their clinic.
+     v1 Document service:
+-    - Runs bulk OCR (Romanian + English) using Tesseract with preprocessing + multi-config selection.
++    - Runs OCR via OpenAI Vision for images and PDFs.
+     - Returns OCR text + confidence + minimal metadata.
+     - Leaves document_type empty (or passes through hint, but does not infer).
+     - structured_data is always {} in v1.
      """
-     if upload.clinic_id != user.clinic_id:
-         raise HTTPException(status_code=403, detail="Forbidden (wrong clinic)")
  
-+
-+def _remove_upload_file(upload: Upload) -> None:
-+    if not upload.file_path:
-+        return
-+    try:
-+        file_path = Path(upload.file_path)
-+        if file_path.exists():
-+            file_path.unlink()
-+        if file_path.parent.exists() and not any(file_path.parent.iterdir()):
-+            file_path.parent.rmdir()
-+    except Exception:
-+        # In MVP: do not block delete if file removal fails.
-+        pass
-+
- # ----------------------------
- # Upload endpoints
- # ----------------------------
- 
- @router.post("/uploads", response_model=List[UploadCardResponse])
- async def upload_files(
-     request: Request,
-     files: List[UploadFile] = File(...),
-     db: Session = Depends(get_db),
- ):
-     """
-     Upload one or multiple files (no patient required).
-     Behavior:
-     - Saves file to disk
-     - Creates Upload rows in DB
-     - Sets job_state=queued immediately (server-side auto OCR)
-     - Returns UploadCardResponse cards for UI rendering
-     """
-     user = get_user_from_header(db, request)
- 
-     if not files:
-         raise HTTPException(status_code=400, detail="No files provided")
- 
-     created: List[Upload] = []
- 
-     for f in files:
-         # Validate file type (pdf/jpg/png/etc.)
--        if not validate_file_type(f.filename):
-+        if not validate_file_type(f.content_type, f.filename):
-             raise HTTPException(status_code=400, detail=f"Unsupported file type: {f.filename}")
- 
-         # Save to disk
--        file_path, file_size = await save_uploaded_file(f, clinic_id=user.clinic_id)
-+        upload_id = str(uuid4())
-+        file_path, file_size = await save_uploaded_file(
-+            f,
-+            clinic_id=user.clinic_id,
-+            upload_id=upload_id,
-+        )
- 
-         # Create upload row (auto-queue)
-         upload = Upload(
-+            id=upload_id,
-             clinic_id=user.clinic_id,
-             filename=f.filename,
-             file_path=file_path,
-             file_size=file_size,
-             document_type=None,
-             patient_id=None,
-             job_state=JobState.QUEUED.value,
-             attempts=0,
-             claimed_at=None,
-             claimed_by=None,
-             error_message=None,
-             uploaded_at=datetime.utcnow(),
-             expires_at=datetime.utcnow() + timedelta(days=30),
-         )
-         db.add(upload)
-         created.append(upload)
- 
-     db.commit()
- 
-     # refresh to get IDs
-     for u in created:
-         db.refresh(u)
- 
-     # Return cards (UI can drop them into Unprocessed tab)
-     return [_make_upload_card(db, u) for u in created]
- 
- @router.get("/uploads", response_model=UploadListResponse)
- def list_uploads_by_tab(
-     request: Request,
-     tab: TabName = Query(TabName.UNPROCESSED),
-     db: Session = Depends(get_db),
- ):
-     """
-     List uploads for a specific UI tab.
-     This is the *single* contract the UI should use for tab content.
- 
-     Tab derivation rules (server-side):
-     - unprocessed: job_state == queued
-     - processing: job_state == processing
-     - validation: job_state == ocr_done AND (patient_id is null OR document.validation_status != approved)
-     - completed: job_state == ocr_done AND patient_id not null AND document.validation_status == approved
-     - error: job_state == ocr_failed
-     """
-     user = get_user_from_header(db, request)
- 
-+    processing_svc.cleanup_expired_uploads(db, clinic_id=user.clinic_id)
-+
-     q = db.query(Upload).filter(Upload.clinic_id == user.clinic_id)
- 
-     if tab == TabName.UNPROCESSED:
-         q = q.filter(Upload.job_state == JobState.QUEUED.value)
- 
-     elif tab == TabName.PROCESSING:
-         q = q.filter(Upload.job_state == JobState.PROCESSING.value)
- 
-     elif tab == TabName.ERROR:
-         q = q.filter(Upload.job_state == JobState.OCR_FAILED.value)
- 
-     elif tab in (TabName.VALIDATION, TabName.COMPLETED):
-         # job_state must be OCR_DONE for both validation/completed
-         q = q.filter(Upload.job_state == JobState.OCR_DONE.value)
- 
-         # Now apply validation/patient logic via Document join
-         # One Document per Upload, but join is safe.
-         q = q.outerjoin(Document, Document.upload_id == Upload.id)
- 
-         if tab == TabName.VALIDATION:
-             # Needs action if patient not assigned OR doc not approved (or doc missing)
-             q = q.filter(
-                 (Upload.patient_id == None) |  # noqa: E711
-                 (Document.id == None) |         # noqa: E711
-                 (Document.validation_status != ValidationStatus.APPROVED.value)
-@@ -416,122 +440,119 @@ def complete_upload_assign_and_approve(
-         raise HTTPException(status_code=403, detail="Forbidden (patient in different clinic)")
- 
-     doc = db.query(Document).filter(Document.upload_id == upload_id).first()
-     if not doc:
-         raise HTTPException(status_code=404, detail="Document not found for upload")
- 
-     # Apply edits
-     upload.patient_id = payload.patient_id
-     doc.patient_id = payload.patient_id
- 
-     # Mark validation as approved
-     doc.validation_status = ValidationStatus.APPROVED.value
-     doc.validated_by = user.email
-     doc.validated_at = datetime.utcnow()
- 
-     if payload.document_type:
-         upload.document_type = payload.document_type
-         doc.document_type = payload.document_type
- 
-     if payload.edited_ocr_text is not None:
-         doc.ocr_text = payload.edited_ocr_text
- 
-     db.commit()
-     db.refresh(upload)
- 
-+    _remove_upload_file(upload)
-+
-     return UploadCompleteResponse(upload=_make_upload_detail(db, upload))
- 
- @router.delete("/uploads/{upload_id}", response_model=UploadRejectResponse)
- def reject_and_delete_upload(
-     upload_id: str,
-     request: Request,
-     db: Session = Depends(get_db),
- ):
-     """
-     Doctor rejection behavior for MVP:
-     - Immediate deletion of Upload + linked Document + file on disk.
-     No reason/motive required in v1.
-     """
-     user = get_user_from_header(db, request)
- 
-     upload = db.query(Upload).filter(Upload.id == upload_id).first()
-     if not upload:
-         raise HTTPException(status_code=404, detail="Upload not found")
- 
-     _require_same_clinic(user, upload)
- 
-     # delete linked Document (if cascade isn't configured)
-     doc = db.query(Document).filter(Document.upload_id == upload_id).first()
-     if doc:
-         db.delete(doc)
- 
-     # delete file from disk
--    if upload.file_path and os.path.exists(upload.file_path):
--        try:
--            os.remove(upload.file_path)
--        except Exception:
--            # In MVP: do not block delete if file removal fails; log later if you have logging.
--            pass
-+    _remove_upload_file(upload)
- 
-     db.delete(upload)
-     db.commit()
- 
-     return UploadRejectResponse(deleted=True, upload_id=upload_id)
- 
- @router.get("/uploads/{upload_id}/download")
- def download_upload_file(
-     upload_id: str,
-     request: Request,
-     db: Session = Depends(get_db),
- ):
-     """
-     Download the original uploaded file.
-     Useful for previewing in UI (PDF) and for debugging OCR.
-     """
-     user = get_user_from_header(db, request)
- 
-     upload = db.query(Upload).filter(Upload.id == upload_id).first()
-     if not upload:
-         raise HTTPException(status_code=404, detail="Upload not found")
- 
-     _require_same_clinic(user, upload)
- 
-     if not upload.file_path or not os.path.exists(upload.file_path):
--        raise HTTPException(status_code=404, detail="File not found on disk")
-+        raise HTTPException(status_code=404, detail="File unavailable")
- 
-     return FileResponse(
-         upload.file_path,
-         filename=upload.filename,
-         media_type="application/octet-stream",
-     )
- 
- # ----------------------------
- # Optional debug/admin endpoints (keep for now, can remove later)
- # ----------------------------
- 
- @router.post("/processing/run-next")
- def run_next_ocr_job_for_clinic(
-     request: Request,
-     db: Session = Depends(get_db),
- ):
-     """
-     Debug/admin endpoint:
-     - Claims next queued job for the current clinic and processes it.
-     In production, the background worker should handle this automatically.
-     """
-     user = get_user_from_header(db, request)
- 
-     # Optional stale recovery for this clinic
-     processing_svc.recover_stale_jobs(db, clinic_id=user.clinic_id)
- 
-     upl = processing_svc.claim_next(db, clinic_id=user.clinic_id)
-     if not upl:
-         return {"processed": False, "message": "No queued uploads"}
- 
-     result = processing_svc.process_upload(db, upload_id=upl.id)
-     return {
-         "processed": result.processed,
-         "upload_id": result.upload_id,
-         "document_id": result.document_id,
-         "state": result.state,
-         "message": result.message,
--    }
-\ No newline at end of file
-+    }
-diff --git a/app/schemas.py b/app/schemas.py
-index ba99a8dd055ac8cecc83980267274f13c0081720..e7ee9c14e1e712b385d0fbe7fd5fccb7b52c6bde 100644
---- a/app/schemas.py
-+++ b/app/schemas.py
-@@ -125,50 +125,64 @@ class ConsultationResponse(BaseModel):
-     clinic_id: str
-     specialty: str
-     consultation_date: datetime
-     structured_data: Optional[dict]
-     audio_transcript: Optional[str]
-     audio_file_path: Optional[str]
-     audio_duration_seconds: Optional[int]
-     status: str
-     is_signed: bool
-     signed_at: Optional[datetime]
-     last_autosave_at: Optional[datetime]
-     created_at: datetime
-     updated_at: Optional[datetime]
-     
-     class Config:
-         from_attributes = True
- 
- class ConsultationCountsResponse(BaseModel):
-     active_consultations: int
-     discharge_ready: int
-     review_pending: int
- 
- class ConsultationTodayStatsResponse(BaseModel):
-     patients_today: int
- 
-+class ConsultationTodayQueueItem(BaseModel):
-+    id: str
-+    patient_name: str
-+    specialty: str
-+    consultation_date: datetime
-+    status: str
-+
-+    class Config:
-+        from_attributes = True
-+
-+class ConsultationTodayQueueResponse(BaseModel):
-+    remaining: List[ConsultationTodayQueueItem]
-+    completed: List[ConsultationTodayQueueItem]
-+
- class ConsultationAudioUploadResponse(BaseModel):
-     message: str
-     audio_file_path: str
-     audio_duration_seconds: Optional[int]
- 
- class ConsultationAudioProcessResponse(BaseModel):
-     message: str
-     transcript: str
-     extracted_data: Dict[str, Any]
-     audio_deleted: bool
- 
- class ConsultationTranscriptResponse(BaseModel):
-     consultation_id: str
-     transcript: Optional[str]
-     duration_seconds: Optional[int]
- 
- class ApiMessageResponse(BaseModel):
-     message: str
- 
- class ConsultationListItem(BaseModel):
-     """Lightweight consultation for lists"""
-     id: str
-     patient_id: str
-     specialty: str
-     consultation_date: datetime
-@@ -457,26 +471,26 @@ class ClinicCreate(ClinicBase):
-     pass
- 
- class ClinicResponse(ClinicBase):
-     """
-     Schema for returning Clinic data from the API.
-     Includes all DB-generated fields and relationship counts/summaries.
-     """
-     id: str = Field(..., description="Unique identifier for the clinic (UUID).")
-     created_at: datetime = Field(..., description="Timestamp of when the clinic was created.")
-     
-     # Fields that track current status (managed by the application logic)
-     current_upload_count: int = Field(0, description="Current number of active uploads/documents.")
-     user_count: int = Field(0, description="Number of users in this clinic")
-     patient_count: int = Field(0, description="Number of patients in this clinic")
- 
-     # You typically don't return the full related objects (users, patients, etc.) 
-     # in the main response to prevent huge payloads, but you can include their counts.
-     # If you *did* want to include them, you'd need forward references or separate schema imports.
-     # For a lean schema, we'll just enable ORM mode (or from_attributes)
-     
-     # Pydantic Configuration for mapping to SQLAlchemy model
-     class Config:
-         # For Pydantic v1
-         #orm_mode = True
-         #For Pydantic v2
--        from_attributes = True
-\ No newline at end of file
-+        from_attributes = True
-diff --git a/app/services/upload_processing.py b/app/services/upload_processing.py
-index d6fe70a2fefc7e22d6f9953889a1767ba2bc8082..b4faefc7df4e4b1344608342c50a833522c15beb 100644
---- a/app/services/upload_processing.py
-+++ b/app/services/upload_processing.py
-@@ -1,31 +1,32 @@
- # app/services/upload_processing.py
- 
- from __future__ import annotations
- 
- import os
- import socket
-+from pathlib import Path
- from dataclasses import dataclass
- from datetime import datetime, timedelta
- from typing import Optional, Tuple
- 
- from sqlalchemy.orm import Session
- 
- from app.models import Upload, Document
- from app.services.document import DocumentService
- 
- 
- # ---- Compatibility helpers (supports both ocr_status and job_state during migration) ----
- 
- def _get_state_field(upload: Upload) -> str:
-     return "job_state" if hasattr(upload, "job_state") else "ocr_status"
- 
- def get_upload_state(upload: Upload) -> str:
-     field = _get_state_field(upload)
-     return getattr(upload, field)
- 
- def set_upload_state(upload: Upload, state: str) -> None:
-     field = _get_state_field(upload)
-     setattr(upload, field, state)
- 
- 
- def _get_attempts(upload: Upload) -> int:
-@@ -92,50 +93,77 @@ class UploadProcessingService:
-         if not hasattr(Upload, "claimed_at"):
-             return 0
- 
-         q = q.filter(getattr(Upload, _get_state_field(Upload)).in_(["processing"]))  # type: ignore
-         if clinic_id:
-             q = q.filter(Upload.clinic_id == clinic_id)
- 
-         # claimed_at < timeout
-         q = q.filter(Upload.claimed_at != None).filter(Upload.claimed_at < timeout_before)  # noqa: E711
- 
-         stale = q.all()
-         count = 0
-         for upl in stale:
-             if _get_attempts(upl) >= self.max_attempts:
-                 set_upload_state(upl, "ocr_failed")
-                 _set_error(upl, "stale_timeout_max_attempts")
-             else:
-                 set_upload_state(upl, "queued")
-                 _set_error(upl, "stale_timeout_requeued")
-             count += 1
- 
-         if count:
-             db.commit()
-         return count
- 
-+    def cleanup_expired_uploads(self, db: Session, clinic_id: Optional[str] = None) -> int:
-+        """
-+        Delete expired uploads immediately (and remove files on disk).
-+        """
-+        now = datetime.utcnow()
-+        q = db.query(Upload).filter(Upload.expires_at < now)
-+        if clinic_id:
-+            q = q.filter(Upload.clinic_id == clinic_id)
-+
-+        expired = q.all()
-+        if not expired:
-+            return 0
-+
-+        for upload in expired:
-+            if upload.file_path and os.path.exists(upload.file_path):
-+                try:
-+                    file_path = Path(upload.file_path)
-+                    file_path.unlink(missing_ok=True)
-+                    if file_path.parent.exists() and not any(file_path.parent.iterdir()):
-+                        file_path.parent.rmdir()
-+                except Exception:
-+                    pass
-+            db.delete(upload)
-+
-+        db.commit()
-+        return len(expired)
-+
-     def claim_next(self, db: Session, clinic_id: Optional[str] = None, worker_id: Optional[str] = None) -> Optional[Upload]:
+     def __init__(self) -> None:
+-        self.ocr = RomanianBulkOCR()
++        self.ocr = OpenAIOCRProvider()
+ 
+     def process_document_bulk(
+         self,
+         file_content: bytes,
+         hint_type: Optional[str] = None,
+     ) -> Dict[str, Any]:
          """
-         Claim the next queued upload.
-         MVP assumes single worker thread, so a simple claim is enough.
+         Primary entry point for v1 OCR.
+         `file_content` should be bytes of an image (or already-rasterized PDF page bytes).
+ 
+         Returns a dict so the rest of the codebase can serialize easily.
          """
-         worker_id = worker_id or self._worker_id()
+         try:
+             # DO NOT log OCR text or file content (PHI). Keep logs metadata-only.
+-            app_logger.debug("DocumentService: starting bulk OCR")
+-
+-            result = self.ocr.process(file_content, hint_document_type=hint_type)
++            app_logger.debug("DocumentService: starting OCR")
++            mime_type = normalize_mime_type(file_content)
++            result = self.ocr.extract_text(file_content, mime_type)
  
-         q = db.query(Upload)
- 
-         # filter queued
-         # (works for both job_state and ocr_status while you migrate)
-         state_field = _get_state_field(Upload)  # type: ignore
-         q = q.filter(getattr(Upload, state_field) == "queued")
- 
-         if clinic_id:
-             q = q.filter(Upload.clinic_id == clinic_id)
- 
-         upload = q.order_by(Upload.uploaded_at.asc()).first()
-         if not upload:
-             return None
- 
-         # claim it
-         set_upload_state(upload, "processing")
-         _inc_attempts(upload)
-         _set_claimed(upload, worker_id)
-@@ -206,26 +234,26 @@ class UploadProcessingService:
-                 ocr_status="completed",
-                 validation_status="pending",
+             payload = DocumentProcessingResult(
+                 success=True,
+-                ocr_text=(result.ocr_text or ""),
+-                confidence_score=int(result.confidence_score or 0),
++                ocr_text=(result.text or ""),
++                confidence_score=0,
+                 # v1: no classification; we optionally echo hint for convenience
+                 document_type=hint_type,
+                 structured_data={},  # v1 by design
+-                processing_metadata=(result.metadata or {"method": "bulk_ocr"}),
++                processing_metadata=(result.metadata or {"method": "openai_ocr"}),
+                 error=None,
              )
-             db.add(doc)
+             return payload.__dict__
  
-         # update document OCR fields
-         doc.ocr_text = ocr_result.get("ocr_text", "") or ""
-         doc.ocr_confidence = int(ocr_result.get("confidence_score") or 0)
-         doc.extracted_data = ocr_result.get("structured_data") or {}
+         except Exception as e:
+             # Log exception safely; no PHI.
+-            app_logger.error("DocumentService: bulk OCR failed", exc_info=True)
++            app_logger.error("DocumentService: OCR failed", exc_info=True)
  
-         # mark upload done
-         set_upload_state(upload, "ocr_done")
-         if hasattr(upload, "claimed_at"):
-             upload.claimed_at = None
+             payload = DocumentProcessingResult(
+                 success=False,
+                 ocr_text="",
+                 confidence_score=0,
+                 document_type=hint_type,
+                 structured_data={},
+-                processing_metadata={"method": "bulk_ocr"},
++                processing_metadata={"method": "openai_ocr"},
+                 error=str(e),
+             )
+             return payload.__dict__
  
-         db.commit()
-         db.refresh(upload)
-         db.refresh(doc)
- 
-         return ProcessResult(
-             processed=True,
-             upload_id=upload.id,
-             document_id=doc.id,
-             state=get_upload_state(upload),
-             message="ok",
--        )
-\ No newline at end of file
+     # Optional compatibility alias: if older code calls this name, keep it working.
+     def process_document_with_templates(
+         self,
+         file_content: bytes,
+         hint_type: Optional[str] = None,
+     ) -> Dict[str, Any]:
+         """
+         Backwards-compatible alias for older callers.
+         Despite the name, v1 does NOT do templates.
+         """
+         return self.process_document_bulk(file_content=file_content, hint_type=hint_type)
+diff --git a/app/services/ocr_provider.py b/app/services/ocr_provider.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..9a5ccb52051f2d7d27634057de0ff604dac13fd5
+--- /dev/null
++++ b/app/services/ocr_provider.py
+@@ -0,0 +1,87 @@
++"""OCR provider interfaces and implementations."""
++from __future__ import annotations
++
++import base64
++import os
++from dataclasses import dataclass
++from typing import Dict
++
++from openai import OpenAI
++
++from app.utils.file import (
++    extract_pdf_text_fast,
++    normalize_mime_type,
++    rasterize_pdf_to_images,
++)
++
++
++OCR_SYSTEM_PROMPT = (
++    "Ești un motor OCR medical. Extrage fidel tot textul vizibil din document, "
++    "păstrând diacriticele românești și ordinea aproximativă. "
++    "Nu interpreta, nu rezuma, nu adăuga informații."
++)
++
++
++@dataclass
++class OCRResult:
++    text: str
++    metadata: Dict[str, str]
++
++
++class OCRProvider:
++    def extract_text(self, file_bytes: bytes, mime_type: str) -> OCRResult:
++        raise NotImplementedError
++
++
++class OpenAIOCRProvider(OCRProvider):
++    def __init__(self, model: str | None = None) -> None:
++        api_key = os.getenv("OPENAI_API_KEY")
++        if not api_key:
++            raise RuntimeError("OPENAI_API_KEY is required for OpenAI OCR.")
++        self.client = OpenAI(api_key=api_key)
++        self.model = model or os.getenv("OPENAI_OCR_MODEL", "gpt-4o-mini")
++
++    def extract_text(self, file_bytes: bytes, mime_type: str) -> OCRResult:
++        normalized = normalize_mime_type(file_bytes, content_type=mime_type)
++
++        if normalized == "application/pdf":
++            return self._extract_from_pdf(file_bytes)
++
++        return self._extract_from_image(file_bytes, normalized)
++
++    def _extract_from_pdf(self, file_bytes: bytes) -> OCRResult:
++        text, metadata = extract_pdf_text_fast(file_bytes)
++        if text:
++            return OCRResult(text=text, metadata=metadata)
++
++        page_images, raster_meta = rasterize_pdf_to_images(file_bytes)
++        pages_text = []
++        for index, page_bytes in enumerate(page_images, start=1):
++            page_text = self._extract_from_image(page_bytes, "image/png").text
++            pages_text.append(f"\n\n--- Page {index} ---\n\n{page_text}".strip())
++
++        merged = "\n".join(pages_text).strip()
++        combined_meta = {"method": "openai_vision_pdf", **raster_meta}
++        return OCRResult(text=merged, metadata=combined_meta)
++
++    def _extract_from_image(self, file_bytes: bytes, mime_type: str) -> OCRResult:
++        encoded = base64.b64encode(file_bytes).decode("utf-8")
++        image_url = f"data:{mime_type};base64,{encoded}"
++
++        response = self.client.chat.completions.create(
++            model=self.model,
++            temperature=0,
++            messages=[
++                {"role": "system", "content": OCR_SYSTEM_PROMPT},
++                {
++                    "role": "user",
++                    "content": [
++                        {"type": "text", "text": "Extrage tot textul vizibil."},
++                        {"type": "image_url", "image_url": {"url": image_url}},
++                    ],
++                },
++            ],
 +        )
++
++        text = response.choices[0].message.content or ""
++        return OCRResult(text=text.strip(), metadata={"method": "openai_vision", "model": self.model})
 diff --git a/app/utils/file.py b/app/utils/file.py
-index a8f23d44b9806294bbad38d7869f95bad735501f..defb5c2ef9fa666c6edb8e6140df0ca212b83a80 100644
+index defb5c2ef9fa666c6edb8e6140df0ca212b83a80..3d25c28dd356bed71b348f61648ba5a6cf30fed3 100644
 --- a/app/utils/file.py
 +++ b/app/utils/file.py
-@@ -1,52 +1,82 @@
+@@ -1,50 +1,150 @@
  """File handling utilities"""
++import io
++import logging
  import os
--import uuid
--from fastapi import HTTPException
--
--def validate_file_type(file_content_type: str) -> bool:
--    """Validate if file type is supported"""
--    allowed_types = [
--        "image/jpeg", 
--        "image/png", 
--        "image/jpg", 
--        "application/pdf",
--        "image/tiff",
--        "image/bmp"
--    ]
--    return file_content_type in allowed_types
--
--def generate_unique_filename(original_filename: str) -> str:
--    """Generate unique filename preserving extension"""
--    file_extension = original_filename.split(".")[-1] if "." in original_filename else "jpg"
--    return f"{uuid.uuid4()}.{file_extension}"
--
--def ensure_upload_directory():
--    """Ensure upload directories exist"""
--    directories = ["uploads", "static"]
--    for directory in directories:
--        os.makedirs(directory, exist_ok=True)
--
--def save_uploaded_file(file_content: bytes, filename: str) -> str:
--    """Save uploaded file and return file path"""
-+from pathlib import Path
-+from typing import Optional, Tuple
+ from pathlib import Path
+-from typing import Optional, Tuple
++from typing import List, Optional, Tuple
 +
-+from fastapi import HTTPException, UploadFile
++import fitz  # PyMuPDF
++from PIL import Image
+ 
+ from fastapi import HTTPException, UploadFile
+ 
++app_logger = logging.getLogger("reconomed.app")
 +
-+ALLOWED_CONTENT_TYPES = {
-+    "image/jpeg",
-+    "image/png",
-+    "image/jpg",
-+    "application/pdf",
-+    "image/tiff",
-+    "image/bmp",
-+}
-+
-+EXTENSION_CONTENT_TYPES = {
-+    ".jpeg": "image/jpeg",
-+    ".jpg": "image/jpeg",
-+    ".png": "image/png",
-+    ".pdf": "application/pdf",
-+    ".tiff": "image/tiff",
-+    ".bmp": "image/bmp",
-+}
+ ALLOWED_CONTENT_TYPES = {
+     "image/jpeg",
+     "image/png",
+     "image/jpg",
+     "application/pdf",
+     "image/tiff",
+     "image/bmp",
+ }
+ 
+ EXTENSION_CONTENT_TYPES = {
+     ".jpeg": "image/jpeg",
+     ".jpg": "image/jpeg",
+     ".png": "image/png",
+     ".pdf": "application/pdf",
+     ".tiff": "image/tiff",
+     ".bmp": "image/bmp",
+ }
+ 
++PDF_MAX_PAGES = int(os.getenv("RECONOMED_PDF_MAX_PAGES", "10"))
++PDF_MAX_DIMENSION = int(os.getenv("RECONOMED_PDF_MAX_DIMENSION", "1600"))
 +
 +
-+def validate_file_type(file_content_type: Optional[str], filename: Optional[str] = None) -> bool:
-+    """Validate if file type is supported."""
-+    if file_content_type and file_content_type in ALLOWED_CONTENT_TYPES:
-+        return True
++def normalize_mime_type(file_bytes: bytes, filename: Optional[str] = None, content_type: Optional[str] = None) -> str:
++    """Normalize input MIME type using content and filename hints."""
++    if content_type and content_type in ALLOWED_CONTENT_TYPES:
++        return content_type
++
++    if file_bytes.startswith(b"%PDF"):
++        return "application/pdf"
++
++    if file_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
++        return "image/png"
++
++    if file_bytes.startswith(b"\xff\xd8"):
++        return "image/jpeg"
 +
 +    if filename:
 +        ext = Path(filename).suffix.lower()
 +        inferred = EXTENSION_CONTENT_TYPES.get(ext)
-+        return inferred in ALLOWED_CONTENT_TYPES if inferred else False
++        if inferred in ALLOWED_CONTENT_TYPES:
++            return inferred
 +
-+    return False
-+
-+
-+def ensure_upload_directory(path: Path) -> None:
-+    """Ensure upload directories exist."""
-+    path.mkdir(parents=True, exist_ok=True)
++    return "application/octet-stream"
 +
 +
-+def sanitize_filename(filename: str) -> str:
-+    """Prevent directory traversal by stripping path separators."""
-+    return os.path.basename(filename)
++def _is_text_usable(text: str) -> bool:
++    if not text:
++        return False
++    stripped = text.strip()
++    if len(stripped) < 20:
++        return False
++    alnum = sum(char.isalnum() for char in stripped)
++    ratio = alnum / max(len(stripped), 1)
++    return ratio > 0.2
 +
 +
-+async def save_uploaded_file(
-+    upload_file: UploadFile,
-+    *,
-+    clinic_id: str,
-+    upload_id: str,
-+) -> Tuple[str, int]:
-+    """Save uploaded file and return file path + size."""
-     try:
--        ensure_upload_directory()
--        file_path = f"uploads/{filename}"
--        
-+        filename = sanitize_filename(upload_file.filename or "upload.bin")
-+        upload_dir = Path("uploads") / clinic_id / upload_id
-+        ensure_upload_directory(upload_dir)
-+        file_path = upload_dir / filename
++def extract_pdf_text_fast(file_bytes: bytes) -> Tuple[str, dict]:
++    """Extract selectable text from PDF, if present."""
++    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
++        text = "\n".join(page.get_text("text") for page in doc)
++        usable = _is_text_usable(text)
++        return text if usable else "", {
++            "method": "pdf_text_extract",
++            "page_count": doc.page_count,
++            "usable": usable,
++        }
 +
-+        contents = await upload_file.read()
-         with open(file_path, "wb") as buffer:
--            buffer.write(file_content)
--            
--        return file_path
-+            buffer.write(contents)
 +
-+        return str(file_path), len(contents)
-     except Exception as e:
-         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
++def rasterize_pdf_to_images(file_bytes: bytes, max_pages: int = PDF_MAX_PAGES) -> Tuple[List[bytes], dict]:
++    """Rasterize PDF pages to PNG bytes with page and size limits."""
++    images: List[bytes] = []
++    metadata = {
++        "method": "pdf_raster",
++        "page_count": 0,
++        "max_pages": max_pages,
++        "truncated": False,
++    }
++
++    with fitz.open(stream=file_bytes, filetype="pdf") as doc:
++        total_pages = doc.page_count
++        metadata["page_count"] = total_pages
++        if total_pages > max_pages:
++            metadata["truncated"] = True
++            app_logger.warning(
++                "PDF exceeds max pages (%s). Truncating from %s pages.",
++                max_pages,
++                total_pages,
++            )
++
++        for page_index in range(min(total_pages, max_pages)):
++            page = doc.load_page(page_index)
++            rect = page.rect
++            scale = min(1.0, PDF_MAX_DIMENSION / max(rect.width, rect.height))
++            matrix = fitz.Matrix(scale, scale)
++            pix = page.get_pixmap(matrix=matrix, alpha=False)
++            image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
++
++            if max(image.size) > PDF_MAX_DIMENSION:
++                resize_scale = PDF_MAX_DIMENSION / max(image.size)
++                image = image.resize(
++                    (int(image.size[0] * resize_scale), int(image.size[1] * resize_scale)),
++                    Image.LANCZOS,
++                )
++
++            buffer = io.BytesIO()
++            image.save(buffer, format="PNG")
++            images.append(buffer.getvalue())
++
++    metadata["rasterized_pages"] = len(images)
++    return images, metadata
++
  
-+
- def get_file_info(file_path: str) -> dict:
--    """Get file information"""
-+    """Get file information."""
-     try:
-         stat = os.stat(file_path)
-         return {
-             "size": stat.st_size,
-             "created": stat.st_ctime,
--            "modified": stat.st_mtime
-+            "modified": stat.st_mtime,
-         }
-     except Exception:
--        return {"size": 0, "created": None, "modified": None}
+ def validate_file_type(file_content_type: Optional[str], filename: Optional[str] = None) -> bool:
+     """Validate if file type is supported."""
+     if file_content_type and file_content_type in ALLOWED_CONTENT_TYPES:
+         return True
+ 
+     if filename:
+         ext = Path(filename).suffix.lower()
+         inferred = EXTENSION_CONTENT_TYPES.get(ext)
+         return inferred in ALLOWED_CONTENT_TYPES if inferred else False
+ 
+     return False
+ 
+ 
+ def ensure_upload_directory(path: Path) -> None:
+     """Ensure upload directories exist."""
+     path.mkdir(parents=True, exist_ok=True)
+ 
+ 
+ def sanitize_filename(filename: str) -> str:
+     """Prevent directory traversal by stripping path separators."""
+     return os.path.basename(filename)
+ 
+ 
+ async def save_uploaded_file(
+diff --git a/requirements.txt b/requirements.txt
+index 0b3f615b9e499e480561a8cdb104c0b64959b3e1..9ec9b7c51e9fde6f34635590d1ea82957e408638 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,18 +1,20 @@
+ fastapi==0.104.1
+ uvicorn==0.24.0
+ psycopg2-binary==2.9.9
+ sqlalchemy==2.0.23
+ python-multipart==0.0.6
+ python-jose[cryptography]==3.3.0
+ passlib[bcrypt]==1.7.4
+ python-decouple==3.8
+ pillow>=10.0.0
+ pytesseract>=0.3.10
+ opencv-python>=4.8.0
+ numpy>=1.21.0
++httpx>=0.27.0
++PyMuPDF==1.23.8
+ python-jose[cryptography]==3.3.0
+ passlib[bcrypt]==1.7.4
+ python-multipart==0.0.6
+ pydantic[email]==2.5.0
+ openai==1.3.0
+-opencv-python-headless == 4.12.0.88
 \ No newline at end of file
-+        return {"size": 0, "created": None, "modified": None}
++opencv-python-headless == 4.12.0.88
 diff --git a/static/css/styles.css b/static/css/styles.css
-index 6c36603441581cbf40d0c00507569f3ea9b3e8a6..e099573cbd0cf4583e620afe7486a1ac9a01708a 100644
+index 84cb666df8ecb878f0d6ff0ef4c9316c1a2c14db..4b4a8a1dcbcac7849b82b344562193a886d8164d 100644
 --- a/static/css/styles.css
 +++ b/static/css/styles.css
-@@ -524,50 +524,105 @@ body {
- 
- .dashboard-card h3 {
-     font-family: var(--font-family-heading);
-     margin-bottom: 1rem;
-     color: var(--text-primary);
- }
- 
- .card-header {
+@@ -201,128 +201,140 @@ body {
+ .page-header {
      display: flex;
      justify-content: space-between;
-     align-items: center;
+     align-items: flex-start;
      margin-bottom: 1rem;
  }
  
- .quick-actions {
-     display: flex;
-     flex-direction: column;
-     gap: 1rem;
- }
- 
- .activity-list {
-     max-height: 300px;
-     overflow-y: auto;
- }
- 
-+.today-consultations {
-+    display: flex;
-+    flex-direction: column;
-+    gap: 1.5rem;
-+}
-+
-+.consultation-section h4 {
-+    margin-bottom: 0.75rem;
-+    color: var(--text-primary);
-+}
-+
-+.consultation-list {
-+    display: flex;
-+    flex-direction: column;
-+    gap: 0.75rem;
-+    max-height: 260px;
-+    overflow-y: auto;
-+}
-+
-+.consultation-item {
-+    display: flex;
-+    align-items: center;
-+    justify-content: space-between;
-+    padding: 0.75rem;
-+    border: 1px solid var(--border-light);
-+    border-radius: var(--border-radius);
-+    background: var(--bg-content);
-+}
-+
-+.consultation-item__info {
-+    display: flex;
-+    flex-direction: column;
-+    gap: 0.25rem;
-+}
-+
-+.consultation-item__title {
-+    font-weight: 600;
-+    color: var(--text-primary);
-+}
-+
-+.consultation-item__meta {
-+    font-size: 0.8rem;
-+    color: var(--text-secondary);
-+}
-+
-+.consultation-item__status {
-+    font-size: 0.75rem;
-+    text-transform: capitalize;
-+    padding: 0.25rem 0.6rem;
-+    border-radius: 999px;
-+    background: var(--primary-light);
-+    color: var(--primary-dark);
-+    white-space: nowrap;
-+}
-+
- .activity-item {
-     display: flex;
-     align-items: center;
-     gap: 1rem;
-     padding: 0.75rem 0;
-     border-bottom: 1px solid var(--border-light);
- }
- 
- .activity-item:last-child {
-     border-bottom: none;
- }
- 
- .activity-icon {
-     width: 32px;
-     height: 32px;
-     border-radius: 50%;
-     display: flex;
-     align-items: center;
-     justify-content: center;
-     font-size: 0.75rem;
-     color: var(--bg-content);
-     background: var(--primary);
- }
- 
- .activity-content {
-@@ -810,50 +865,54 @@ body {
-     margin-bottom: 1rem;
- }
- 
- .upload-content h3 {
+ .page-header h1 {
+     font-family: var(--font-family-heading);
+     font-size: 1.75rem;
+     font-weight: 700;
      color: var(--text-primary);
      margin-bottom: 0.5rem;
  }
  
- .upload-content p {
+ .page-header p {
      color: var(--text-secondary);
-     margin-bottom: 1.5rem;
- }
- 
- .upload-link {
-   color: var(--primary);
-   text-decoration: underline;
-   cursor: pointer;
- }
- 
- .upload-status {
-     display: flex;
-     flex-direction: column;
-     align-items: center;
- }
- 
-+.upload-area.is-hidden {
-+    display: none;
-+}
-+
- .spinner {
-     width: 40px;
-     height: 40px;
-     border: 4px solid #f3f3f3;
-     border-top: 4px solid var(--primary);
-     border-radius: 50%;
-     animation: spin 1s linear infinite;
-     margin-bottom: 1rem;
- }
- 
- @keyframes spin {
-     0% { transform: rotate(0deg); }
-     100% { transform: rotate(360deg); }
- }
- 
- /* Card container */
- .upload-card {
-   background: var(--bg-content);
-   border: 1px solid var(--border-light);
-   border-radius: var(--border-radius);
-   box-shadow: var(--shadow-card);
-   padding: 0.6rem 0.9rem;
-   min-height: 88px; /* adjust to taste (80–100px works best) */
-   min-width: 160px;
-   display: flex;
-@@ -991,50 +1050,64 @@ body {
- }
- 
- .view-toggle:hover {
-   border-color: var(--primary);
-   color: var(--primary);
- }
- 
- .upload-card-actions .btn-secondary.action-muted {
-   opacity: 0.7;
- }
- 
- .upload-card-actions .btn-secondary.action-muted:hover {
-   opacity: 1;
  }
  
  /* ================================================================
-    DOCUMENTS
+    BUTTONS
  ================================================================ */
- .file-container {
-     display: grid;
-     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-     gap: 1rem; /* space between cards */
-     align-items: start;
+ .btn-primary,
+ .btn-secondary,
+ .btn-tertiary,
++.btn-danger-soft,
+ .action-btn {
+     display: inline-flex;
+     align-items: center;
+     gap: 0.5rem;
+     padding: 0.75rem 1.5rem;
+     border: none;
+     border-radius: var(--border-radius);
+     font-weight: 600;
+     text-decoration: none;
+     cursor: pointer;
+     transition: var(--transition);
+     font-size: 0.875rem;
  }
  
-+.file-container.list {
-+    display: flex;
-+    flex-direction: column;
-+    gap: 1rem;
+ .btn-primary,
+ .action-btn.primary {
+     background: var(--primary);
+     color: var(--bg-content);
+ }
+ 
+ .btn-primary:hover,
+ .action-btn.primary:hover {
+     background: var(--primary-dark);
+ }
+ 
+ .btn-secondary,
+ .action-btn.secondary {
+     background: var(--warning-bg);
+     color: var(--text-primary);
+     border: 1px solid var(--border-default);
+ }
+ 
+ .btn-secondary:hover,
+ .action-btn.secondary:hover {
+     background: var(--bg-main);
+ }
+ 
+ .btn-tertiary,
+ .action-btn.tertiary {
+-    background: var(--success-bg);
+-    color: var(--primary-dark);
++    background: var(--bg-main);
++    color: var(--text-secondary);
++    border: 1px solid var(--border-default);
+ }
+ 
+ .btn-tertiary:hover,
+ .action-btn.tertiary:hover {
+-    background: var(--bg-main);
++    background: var(--bg-content);
+ }
+ 
+ .btn-success {
+     background: var(--success-text);
+     color: var(--bg-content);
+     border: none;
+     padding: 0.75rem 1.5rem;
+     border-radius: var(--border-radius);
+     font-weight: 600;
+     cursor: pointer;
+     transition: var(--transition);
+ }
+ 
+ .btn-success:hover {
+     background: var(--info-dark);
+ }
+ 
+ .btn-danger {
+     background: var(--critical);
+     color: var(--bg-content);
+     border: none;
+     padding: 0.75rem 1.5rem;
+     border-radius: var(--border-radius);
+     cursor: pointer;
+     font-weight: 600;
+     transition: var(--transition);
+ }
+ 
+ .btn-danger:hover {
+     background: var(--critical-dark);
+ }
+ 
++.btn-danger-soft {
++    background: var(--error-bg);
++    color: var(--critical);
++    border: 1px solid var(--critical);
 +}
 +
-+.validation-list,
-+.completed-list,
-+.error-list {
-+    display: flex;
-+    flex-direction: column;
-+    gap: 1rem;
++.btn-danger-soft:hover {
++    background: #fecaca;
 +}
 +
- .documents-list {
+ .btn-small {
+     padding: 0.5rem 1rem;
+     font-size: 0.75rem;
+     border-radius: var(--border-radius);
+     border: none;
+     cursor: pointer;
+     transition: var(--transition);
+ }
+ 
+ .btn-small.primary {
+     background: var(--primary);
+     color: var(--bg-content);
+ }
+ 
+ .btn-small.secondary {
+     background: var(--bg-main);
+     color: var(--text-secondary);
+ }
+ 
+ .btn-icon {
+     width: 36px;
+     height: 36px;
+     padding: 0;
+     border: none;
+     border-radius: var(--border-radius-md);
+@@ -633,50 +645,56 @@ body {
+     font-weight: 600;
+     color: var(--text-primary);
+ }
+ 
+ .activity-time {
+     font-size: 0.75rem;
+     color: var(--text-secondary);
+ }
+ 
+ .loading-placeholder {
+     text-align: center;
+     padding: 2rem;
+     color: var(--text-secondary);
+     font-style: italic;
+ }
+ 
+ /* ================================================================
+    SEARCH & FILTERS
+ ================================================================ */
+ .search-bar {
+     display: flex;
+     margin-bottom: 2rem;
+     max-width: 400px;
+ }
+ 
++.search-bar--inline {
++    max-width: none;
++    margin-bottom: 0;
++    width: 100%;
++}
++
+ .search-input {
+     flex: 1;
+     padding: 0.75rem;
+     border: 1px solid var(--border-default);
+     border-radius: var(--border-radius) 0 0 var(--border-radius);
+     font-size: 0.875rem;
+ }
+ 
+ .search-btn {
+     background: var(--primary);
+     color: var(--bg-content);
+     border: none;
+     padding: 0.75rem 1rem;
+     border-radius: 0 var(--border-radius) var(--border-radius) 0;
+     cursor: pointer;
+ }
+ 
+ .search-and-filters {
+     display: flex;
+     gap: 1rem;
+     margin-bottom: 2rem;
+     align-items: center;
+ }
+ 
+ .search-and-filters .search-bar {
+@@ -1319,160 +1337,255 @@ body.modal-open {
+     z-index: 1100;
+     display: none;
+     align-items: center;
+     justify-content: center;
+     padding: 1.5rem;
+ }
+ 
+ .validation-modal.open {
+     display: flex;
+ }
+ 
+ .validation-modal__content {
      background: var(--bg-content);
      border-radius: var(--border-radius);
-     box-shadow: var(--shadow);
-     overflow: hidden;
+     width: min(1000px, 96vw);
+     max-height: 90vh;
+     display: flex;
+     flex-direction: column;
+     box-shadow: var(--shadow-lg);
+     position: relative;
  }
  
- .document-item {
+ .validation-modal__header {
      display: flex;
-     align-items: center;
+     justify-content: space-between;
+-    align-items: flex-start;
++    align-items: center;
      gap: 1rem;
-     padding: 1rem;
++    flex-wrap: wrap;
+     padding: 1rem 1.5rem;
      border-bottom: 1px solid var(--border-light);
  }
  
- .document-item:last-child {
-     border-bottom: none;
+ .validation-modal__body {
+     padding: 1.5rem;
+     overflow-y: auto;
+     display: grid;
+     gap: 1.5rem;
+     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
  }
  
- .document-icon {
-     width: 40px;
-     height: 40px;
-     border-radius: var(--border-radius);
-     display: flex;
-     align-items: center;
-@@ -3352,26 +3425,26 @@ body.modal-open {
- 
- .modal.open {
-   display: flex;
-   align-items: center;
-   justify-content: center;
- }
- 
- .modal-content {
-   background: white;
-   width: 700px;
-   max-height: 90vh;
-   overflow-y: auto;
-   padding: 20px;
-   border-radius: 12px;
-   box-shadow: 0 4px 15px rgba(0,0,0,0.25);
- }
- 
- .modal-textarea {
-   width: 100%;
-   height: 180px;
-   margin-top: 6px;
- }
- 
- .json-editor {
-   font-family: monospace;
--}
-\ No newline at end of file
-+}
-diff --git a/static/index.html b/static/index.html
-index d1e821ee35f510b34a6507f97b30e82be3ba0291..d594a1b4f105ae3482e4d86d7187981d3d3efd90 100644
---- a/static/index.html
-+++ b/static/index.html
-@@ -50,97 +50,98 @@
- 
-     <!-- Main Content Area -->
-     <main class="main-content">
-         <!-- Dashboard Section -->
-         <section id="dashboard" class="content-section active">
-             <div class="page-header">
-                 <h1>Dashboard</h1>
-                 <p>Today's healthcare activity overview</p>
-                 <div class="dashboard-date">
-                     <a href="https://calendar.google.com/" target="_blank" alt="Open Google Calendar">
-                             <i class="fas fa-calendar"></i>
-                     </a>
-                     <span id="date-time"></span>
-                 </div>
-             </div>
-             
-             <!-- Today's Stats -->
-             <div class="stats-section">
-                 <h2>Today's Activity</h2>
-                 <div class="stats-grid">
-                     <div class="stat-card">
-                         <div class="stat-icon patients">
-                             <i class="fas fa-user-md"></i>
-                         </div>
-                         <div class="stat-content">
--                            <h3 id="active-consultations"></h3>
--                            <p>Active Consultations</p>
-+                            <h3 id="consults-remaining-today"></h3>
-+                            <p>Consults remaining</p>
-                         </div>
-                     </div>
-                     
-                     <div class="stat-card">
--                        <div class="stat-icon documents">
--                            <i class="fas fa-upload"></i>
--                        </div>
--                        <div class="stat-content">
--                            <h3 id="uploads-today"></h3>
--                            <p>Documents Uploaded</p>
--                        </div>
--                    </div>
--                    
--                    <div class="stat-card">
--                        <div class="stat-icon pending">
--                            <i class="fas fa-clock"></i>
-+                        <div class="stat-icon validated">
-+                            <i class="fas fa-check-circle"></i>
-                         </div>
-                         <div class="stat-content">
--                            <h3 id="review-pending"></h3>
--                            <p>Pending Processing</p>
-+                            <h3 id="consults-done-today"></h3>
-+                            <p>Consults done today</p>
-                         </div>
-                     </div>
-                     
-                     <div class="stat-card">
--                        <div class="stat-icon validated">
--                            <i class="fas fa-check-circle"></i>
-+                        <div class="stat-icon documents">
-+                            <i class="fas fa-tasks"></i>
-                         </div>
-                         <div class="stat-content">
--                            <h3 id="pending-validation"></h3>
--                            <p>Needs Validation</p>
-+                            <h3 id="docs-needing-validation"></h3>
-+                            <p>Docs needing validation</p>
-                         </div>
-                     </div>
-                 </div>
-             </div>
- 
-             <div class="dashboard-grid">
-                 <div class="dashboard-card">
-                     <div class="card-header">
--                        <h3>Discharge ready</h3>
-+                        <h3>Today’s consultations</h3>
-                         <button class="btn-tertiary" onclick="app.refreshActivity()">
-                             <i class="fas fa-sync-alt"></i>
-                         </button>
-                     </div>
--                    <div id="discharge-ready" class="activity-list">
--                        <div class="loading-placeholder">Loading recent activity...</div>
-+                    <div class="today-consultations">
-+                        <div class="consultation-section">
-+                            <h4>Remaining today</h4>
-+                            <div id="today-consultations-remaining" class="consultation-list">
-+                                <div class="loading-placeholder">Loading consultations...</div>
-+                            </div>
-+                        </div>
-+                        <div class="consultation-section">
-+                            <h4>Completed today</h4>
-+                            <div id="today-consultations-completed" class="consultation-list">
-+                                <div class="loading-placeholder">Loading consultations...</div>
-+                            </div>
-+                        </div>
-                     </div>
-                 </div>
-                 
-                 <div class="dashboard-card">
-                     <div class="card-header">
-                         <h3>Quick Actions</h3>
-                     </div>
-                     <div class="quick-actions">
-                         <button class="action-btn primary" onclick="showAddPatientModal()">
-                             <i class="fas fa-user-plus"></i>
-                             Add New Patient
-                         </button>
-                         <button class="action-btn secondary" onclick="app.navigation.navigateTo('documents')">
-                             <i class="fas fa-upload"></i>
-                             Upload Documents
-                         </button>
-                         <button class="action-btn tertiary" onclick="app.navigation.navigateTo('consultations')">
-                             <i class="fas fa-plus-circle"></i>
-                             Record Consultation
-                         </button>
-                         <button class="action-btn secondary" onclick="app.navigation.navigateTo('documents', 'validation')">
-                             <i class="fas fa-tasks"></i>
-                             Review Pending
-                         </button>
-                     </div>
-@@ -952,26 +953,26 @@
-                 </div>
-             </div>
-             
-             <div class="modal-footer">
-                 <button class="btn-secondary" onclick="window.closeConsentHistoryModal()">Close</button>
-                 <button class="btn-tertiary" onclick="app.exportConsentHistory()">
-                     <i class="fas fa-download"></i> Export as PDF
-                 </button>
-             </div>
-         </div>
-     </div>
- 
-     <!-- Loading Overlay -->
-     <div id="loading" class="loading-overlay">
-         <div class="spinner">
-             <i class="fas fa-heartbeat"></i>
-         </div>
-         <p>Processing...</p>
-     </div>
-     
-     <!-- Toast Notifications -->
-     <div id="toast-container" class="toast-container"></div>
- 
-     <script type="module" src="/static/js/app.js"></script>
- </body>
--</html>
-\ No newline at end of file
-+</html>
-diff --git a/static/js/app.js b/static/js/app.js
-index 1f85257c6003e6b46d29390c0db92d8e7cbd4ead..a12177652b14209683f6ade90ed53b3664cc86ce 100644
---- a/static/js/app.js
-+++ b/static/js/app.js
-@@ -24,57 +24,62 @@ const API_CONFIG = {
-         documents: '/documents/', 
-         patients: '/patients/',
-         search: '/search/'
-     }  
- };
- 
- // Helper function to build API URLs
- function apiUrl(endpoint, path = '',params = {}) {
-     let url = `${API_CONFIG.BASE_URL}${endpoint}`;
-     
-     // 1. Substitute Path Parameters (like :clinicId)
-     // We explicitly check for :clinicId
-     if (params.clinicId) {
-         url = url.replace(':clinicId', params.clinicId);
-     }
- 
-     // 2. Append the rest of the path
-     url = `${url}${path}`; 
- 
-     // 3. Handle Query Parameters (if you ever need them)
-     // (Omitted for brevity, but a complete helper would handle them here)
-     
-     return url;
- }
- 
-+function apiFetch(input, init = {}) {
-+  return fetch(input, withUserHeader(init));
++.validation-filename {
++    font-size: 0.85rem;
++    color: var(--text-disabled);
++    margin-top: 0.25rem;
 +}
 +
- // Export for ES modules
--export { API_CONFIG, apiUrl };
-+export { API_CONFIG, apiUrl, apiFetch };
- 
- // Keep backward compatibility for legacy scripts
- if (typeof window !== 'undefined') {
-   window.API_CONFIG = API_CONFIG;
-   window.apiUrl = apiUrl;
-+  window.apiFetch = apiFetch;
++.validation-modal__action-bar {
++    display: flex;
++    align-items: center;
++    flex-wrap: wrap;
++    gap: 0.75rem;
++    background: var(--bg-main);
++    border: 1px solid var(--border-light);
++    border-radius: var(--border-radius);
++    padding: 0.5rem 0.75rem;
++}
++
++.validation-section {
++    background: var(--bg-main);
++    border: 1px solid var(--border-light);
++    border-radius: var(--border-radius);
++    padding: 1rem;
++    display: grid;
++    gap: 1rem;
++}
++
++.validation-row {
++    display: grid;
++    grid-template-columns: minmax(240px, 2fr) minmax(180px, 1fr);
++    gap: 1rem;
++    align-items: end;
++}
++
++.validation-field label {
++    display: block;
++    margin-bottom: 0.5rem;
++    font-weight: 600;
++    color: var(--text-primary);
++}
++
++.validation-document-type {
++    width: 100%;
++    padding: 0.75rem;
++    border: 1px solid var(--border-default);
++    border-radius: var(--border-radius);
++    font-size: 0.875rem;
++}
++
++.validation-ocr-header {
++    display: flex;
++    justify-content: space-between;
++    align-items: flex-start;
++    gap: 1rem;
++}
++
++.validation-ocr-header h4 {
++    margin: 0 0 0.25rem;
++}
++
++.validation-ocr-header p {
++    margin: 0;
++    font-size: 0.85rem;
++    color: var(--text-secondary);
++}
++
++.validation-ocr-actions {
++    display: flex;
++    flex-wrap: wrap;
++    gap: 0.5rem;
++}
++
++.validation-ocr-expanded {
++    display: grid;
++    gap: 0.75rem;
++}
++
++.validation-ocr-footer {
++    display: flex;
++    justify-content: flex-end;
++}
++
+ .validation-modal--fullscreen .validation-modal__content {
+     width: 95vw;
+     max-height: 92vh;
  }
  
- // =========================================================================
- // Request helpers: ensure X-User header is present for backend context
- // =========================================================================
- function getStoredUserEmail() {
-   if (typeof window === 'undefined') return null;
-   // Prefer the hydrated app instance
-   if (window.app?.currentUser?.email) return window.app.currentUser.email;
+ .validation-modal--fullscreen .validation-modal__body {
+     max-height: calc(92vh - 70px);
+ }
  
-   // Fallback to localStorage (used by login screen)
-   try {
-     const raw = localStorage.getItem('reconomed_user');
-     if (raw) {
-       const parsed = JSON.parse(raw);
-       return parsed?.email || parsed?.username || null;
+ .validation-modal--review .validation-preview {
+     border: 1px solid var(--primary);
+     border-radius: var(--border-radius);
+     padding: 0.75rem;
+     background: var(--primary-light);
+ }
+ 
+ .validation-form textarea#validation-ocr-text {
+     min-height: 240px;
+     width: 100%;
+     resize: vertical;
+ }
+ 
+ .validation-modal--fullscreen .validation-form textarea#validation-ocr-text {
+     min-height: 320px;
+ }
+ 
+ .validation-ocr-snippet {
+-    background: var(--bg-main);
++    background: var(--bg-content);
+     border: 1px solid var(--border-light);
+     border-radius: var(--border-radius);
+     padding: 0.75rem;
+     font-size: 0.85rem;
+     color: var(--text-secondary);
+     line-height: 1.4;
+     word-break: break-word;
+ }
+ 
+ .validation-preview {
+     display: flex;
+     justify-content: flex-start;
+     margin-bottom: 0.75rem;
+ }
+ 
+ .validation-actions {
+     display: flex;
+     flex-wrap: wrap;
+     gap: 0.75rem;
+     margin-top: 1rem;
+ }
+ 
+ .patient-search-selector {
+     position: relative;
+ }
+ 
++.patient-search-selector .search-bar {
++    width: 100%;
++}
++
+ .patient-search-results {
+     position: absolute;
+     top: calc(100% + 4px);
+     left: 0;
+     right: 0;
+     background: var(--bg-content);
+     border: 1px solid var(--border-default);
+     border-radius: var(--border-radius-sm);
+     box-shadow: var(--shadow);
+     max-height: 220px;
+     overflow-y: auto;
+     z-index: 1200;
+     display: none;
+ }
+ 
+ .patient-search-results.is-open {
+     display: block;
+ }
+ 
+ .patient-search-result {
+     padding: 0.65rem 0.75rem;
+     cursor: pointer;
+     display: flex;
+     flex-direction: column;
+     gap: 0.2rem;
+ }
+ 
+ .patient-search-result:hover,
+ .patient-search-result.active {
+     background: var(--primary-light);
+ }
+ 
+ .patient-search-result .patient-name {
+     font-weight: 600;
+     color: var(--text-primary);
+ }
+ 
+ .patient-search-result .patient-meta {
+     font-size: 0.75rem;
+     color: var(--text-secondary);
+ }
+ 
++.error-banner {
++    padding: 0.75rem 1rem;
++    border-radius: var(--border-radius);
++    background: var(--error-bg);
++    color: var(--critical);
++    border: 1px solid var(--critical);
++    font-weight: 600;
++}
++
+ .modal-content {
+     background: var(--bg-content);
+     border-radius: var(--border-radius);
+     max-width: 500px;
+     width: 90%;
+     max-height: 90vh;
+     overflow-y: auto;
+     box-shadow: var(--shadow-lg);
+ }
+ 
+ .modal-content.large {
+     max-width: 900px;
+ }
+ 
+ .modal-header {
+     display: flex;
+     justify-content: space-between;
+     align-items: center;
+     padding: 1.5rem;
+     border-bottom: 1px solid var(--border-light);
+ }
+ 
+ .modal-close {
+     background: none;
+     border: none;
+diff --git a/static/index.html b/static/index.html
+index 0cb9b7f1c99fe9eefef8f665e7ef3bdf49e15b97..2ac0c65839f9d21a8ff5449a180253ba72ce154a 100644
+--- a/static/index.html
++++ b/static/index.html
+@@ -213,109 +213,127 @@
+                     <div class="document-manager__stats">
+                         <span id="upload-count">0/20 uploads used</span>
+                         <span class="expiry-warning">Files expire after 30 days if not processed</span>
+                     </div>
+                 </div>
+ 
+                 <!-- Upload Area -->
+                 <div id="upload-area" class="upload-area">
+                     <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
+                     <div id="upload-prompt">
+                         <div class="upload-icon">📷</div>
+                         <h3>Upload Documents</h3>
+                         <p>Drag and drop images here or <span class="upload-link clickable">click to select files</span></p>
+                         <p class="upload-hint">Images will be compressed automatically</p>
+                     <div id="upload-status" class="upload-status" style="display: none;">
+                             <div class="spinner"></div>
+                             <p>Compressing and uploading files...</p>
+                     </div>
+                     </div>
+                 </div>
+ 
+                 <!-- Document Workflow Tabs -->
+                 <div class="document-tabs">
+                     <div class="document-tabs__header">
+                         <button class="tab-button active" data-tab="unprocessed">
++                            <i class="fas fa-inbox"></i>
+                             Unprocessed <span class="tab-count" id="unprocessed-count">0</span>
+                         </button>
+                         <button class="tab-button" data-tab="processing">
++                            <i class="fas fa-spinner"></i>
+                             Processing <span class="tab-count" id="processing-count">0</span>
+                         </button>
+                         <button class="tab-button" data-tab="validation">
++                            <i class="fas fa-clipboard-check"></i>
+                             Validation <span class="tab-count" id="validation-count">0</span>
+                         </button>
+                         <button class="tab-button" data-tab="completed">
++                            <i class="fas fa-check-circle"></i>
+                             Completed <span class="tab-count" id="completed-count">0</span>
+                         </button>
+                         <button class="tab-button" data-tab="error">
++                            <i class="fas fa-triangle-exclamation"></i>
+                             Error <span class="tab-count" id="error-count">0</span>
+                         </button>
+                     </div>
+ 
+                     <div class="document-tabs__content">
+                         <div id="unprocessed-tab" class="tab-content active">
+                             <div class="uploads-toolbar" id="uploads-toolbar">
+                                 <div class="uploads-toolbar__left">
+                                     <label class="select-all">
+-                                        <input type="checkbox" id="select-all">␊
++                                        <input type="checkbox" id="select-all">
+                                         <span id="select-all-label">Select all (<span id="total-uploads">0</span>)</span>
+                                     </label>
+                                 </div>
+                                 <div class="uploads-toolbar__right">
+-                                    <button class="view-toggle active" data-view="grid">⊞</button>
+-                                    <button class="view-toggle" data-view="list">☰</button>
++                                    <button class="view-toggle active" data-view="grid" aria-label="Grid view">
++                                        <i class="fas fa-th-large"></i>
++                                    </button>
++                                    <button class="view-toggle" data-view="list" aria-label="List view">
++                                        <i class="fas fa-list"></i>
++                                    </button>
+                                 </div>
+                             </div>
+ 
+                             <div id="batch-actions" class="batch-actions" style="display: none;">
+                                 <div class="batch-actions__header">
+                                     <h4><span id="selected-count">0</span> files selected</h4>
+                                 </div>
+                                 <div class="batch-actions__controls">
+                                     <div class="batch-control-group">
+                                         <label>Assign to Patient:</label>
+                                         <div class="batch-control-row">
+                                             <select id="batch-patient">
+                                                 <option value="">Select Patient...</option>
+                                             </select>
+-                                            <button id="apply-batch-patient" class="btn-secondary">Apply</button>
++                                            <button id="apply-batch-patient" class="btn-secondary">
++                                                <i class="fas fa-check"></i>
++                                                Apply
++                                            </button>
+                                         </div>
+                                     </div>
+                                     <div class="batch-control-group">
+                                         <label>Set Document Type:</label>
+                                         <div class="batch-control-row">
+                                             <select id="batch-document-type">
+                                                 <option value="">Document Type...</option>
+                                                 <option value="romanian_id">Romanian ID</option>
+                                                 <option value="lab_result">Lab Result</option>
+                                                 <option value="discharge_note">Discharge Note</option>
+                                             </select>
+-                                            <button id="apply-batch-type" class="btn-secondary">Apply</button>
++                                            <button id="apply-batch-type" class="btn-secondary">
++                                                <i class="fas fa-check"></i>
++                                                Apply
++                                            </button>
+                                         </div>
+                                     </div>
+                                     <div class="batch-control-group">
+-                                        <button id="start-processing" class="btn-primary">Start OCR Processing</button>
++                                        <button id="start-processing" class="btn-primary">
++                                            <i class="fas fa-sync-alt"></i>
++                                            Start OCR Processing
++                                        </button>
+                                     </div>
+                                 </div>
+                             </div>
+                             <div id="file-container" class="file-container grid"></div>
+                             <div id="empty-state" class="empty-state">
+                             </div>
+                         </div>
+ 
+                         <!-- Processing Tab -->
+                         <div id="processing-tab" class="tab-content">
+                             <div class="queue-summary">
+                                 <h3 id="processing-title">Processing</h3>
+                                 <p id="processing-body">Documents are processing automatically.</p>
+                             </div>
+                             <div id="processing-list" class="processing-list"></div>
+                         </div>
+ 
+                         <!-- Validation Tab -->
+                         <div id="validation-tab" class="tab-content">
+                             <div class="validation-summary">
+                                 <h3><span id="validation-pending">0</span> documents need validation</h3>
+                                 <p>Review OCR results and approve or correct them</p>
+                             </div>
+                             <div id="validation-list" class="validation-list"></div>
+                         </div>
+@@ -332,106 +350,127 @@
+                                         <option value="week">This Week</option>
+                                         <option value="month">This Month</option>
+                                     </select>
+                                 </div>
+                             </div>
+                             <div id="completed-list" class="completed-list"></div>
+                         </div>
+                         <!-- Error Tab -->
+                         <div id="error-tab" class="tab-content">
+                             <div class="validation-summary">
+                                 <h3><span id="error-total">0</span> documents with errors</h3>
+                                 <p>These uploads failed OCR; consider deleting or re-uploading</p>
+                             </div>
+                             <div id="error-list" class="validation-list"></div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+ 
+             <!-- Validation Detail Modal -->
+             <div id="validation-modal" class="validation-modal" style="display: none;">
+                 <div class="validation-modal__content" role="dialog" aria-modal="true" aria-labelledby="validation-title">
+                     <div class="validation-modal__header">
+                         <div class="modal-title">
+                             <h3 id="validation-title">Document Validation</h3>
+-                            <p id="validation-filename" class="muted"></p>
++                            <p id="validation-filename" class="validation-filename"></p>
++                        </div>
++                        <div class="validation-modal__action-bar">
++                            <button id="validation-save-draft" class="btn-tertiary" type="button">
++                                <i class="fas fa-save"></i>
++                                Save draft
++                            </button>
++                            <button id="validation-complete" class="btn-primary" disabled>
++                                <i class="fas fa-check"></i>
++                                Assign &amp; complete
++                            </button>
++                            <button id="validation-reject" class="btn-danger-soft" type="button">
++                                <i class="fas fa-trash"></i>
++                                Reject
++                            </button>
+                         </div>
+                         <button id="validation-close" class="modal-close" type="button" aria-label="Close validation modal">
+                             <i class="fas fa-times"></i>
+                         </button>
+                     </div>
+                     <div class="validation-modal__body">
+                         <div class="validation-form">
+-                            <label for="validation-ocr-text">OCR Text (editable)</label>
+-                            <div id="validation-ocr-snippet" class="validation-ocr-snippet"></div>
+-                            <button id="validation-expand-ocr" class="btn-secondary" type="button">
+-                                <i class="fas fa-eye"></i>
+-                                Show full OCR / Preview
+-                            </button>
+-                            <div id="validation-expanded" style="display: none;">
+-                                <div class="validation-preview">
+-                                    <a id="validation-preview-link" href="#" target="_blank" rel="noopener" class="btn-secondary">
+-                                        <i class="fas fa-file-alt"></i>
+-                                        Open document preview
+-                                    </a>
++                            <div class="validation-section validation-section--assign">
++                                <div class="validation-row">
++                                    <div class="validation-field">
++                                        <label for="validation-patient-search">Assign to patient</label>
++                                        <div class="patient-search-selector">
++                                            <div class="search-bar search-bar--inline">
++                                                <input id="validation-patient-search" type="search" placeholder="Search by name, phone, or CNP…" autocomplete="off" class="search-input" />
++                                                <button class="search-btn" type="button" aria-label="Search patients">
++                                                    <i class="fas fa-search"></i>
++                                                </button>
++                                            </div>
++                                            <div id="validation-patient-results" class="patient-search-results" role="listbox"></div>
++                                        </div>
++                                    </div>
++                                    <div class="validation-field">
++                                        <label for="validation-document-type">Document type (optional)</label>
++                                        <select id="validation-document-type" class="validation-document-type">
++                                            <option value="">Select type...</option>
++                                            <option value="lab_result">Lab result</option>
++                                            <option value="imagistic_result">Imagistic result</option>
++                                            <option value="pharmacy">Pharmacy</option>
++                                            <option value="doctors_note">Doctor's note</option>
++                                            <option value="discharge">Discharge</option>
++                                        </select>
++                                    </div>
+                                 </div>
+-                                <textarea id="validation-ocr-text" rows="12" placeholder="OCR text will appear here"></textarea>
+-                                <button id="validation-toggle-fullscreen" class="btn-secondary" type="button">
+-                                    <i class="fas fa-expand"></i>
+-                                    Expand OCR
+-                                </button>
+-                            </div>
+-
+-                            <label for="validation-patient-search">Assign to patient</label>
+-                            <div class="patient-search-selector">
+-                                <input id="validation-patient-search" type="search" placeholder="Search by name, phone, or CNP…" autocomplete="off" />
+-                                <div id="validation-patient-results" class="patient-search-results" role="listbox"></div>
+                             </div>
+ 
+-                            <label for="validation-document-type">Document type (optional)</label>
+-                            <select id="validation-document-type">
+-                                <option value="">Select type...</option>
+-                                <option value="lab_result">Lab result</option>
+-                                <option value="imagistic_result">Imagistic result</option>
+-
+-                                <option value="pharmacy">Pharmacy</option>
+-
+-                                <option value="doctors_note">Doctor's note</option>
+-
+-                                <option value="discharge">Discharge</option>
+-                                </select>
+-
+-                            <div class="validation-actions">
+-                                <button id="validation-complete" class="btn-primary" disabled>
+-                                    <i class="fas fa-check"></i>
+-                                    Assign &amp; complete
+-                                </button>
+-                                <button id="validation-reject" class="btn-danger" type="button">
+-                                    <i class="fas fa-trash"></i>
+-                                    Reject
+-                                </button>
++                            <div class="validation-section validation-section--ocr">
++                                <div class="validation-ocr-header">
++                                    <div>
++                                        <h4>OCR Text</h4>
++                                        <p>Review and edit the extracted text before completing.</p>
++                                    </div>
++                                    <div class="validation-ocr-actions">
++                                        <a id="validation-preview-link" href="#" target="_blank" rel="noopener" class="btn-secondary">
++                                            <i class="fas fa-eye"></i>
++                                            Open preview
++                                        </a>
++                                        <button id="validation-expand-ocr" class="btn-secondary" type="button">
++                                            <i class="fas fa-up-right-and-down-left-from-center"></i>
++                                            Show full OCR
++                                        </button>
++                                    </div>
++                                </div>
++                                <div id="validation-ocr-snippet" class="validation-ocr-snippet"></div>
++                                <div id="validation-expanded" class="validation-ocr-expanded" style="display: none;">
++                                    <textarea id="validation-ocr-text" rows="12" placeholder="OCR text will appear here"></textarea>
++                                    <div class="validation-ocr-footer">
++                                        <button id="validation-toggle-fullscreen" class="btn-secondary" type="button">
++                                            <i class="fas fa-expand"></i>
++                                            Expand OCR
++                                        </button>
++                                    </div>
++                                </div>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+         </section>
+ 
+         <!-- Consultations Section -->
+         <!-- ===================== CONSULTATIONS SECTION ===================== -->
+         <section id="consultations" class="content-section">
+         <div class="page-header">
+             <h1>Consultations</h1>
+             <p>Manage patients, conduct consultations, and generate discharges</p>
+         </div>
+ 
+         <!-- Persistent patient header -->
+         <div id="patient-header" class="patient-header hidden">
+             <div class="patient-header__info">
+             <h2 id="patient-name">Select a Patient</h2>
+             <p id="patient-details">Age — / ID — / Gender —</p>
+             </div>
+             <div class="patient-header__actions">
+             <button id="change-patient" class="btn-secondary small">Change Patient</button>
+             </div>
+         </div>
+diff --git a/static/js/app.js b/static/js/app.js
+index a12177652b14209683f6ade90ed53b3664cc86ce..7e022f95e39a436921f076d7bc0ffe807cf67338 100644
+--- a/static/js/app.js
++++ b/static/js/app.js
+@@ -104,50 +104,52 @@ if (typeof window !== 'undefined' && window.fetch && !window._reconomedFetchPatc
+ 
+ 
+ class ReconoMedApp {
+     // =========================================================================
+     // CONSTRUCTOR: Object Creation Only
+     // =========================================================================
+     // Purpose: Create the object and set up basic properties
+     // When called: Immediately when "new ReconoMedApp()" runs
+     // What it does: Sets initial values, creates child objects
+     // What it DOESN'T do: Touch the DOM, make network calls, or access external resources
+     constructor() {
+         // Basic application properties
+         this.apiBase = '/';
+         this.currentUser = null;
+         this.patients = [];
+         this.documents = [];
+         this.selectedPatient = null;
+         
+         // Create manager instances (but don't initialize them yet)
+         // These constructors should also only set properties, not touch DOM
+         this.navigation = new Navigation(this);
+         this.patientManager = new PatientManager(this);
+         this.documentManager = new DocumentManager(this);
+         this.consultationManager = new ConsultationManager(this);
+         this.clinicManager = new ClinicManager();
++        this.dashboardPollingId = null;
++        this.dashboardPollingIntervalMs = 3000;
      }
-   } catch (e) {
-     // ignore parsing errors, return null
-   }
-   return null;
- }
  
- function withUserHeader(init = {}) {
-   const headers = new Headers(init.headers || {});
-@@ -167,140 +172,138 @@ class ReconoMedApp {
+     // =========================================================================
+     // INIT METHOD: Object Initialization
+     // =========================================================================
+     // Purpose: Set up the application after DOM is ready
+     // When called: Manually after page loads (DOMContentLoaded)
+     // What it does: Touch DOM, set up event listeners, make network calls
+     async init() {
+         // =====================================================================
+         // STEP 1: Authentication Check (can redirect, so do this first)
+         // =====================================================================
+         if (!checkAuthentication(this)) {
+             window.location.href = '/static/login.html';
+             return; // Exit if not authenticated
          }
  
          // =====================================================================
-         // STEP 4: Data Loading (asynchronous network calls)
+         // STEP 2: Load Clinic Data (needed by all managers)
          // =====================================================================
-         // Load initial data from backend
-         // This can be slow and might fail, so handle gracefully
-         await this.loadInitialData();
- 
-         // =====================================================================
-         // STEP 5: Make it pretty
-         // =====================================================================
-         // Start live clock to have on the dashboard
-         startLiveClock('date-time');
-     }
- 
+         try {
+             await this.clinicManager.loadClinicData();
+             window.clinicManager = this.clinicManager; // Make globally available
+         } catch (err) {
+             console.error('Clinic data loading failed:', err);
+@@ -188,50 +190,74 @@ class ReconoMedApp {
      // =========================================================================
      // DATA LOADING: Separate Async Operations
      // =========================================================================
@@ -1414,20 +1229,8 @@ index 1f85257c6003e6b46d29390c0db92d8e7cbd4ead..a12177652b14209683f6ade90ed53b36
              
              // Load patients from backend
              await this.patientManager.loadPatients();
--            
--            //Fetch consultation stats from backend
--            const statsResponse = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'today/stats'));
--            if (!statsResponse.ok) {
--                throw new Error(`HTTP error! status: ${statsResponse.status}`);
--            }
--            const todayStats = await statsResponse.json(); // Data is: { "patients_today": N }
--
--            this.updateDashboardStats(todayStats); // Pass the new stats to the update function
--
--            // Load consultation tab counts
--            await this.loadConsultationCounts(); 
-+            this.updateDashboardStats();
-+            await this.loadTodayConsultations();
+             this.updateDashboardStats();
+             await this.loadTodayConsultations();
  
          } catch (err) {
              console.error('Data loading failed:', err);
@@ -1438,486 +1241,75 @@ index 1f85257c6003e6b46d29390c0db92d8e7cbd4ead..a12177652b14209683f6ade90ed53b36
          }
      }
  
--    async loadConsultationCounts() {
--        try {
--            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'counts'));
--            //print response
--            console.debug(response);
--            if (response.ok) {
--                const counts = await response.json();
--                document.getElementById('active-consultations').textContent = counts.active_consultations ?? 0;
--                document.getElementById('review-pending').textContent = counts.review_pending ?? 0;
--                document.getElementById('discharge-ready').textContent = counts.discharge_ready ?? 0;
--            }
--        } catch (err) {
--            console.error('Failed to load consultation counts:', err);
--        }
--    }
--    
      async refreshActivity() {
--        try {
--            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'activity/recent'));
--            if (!response.ok) throw new Error('Failed to load activity');
--            
--            const data = await response.json();
--            this.renderRecentActivity(data.activities);
--        } catch (err) {
--            console.error('Failed to refresh activity:', err);
--            showToast('Failed to refresh activity', 'error');
--        }
--    }
--
--    renderRecentActivity(activities) {
--        const container = document.getElementById('recent-activity');
--        if (!container) return;
--        
--        if (activities.length === 0) {
--            container.innerHTML = '<p class="text-secondary">No recent activity</p>';
--            return;
--        }
--        
--        container.innerHTML = activities.map(activity => `
--            <div class="activity-item">
--                <i class="${activity.icon}"></i>
--                <div class="activity-info">
--                    <div class="activity-title">${activity.title}</div>
--                    <div class="activity-time">${new Date(activity.timestamp).toLocaleString('ro-RO')}</div>
--                </div>
--            </div>
--        `).join('');
-+        await this.loadTodayConsultations();
+         await this.loadTodayConsultations();
      }
  
++    handleSectionChange(sectionId) {
++        if (sectionId === 'dashboard') {
++            this.startDashboardPolling();
++        } else {
++            this.stopDashboardPolling();
++        }
++        this.documentManager?.nav?.handleSectionChange?.(sectionId);
++    }
++
++    startDashboardPolling() {
++        if (this.dashboardPollingId) return;
++        this.loadTodayConsultations();
++        this.dashboardPollingId = setInterval(() => {
++            if (this.activeSection !== 'dashboard') return;
++            this.loadTodayConsultations();
++        }, this.dashboardPollingIntervalMs);
++    }
++
++    stopDashboardPolling() {
++        if (!this.dashboardPollingId) return;
++        clearInterval(this.dashboardPollingId);
++        this.dashboardPollingId = null;
++    }
++
      // =========================================================================
      // UTILITY METHODS: Application Logic
      // =========================================================================
--    updateDashboardStats(newStats) {
-+    updateDashboardStats() {
+     updateDashboardStats() {
          // 1. Update total patients (existing logic)
          const totalPatientsEl = document.getElementById('total-patients');
          if (totalPatientsEl) {
              totalPatientsEl.textContent = this.patients.length;
          }
-+    }
- 
--        // 2. NEW LOGIC: Update Patients Today
--        const patientsTodayEl = document.getElementById('patients-today');
--        
--        // Check if the element exists AND if the data was passed in
--        if (patientsTodayEl && newStats && newStats.patients_today !== undefined) {
--            // Use the value from the fetched object
--            patientsTodayEl.textContent = newStats.patients_today;
-+    async loadTodayConsultations() {
-+        try {
-+            const queueRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'today/queue'));
-+            if (!queueRes.ok) throw new Error('Failed to load today consultations');
-+            const queue = await queueRes.json();
-+
-+            const validationRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, 'uploads?tab=validation'));
-+            if (!validationRes.ok) throw new Error('Failed to load validation uploads');
-+            const validationData = await validationRes.json();
-+            const validationCount = validationData?.items?.length || 0;
-+
-+            this.updateDashboardTodayCards(queue, validationCount);
-+            this.renderTodayConsultations(queue);
-+        } catch (err) {
-+            console.error('Failed to load today consultations:', err);
-         }
-     }
-+
-+    updateDashboardTodayCards(queue, validationCount) {
-+        const doneEl = document.getElementById('consults-done-today');
-+        if (doneEl) doneEl.textContent = queue?.completed?.length ?? 0;
-+
-+        const remainingEl = document.getElementById('consults-remaining-today');
-+        if (remainingEl) remainingEl.textContent = queue?.remaining?.length ?? 0;
-+
-+        const validationEl = document.getElementById('docs-needing-validation');
-+        if (validationEl) validationEl.textContent = validationCount ?? 0;
-+    }
-+
-+    renderTodayConsultations(queue) {
-+        const remainingContainer = document.getElementById('today-consultations-remaining');
-+        const completedContainer = document.getElementById('today-consultations-completed');
-+        if (!remainingContainer || !completedContainer) return;
-+
-+        const remaining = queue?.remaining || [];
-+        const completed = queue?.completed || [];
-+
-+        remainingContainer.innerHTML = this.buildConsultationList(remaining, 'No remaining consultations today.');
-+        completedContainer.innerHTML = this.buildConsultationList(completed, 'No completed consultations yet.');
-+    }
-+
-+    buildConsultationList(items, emptyMessage) {
-+        if (!items.length) {
-+            return `<div class="empty-message">${emptyMessage}</div>`;
-+        }
-+        return items.map(item => {
-+            const timeText = item.consultation_date
-+                ? new Date(item.consultation_date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-+                : 'No time';
-+            const statusText = (item.status || '').replace('_', ' ');
-+            return `
-+                <div class="consultation-item">
-+                    <div class="consultation-item__info">
-+                        <div class="consultation-item__title">${item.patient_name}</div>
-+                        <div class="consultation-item__meta">${item.specialty} · ${timeText}</div>
-+                    </div>
-+                    <span class="consultation-item__status">${statusText || 'status'}</span>
-+                </div>
-+            `;
-+        }).join('');
-+    }
- }
- 
- // =========================================================================
- // APPLICATION STARTUP: Global Initialization
- // =========================================================================
- // Create the app instance (runs constructor immediately)
- const app = new ReconoMedApp();
- 
- // Wait for DOM to be ready, then initialize
- document.addEventListener('DOMContentLoaded', () => {
-     app.init(); // This calls the async init method
- });
- 
- // Make app available globally for HTML onclick handlers
- window.app = app;
- window.consultationManager = app.consultationManager;
- window.clinicManager = app.clinicManager;
- window.documentManager = app.DocumentManager;
- 
- 
- // =========================================================================
- // GLOBAL MODAL FUNCTIONS for HTML onclick handlers
- // =========================================================================
- window.closeAddPatientModal = function() {
-     const form = document.getElementById('add-patient-form');
-@@ -380,26 +383,26 @@ window.app.previousPatientsPage = () => app.patientManager.previousPage();
- //end Navigation
- // ========================================================================
- 
- // ========================================================================
- //Consent History
- // ========================================================================
- window.closeConsentHistoryModal = function() {
-     hideModal('consent-history-modal');
- };
- 
- window.app.exportConsentHistory = () => app.patientManager.exportConsentHistory();
- // ========================================================================
- //end Consent History
- // ========================================================================
- 
- // Prepare for logout: Get the button element
- const logoutButton = document.getElementById('logout-button');
- 
- // Add the event listener after the DOM is ready
- // You can use the imported `logout` function directly.
- if (logoutButton) {
-     logoutButton.addEventListener('click', () => {
-         // The imported 'logout' function from './auth.js' is called here
-         logout(); 
-     });
--}
-\ No newline at end of file
-+}
-diff --git a/static/js/clinics.js b/static/js/clinics.js
-index 0af7551d2bec2078d44bc569cf37cb3713a70c59..65011f49859e6df23d8c5f42ccd6234a6bdab89f 100644
---- a/static/js/clinics.js
-+++ b/static/js/clinics.js
-@@ -1,37 +1,39 @@
- // static/js/clinics.js
-+import { apiFetch, apiUrl, API_CONFIG } from './app.js';
-+
- class ClinicManager {
-     constructor() {
-         this.clinicData = null;
      }
  
-     async init() {
-         if (!this.clinicData) {
-             await this.loadClinicData();
-         }
-     }
- 
-     async loadClinicData() {
+     async loadTodayConsultations() {
          try {
--            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.clinics, `my-clinic`));
-+            const response = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.clinics, `my-clinic`));
-             //console.log(response);
-             if (!response.ok) throw new Error('Failed to load clinic data');
-             
-             this.clinicData = await response.json();
-             //console.log(this.clinicData);
-             return this.clinicData;
-         } catch (error) {
-             console.error('Error loading clinic data:', error);
-             return null;
-         }
-     }
-     
-     getClinicId() {
-         return this.clinicData?.id || null;
-     }
-     
-     getClinicName() {
-         return this.clinicData?.name || 'Unknown Clinic';
-     }
- }
+             const queueRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'today/queue'));
+             if (!queueRes.ok) throw new Error('Failed to load today consultations');
+             const queue = await queueRes.json();
  
--export { ClinicManager };
-\ No newline at end of file
-+export { ClinicManager };
-diff --git a/static/js/documents/documents.actions.js b/static/js/documents/documents.actions.js
-index c7fd955c34c8c22bac63a9fb3b2723d003da65c6..594afb7f9c8dbd33cd8afa6f37debcb981d79993 100644
---- a/static/js/documents/documents.actions.js
-+++ b/static/js/documents/documents.actions.js
-@@ -1,196 +1,195 @@
- // documents.actions.js
- // Handles backend calls and data-level operations for the Documents module
+             const validationRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, 'uploads?tab=validation'));
+             if (!validationRes.ok) throw new Error('Failed to load validation uploads');
+             const validationData = await validationRes.json();
+             const validationCount = validationData?.items?.length || 0;
  
--import { apiUrl, API_CONFIG } from '../app.js';
-+import { apiUrl, API_CONFIG, apiFetch } from '../app.js';
- import { showToast } from '../ui.js';
- 
--function currentUserEmail() {
--  if (typeof window === 'undefined') return null;
--  if (window.app?.currentUser?.email) return window.app.currentUser.email;
--  try {
--    const raw = localStorage.getItem('reconomed_user');
--    if (raw) {
--      const parsed = JSON.parse(raw);
--      return parsed?.email || parsed?.username || null;
--    }
--  } catch (e) {
--    return null;
--  }
--  return null;
--}
--
--function withUserHeaders(baseHeaders = {}) {
--  const headers = new Headers(baseHeaders);
--  const email = currentUserEmail();
--  if (email && !headers.has('X-User')) {
--    headers.set('X-User', email);
--  }
--  return headers;
--}
--
- export const DocumentActions = {
-   /**
-    * Upload one or multiple files (no patient required)
-    */
-   async uploadFiles(files, patientId=null) {
-     const formData = new FormData();
-     for (const file of files) {
-       formData.append('files', file);
-     }
- 
-     try {
--      const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents,'uploads'), {
-+      const response = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents,'uploads'), {
-         method: 'POST',
--        headers: withUserHeaders(),
-         body: formData,
-       });
-       if (!response.ok) throw new Error('Upload failed');
- 
-       const data = await response.json();
-       showToast('Files uploaded successfully', 'success');
-       
-       return data;
-     }
-     catch (err) {
-       console.error('Upload error:', err);
-       showToast('Error uploading files', 'error');
-       return null;
-     }
-   },
- 
-   async fetchTab(tab) {
-     const tabParam = encodeURIComponent(tab);
--    const response = await fetch(
--      apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads?tab=${tabParam}`),
--      { headers: withUserHeaders() }
-+    const response = await apiFetch(
-+      apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads?tab=${tabParam}`)
-     );
-     if (!response.ok) throw new Error(`Failed to fetch ${tab} uploads`);
-     const data = await response.json();
-     return data?.items || [];
-   },
- 
-   /**
-    * Completes upload validation and assigns to patient
-    * @param {string} uploadId - Upload UUID
-    * @param {string} patientId - Patient UUID to assign
-    * @param {string} [editedOcrText] - Corrected OCR text (optional)
-    * @param {string} [documentType] - Document type override (optional)
-    * @returns {Promise<Object>} Completed document
-    */
-   async completeUpload(uploadId, patientId, editedOcrText = null, documentType = null) {
--    const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/complete`), {
-+    const response = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/complete`), {
-       method: 'POST',
--      headers: withUserHeaders({ 'Content-Type': 'application/json' }),
-+      headers: { 'Content-Type': 'application/json' },
-       body: JSON.stringify({ 
-         patient_id: patientId,
-         edited_ocr_text: editedOcrText,
-         document_type: documentType
-       })
-     });
-     const data = await response.json().catch(() => ({}));
-     if (!response.ok) {
-       const err = new Error(data?.detail || 'Failed to complete upload');
-       err.status = response.status;
-       throw err;
-     }
-     return data;
-   }, 
- 
-   /**
-    * Batch-set document type for selected uploads (Validation screen)
-    * - For each uploadId, calls:
-    *   PUT /documents/uploads/{upload_id}/type?document_type=...
-    */
-   async batchSetType(uploadIds, documentType) {
-     if (!uploadIds || !uploadIds.length || !documentType) {
-       return;
-     }
- 
-     try {
-       const requests = uploadIds.map((id) => {
-         const query = `uploads/${encodeURIComponent(id)}/type?document_type=${encodeURIComponent(documentType)}`;
--        return fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, query), {
-+        return apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, query), {
-           method: 'PUT',
--          headers: {}
-         });
-       });
- 
-       const responses = await Promise.all(requests);
-       const allOk = responses.every((res) => res.ok);
-       if (!allOk) {
-         throw new Error('One or more type updates failed');
-       }
- 
-       showToast('Tipul documentelor a fost actualizat', 'success');
-       return true;
-     } catch (err) {
-       console.error('batchSetType error:', err);
-       showToast('Eroare la actualizarea tipului documentelor', 'error');
-       return null;
-     }
-   },
- 
-   /**
-    * Fetches complete upload details including metadata, OCR results, and preview URL
-    * @param {string} uploadId - Upload UUID
-    * @returns {Promise<{metadata: Object, ocr: Object, previewUrl: string}>}
-    */
-   async fetchUploadDetails(uploadId) {
--    const detailRes = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`), {
--      headers: withUserHeaders()
--    });
-+    const detailRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`));
-     if (!detailRes.ok) {
-       const body = await detailRes.json().catch(() => ({}));
-       const err = new Error(body?.detail || 'Failed to load upload detail');
-       err.status = detailRes.status;
-       throw err;
-     }
- 
-     const metadata = await detailRes.json();
- 
--    const ocrRes = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/ocr`), {
--      headers: withUserHeaders()
--    });
-+    const ocrRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/ocr`));
-     const ocr = ocrRes.ok ? await ocrRes.json() : null;
- 
-     return { metadata, ocr, previewUrl: apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}/download`) };
-   },
- 
-   /**
-    * Opens validation modal with document preview and OCR results
-    * @param {string} uploadId - Upload UUID to validate
-    */
-   async openValidationCard(uploadId) {
-     const { metadata, ocr, previewUrl } = await DocumentActions.fetchUploadDetails(uploadId);
-     
-     // Render split view:
-     // Left: <img src="${previewUrl}">
-     // Right: Display metadata + ocr.text with confidence highlighting
-   },
- 
-   /**
-    * Reject and delete an upload immediately.
-    * @param {string} uploadId
-    */
-   async rejectUpload(uploadId) {
--    const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`), {
-+    const res = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `uploads/${uploadId}`), {
-       method: 'DELETE',
--      headers: withUserHeaders(),
-     });
- 
-     if (res.status === 404) {
-       const err = new Error('Already deleted');
-       err.status = 404;
-       throw err;
-     }
- 
-     if (!res.ok) {
-       const body = await res.json().catch(() => ({}));
-       const err = new Error(body?.detail || 'Failed to delete upload');
-       err.status = res.status;
-       throw err;
-     }
- 
-     return res.json();
-   },
--};
-\ No newline at end of file
-+
-+  async openPreview(url) {
-+    if (!url || url === '#') {
-+      showToast('File unavailable; re-upload', 'error');
-+      return;
-+    }
-+
-+    try {
-+      const res = await apiFetch(url);
-+      if (res.status === 403) {
-+        showToast('Not allowed', 'error');
-+        return;
-+      }
-+      if (res.status === 404) {
-+        showToast('File unavailable; re-upload', 'error');
-+        return;
-+      }
-+      if (!res.ok) {
-+        showToast('Unable to open preview', 'error');
-+        return;
-+      }
-+
-+      const blob = await res.blob();
-+      const blobUrl = URL.createObjectURL(blob);
-+      window.open(blobUrl, '_blank', 'noopener');
-+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-+    } catch (err) {
-+      console.error('Preview error:', err);
-+      showToast('File unavailable; re-upload', 'error');
-+    }
-+  },
-+};
+             this.updateDashboardTodayCards(queue, validationCount);
+             this.renderTodayConsultations(queue);
+         } catch (err) {
 diff --git a/static/js/documents/documents.navigation.js b/static/js/documents/documents.navigation.js
-index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb64005e29 100644
+index 1a3e43a84bfb4a4b76a1616942dc43cb64005e29..e58ba1eae92d93c1c543e2df8d812be640ad908c 100644
 --- a/static/js/documents/documents.navigation.js
 +++ b/static/js/documents/documents.navigation.js
-@@ -12,73 +12,78 @@ export const DocumentNavigation = {
+@@ -1,78 +1,81 @@
+ // documents.navigation.js
+ // Handles UI updates, tab switching, view toggles, and DOM rendering for Documents
+ 
+ import { DocumentActions } from './documents.actions.js';
+ import { showToast } from '../ui.js';
+ 
+ export const DocumentNavigation = {
+   currentView: 'grid',
+   activeTab: 'unprocessed',
+   tabs: [],
+   tabCounts: {},
    contentArea: null,
    validationModal: null,
    validationInitialOcrText: '',
@@ -1925,6 +1317,8 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
    validationSelectedPatientId: null,
    patientSearchResults: [],
    patientSearchActiveIndex: -1,
++  pollingIntervalId: null,
++  pollingIntervalMs: 3000,
  
    /**
     * Initialize tab and event bindings
@@ -1943,8 +1337,8 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
      this.selectAllLabel = document.getElementById('select-all-label');
      this.selectAllCheckbox = document.getElementById('select-all');
      this.totalUploads = document.getElementById('total-uploads');
-+    this.uploadArea = document.getElementById('upload-area');
-+    this.uploadCountBadge = document.getElementById('upload-count');
+     this.uploadArea = document.getElementById('upload-area');
+     this.uploadCountBadge = document.getElementById('upload-count');
      this.processingTitle = document.getElementById('processing-title');
      this.processingBody = document.getElementById('processing-body');
      // Modal elements
@@ -1960,18 +1354,18 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
      this.validationFileName = document.getElementById('validation-filename');
      this.validationCompleteBtn = document.getElementById('validation-complete');
      this.validationRejectBtn = document.getElementById('validation-reject');
++    this.validationSaveDraftBtn = document.getElementById('validation-save-draft');
      this.validationToggleFullscreen = document.getElementById('validation-toggle-fullscreen');
-+    this.tabCountCache = { unprocessed: 0, processing: 0, validation: 0 };
-+    this.maxUploads = window.clinicManager?.clinicData?.max_uploads || 20;
+     this.tabCountCache = { unprocessed: 0, processing: 0, validation: 0 };
+     this.maxUploads = window.clinicManager?.clinicData?.max_uploads || 20;
  
--     if (!this.contentArea) {
-+    if (!this.contentArea) {
+     if (!this.contentArea) {
        console.warn('Document tabs content area not found. Skipping document navigation init.');
        return;
      }
  
      this.bindUIEvents();
-+    this.updateUploadQuotaBadge();
+     this.updateUploadQuotaBadge();
      await this.switchTab('unprocessed');
    },
  
@@ -1986,18 +1380,21 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
          this.switchTab(btn.dataset.tab);
        });
      });
+@@ -146,167 +149,238 @@ export const DocumentNavigation = {
  
-     // View toggles
-      document.querySelectorAll('.view-toggle').forEach(btn => {
-       btn.addEventListener('click', () => {
-         this.toggleView(btn.dataset.view);
-       });
+     // Click-to-upload
+     dropzone.addEventListener('click', () => fileInput.click());
+     fileInput.addEventListener('change', async e => {
+         const files = e.target.files;
+         if (!files.length) return;
+         
+         const patientId = window.app?.documentManager?.currentUploadPatientId || null;
+         await DocumentActions.uploadFiles(files, patientId);
+         await this.refreshUnprocessedList();
      });
-     this.toggleView(this.currentView);
+     }
  
-     // Batch actions
-     const applyPatientBtn = document.getElementById('apply-batch-patient');
-@@ -155,91 +160,101 @@ export const DocumentNavigation = {
+     if (this.validationExpandBtn) {
        this.validationExpandBtn.addEventListener('click', () => this.setValidationExpanded(true));
      }
  
@@ -2009,6 +1406,10 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
        this.validationRejectBtn.addEventListener('click', () => this.confirmReject());
      }
  
++    if (this.validationSaveDraftBtn) {
++      this.validationSaveDraftBtn.addEventListener('click', () => this.saveValidationDraft());
++    }
++
      if (this.validationPatientSearch) {
        this.validationPatientSearch.addEventListener('input', (e) => this.handlePatientSearch(e.target.value));
        this.validationPatientSearch.addEventListener('keydown', (e) => this.handlePatientSearchKeydown(e));
@@ -2023,13 +1424,13 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
        this.validationToggleFullscreen.addEventListener('click', () => this.toggleValidationFullscreen());
      }
  
-+    if (this.validationPreviewLink) {
-+      this.validationPreviewLink.addEventListener('click', async (event) => {
-+        event.preventDefault();
-+        await DocumentActions.openPreview(this.validationPreviewLink.href);
-+      });
-+    }
-+
+     if (this.validationPreviewLink) {
+       this.validationPreviewLink.addEventListener('click', async (event) => {
+         event.preventDefault();
+         await DocumentActions.openPreview(this.validationPreviewLink.href);
+       });
+     }
+ 
      document.addEventListener('keydown', (event) => {
        if (event.key === 'Escape' && this.validationModal?.classList.contains('open')) {
          this.closeValidationModal();
@@ -2044,15 +1445,89 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
          this.clearPatientResults();
        }
      });
++  },
  
-     setInterval(async () => {
-       if (this.activeTab === 'processing') {
-         await this.switchTab('processing');
+-    setInterval(async () => {
+-      if (this.activeTab === 'processing') {
+-        await this.switchTab('processing');
+-      }
+-      if (this.activeTab === 'validation') {
+-        await this.switchTab('validation');
++  handleSectionChange(sectionId) {
++    if (sectionId === 'documents') {
++      this.startPolling();
++    } else {
++      this.stopPolling();
++    }
++  },
++
++  startPolling() {
++    if (this.pollingIntervalId) return;
++    this.pollDocuments();
++    this.pollingIntervalId = setInterval(() => {
++      this.pollDocuments();
++    }, this.pollingIntervalMs);
++  },
++
++  stopPolling() {
++    if (!this.pollingIntervalId) return;
++    clearInterval(this.pollingIntervalId);
++    this.pollingIntervalId = null;
++  },
++
++  isPollingAllowed() {
++    if (window.app?.activeSection !== 'documents') return false;
++    if (this.validationModal?.classList.contains('open')) return false;
++    return true;
++  },
++
++  async pollDocuments() {
++    if (!this.isPollingAllowed()) return;
++    if (!this.activeTab) return;
++    try {
++      const activeTab = this.activeTab;
++      const activeUploads = await DocumentActions.fetchTab(activeTab);
++      await this.renderTab(activeTab, activeUploads);
++      await this.refreshTabCounts(activeTab, activeUploads);
++    } catch (error) {
++      console.error('Polling documents failed:', error);
++    }
++  },
++
++  async refreshTabCounts(activeTab, activeUploads) {
++    const tabs = ['unprocessed', 'processing', 'validation', 'completed', 'error'];
++    const requests = tabs.map(async (tab) => {
++      if (tab === activeTab && Array.isArray(activeUploads)) {
++        return { tab, count: activeUploads.length };
        }
-       if (this.activeTab === 'validation') {
-         await this.switchTab('validation');
-       }
-     }, 4000);
+-    }, 4000);
++      const uploads = await DocumentActions.fetchTab(tab);
++      return { tab, count: uploads?.length || 0 };
++    });
++
++    const results = await Promise.allSettled(requests);
++    results.forEach((result) => {
++      if (result.status !== 'fulfilled') return;
++      const { tab, count } = result.value;
++      this.updateTabCount(tab, count);
++    });
++  },
++
++  getTabPanel(tabKey) {
++    if (this.contentArea) {
++      const panel = this.contentArea.querySelector(`#${tabKey}-tab`);
++      if (panel) return panel;
++    }
++    return document.getElementById(`${tabKey}-tab`);
++  },
++
++  renderMissingContainer(tabKey, message) {
++    const panel = this.getTabPanel(tabKey);
++    if (panel) {
++      panel.innerHTML = `<div class="error-banner">${message}</div>`;
++      return;
++    }
++    showToast(message, 'error');
    },
  
    /**
@@ -2071,9 +1546,9 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
      // 2. DATA LOADING based on tab
      // Update active tab styling
      this.activeTab = tabKey;
-+    if (this.uploadArea) {
-+      this.uploadArea.classList.toggle('is-hidden', tabKey !== 'unprocessed');
-+    }
+     if (this.uploadArea) {
+       this.uploadArea.classList.toggle('is-hidden', tabKey !== 'unprocessed');
+     }
      
      // Load data
      try {
@@ -2092,17 +1567,49 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
     * @returns nothing
     */
    async renderTab(tabKey, uploads) {
-     let container = null;
-     if (this.contentArea) {
-       container = this.contentArea.querySelector(`#${tabKey}-tab`);
-     }
+-    let container = null;
+-    if (this.contentArea) {
+-      container = this.contentArea.querySelector(`#${tabKey}-tab`);
+-    }
++    const container = this.getTabPanel(tabKey);
      if (!container) {
-       container = document.getElementById(`${tabKey}-tab`);
+-      container = document.getElementById(`${tabKey}-tab`);
++      this.renderMissingContainer(tabKey, `Missing ${tabKey} tab container.`);
++      return;
      }
-@@ -270,66 +285,78 @@ export const DocumentNavigation = {
-     const container = this.contentArea?.querySelector(`#${tabKey}-tab`);
-     if (!container) return;
-     container.innerHTML = `<div class="error-message">Could not load ${tabKey} uploads. ${error?.message || ''}</div>`;
+-    if (!container) return;
+     
+     this.updateTabCount(tabKey, uploads?.length || 0);
+ 
+     switch(tabKey) {
+       case 'unprocessed':
+         this.renderUploads(uploads|| []);
+         break;
+       case 'processing':
+         await this.renderProcessing(uploads|| []);
+         break;
+       case 'validation':
+         this.renderValidation(uploads)|| [];
+         break;
+       case 'completed':
+         this.renderCompleted(uploads|| []);
+         break;
+       case 'error':
+         this.renderErrors(uploads|| []);
+         break;
+     }
+   },
+ 
+   renderError(tabKey, error) {
+-    const container = this.contentArea?.querySelector(`#${tabKey}-tab`);
+-    if (!container) return;
+-    container.innerHTML = `<div class="error-message">Could not load ${tabKey} uploads. ${error?.message || ''}</div>`;
++    const container = this.getTabPanel(tabKey);
++    if (!container) {
++      this.renderMissingContainer(tabKey, `Missing ${tabKey} tab container.`);
++      return;
++    }
++    container.innerHTML = `<div class="error-banner">Could not load ${tabKey} uploads. ${error?.message || ''}</div>`;
    },
  
    /**
@@ -2125,60 +1632,47 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
        this.tabCounts[tabKey].textContent = count;
      }
  
-+    if (this.tabCountCache && Object.prototype.hasOwnProperty.call(this.tabCountCache, tabKey)) {
-+      this.tabCountCache[tabKey] = count;
-+      this.updateUploadQuotaBadge();
-+    }
-+
-     if (tabKey === 'validation') {
-       const pending = document.getElementById('validation-pending');
-       if (pending) pending.textContent = count;
+     if (this.tabCountCache && Object.prototype.hasOwnProperty.call(this.tabCountCache, tabKey)) {
+       this.tabCountCache[tabKey] = count;
+       this.updateUploadQuotaBadge();
+@@ -541,201 +615,212 @@ export const DocumentNavigation = {
+       card.addEventListener('click', () => onCardClick(doc));
      }
  
-     if (tabKey === 'completed') {
-       const completed = document.getElementById('completed-total');
-       if (completed) completed.textContent = count;
-     }
+     // Actions
+     card.querySelectorAll('button[data-action-index]').forEach(btn => {
+       const action = actions[Number(btn.dataset.actionIndex)];
+       if (!action || typeof action.onClick !== 'function') return;
+       btn.addEventListener('click', (e) => {
+         e.stopPropagation();
+         action.onClick(doc, btn);
+       });
+     });
  
-     if (tabKey === 'error') {
-       const error = document.getElementById('error-total');
-       if (error) error.textContent = count;
-     }
+     return card;
    },
  
-+  updateUploadQuotaBadge() {
-+    if (!this.uploadCountBadge) return;
-+    const maxUploads = window.clinicManager?.clinicData?.max_uploads || this.maxUploads || 20;
-+    const total = Object.values(this.tabCountCache || {}).reduce((sum, value) => sum + (value || 0), 0);
-+    this.uploadCountBadge.textContent = `${total}/${maxUploads} uploads used`;
-+  },
-+
-   /**
-    * Get IDs of selected uploads
-    */
-   getSelectedUploads() {
-     const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-     return Array.from(checkboxes).map(cb => cb.dataset.id);
-   },
- 
-   /**
-    * Refresh Unprocessed list after an update
-    */
-   async refreshUnprocessedList() {
-     console.log('refreshUnprocessedList() triggered');
-     try {
-         const docs = await DocumentActions.fetchTab("unprocessed");
-         console.log('Fetched unprocessed data:', docs);
-         this.renderUploads(docs || []);
-     } catch (err) {
-         console.error('refreshUnprocessedList error:', err);
-     }
-   },
- 
-   /* 
-     Refreshes the processing queue
+   /*
+     Renders processing queue
    */
-@@ -550,54 +577,51 @@ export const DocumentNavigation = {
+   async renderProcessing(queue) {
+     console.log('Render processing queue...');
+     const container = document.getElementById('processing-list');
+     const countBadge = document.getElementById('processing-count');
+ 
+     if (!container) {
+-      console.log('Processing container not found');
++      this.renderMissingContainer('processing', 'Processing list container missing.');
+       return;
+     }
+ 
+     container.innerHTML = '';
+     const processingCount = queue?.length || 0;
+     let queuedCount = 0;
+     if (processingCount === 0) {
+       try {
+         const queuedUploads = await DocumentActions.fetchTab('unprocessed');
+         queuedCount = queuedUploads?.length || 0;
        } catch (error) {
          console.warn('Could not load queued count', error);
        }
@@ -2204,11 +1698,7 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
  
      queue.forEach(doc => {
        const statusConfig = this.getStatusConfig('processing', doc);
--      const card = this.createDocumentCard(doc, {
--        statusConfig,
--        onCardClick: () => window.open(doc.preview_url || '#', '_blank')
--      });
-+      const card = this.createDocumentCard(doc, { statusConfig });
+       const card = this.createDocumentCard(doc, { statusConfig });
  
        container.appendChild(card);
      });
@@ -2219,7 +1709,11 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
    */
    renderValidation(docs) {
      const container = document.getElementById('validation-list');
-     if (!container) return;
+-    if (!container) return;
++    if (!container) {
++      this.renderMissingContainer('validation', 'Validation list container missing.');
++      return;
++    }
      container.innerHTML = '';
  
      if (!docs.length) {
@@ -2234,7 +1728,22 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
          {
            label: 'Assign & complete',
            icon: 'fa-check',
-@@ -620,151 +644,126 @@ export const DocumentNavigation = {
+           variant: 'primary',
+           disabled: doc.job_state !== 'ocr_done',
+           onClick: (d) => this.openValidationForm(d, { confirmFirst: true }),
+         },
+         {
+           label: 'Review / Edit',
+           icon: 'fa-pen',
+           variant: 'secondary',
+           muted: true,
+           onClick: (d) => this.openValidationForm(d, { confirmFirst: false, reviewMode: true }),
+         },
+         {
+           label: 'Reject',
+           icon: 'fa-trash',
+           variant: 'danger',
+           onClick: (d) => this.confirmReject(d),
          },
        ];
  
@@ -2251,6 +1760,10 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
  
    renderCompleted(docs) {
      const container = document.getElementById('completed-list');
++    if (!container) {
++      this.renderMissingContainer('completed', 'Completed list container missing.');
++      return;
++    }
      container.innerHTML = '';
  
      if (!docs.length) {
@@ -2260,21 +1773,10 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
  
      docs.forEach(doc => {
        const statusConfig = this.getStatusConfig('completed', doc);
--      const actions = [
--        {
--          label: 'Preview',
--          icon: 'fa-eye',
--          variant: 'secondary',
--          muted: true,
--          onClick: (d) => window.open(d.preview_url || '#', '_blank'),
--        },
--      ];
  
        const card = this.createDocumentCard(doc, {
          statusConfig,
--        actions,
          showCompletedMeta: true,
--        onCardClick: (d) => window.open(d.preview_url || '#', '_blank'),
        });
  
        container.appendChild(card);
@@ -2283,6 +1785,10 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
  
    renderErrors(docs) {
      const container = document.getElementById('error-list');
++    if (!container) {
++      this.renderMissingContainer('error', 'Error list container missing.');
++      return;
++    }
      container.innerHTML = '';
  
      if (!docs.length) {
@@ -2293,13 +1799,6 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
      docs.forEach(doc => {
        const statusConfig = this.getStatusConfig('error', doc);
        const actions = [
--        {
--          label: 'Preview',
--          icon: 'fa-eye',
--          variant: 'secondary',
--          muted: true,
--          onClick: (d) => window.open(d.preview_url || '#', '_blank'),
--        },
          {
            label: 'Delete',
            icon: 'fa-trash',
@@ -2310,7 +1809,6 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
        const card = this.createDocumentCard(doc, {
          statusConfig,
          actions,
--        onCardClick: (d) => window.open(d.preview_url || '#', '_blank'),
        });
        container.appendChild(card);
      });
@@ -2326,7 +1824,8 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
      const count = documents.length;
  
      if (!container) {
-       console.error('File container not found in Unprocessed tab');
+-      console.error('File container not found in Unprocessed tab');
++      this.renderMissingContainer('unprocessed', 'Unprocessed list container missing.');
        return;
      }
  
@@ -2352,47 +1851,195 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
      }
  
      if (empty) empty.style.display = 'none';
- 
-     documents.forEach(doc => {
--      const card = this.createDocumentCard(doc,{
--        onCardClick: () => {
--          if (doc.preview_url) {
--            window.open(doc.preview_url, '_blank');
--          }
--        }
--      });
-+      const card = this.createDocumentCard(doc);
-       container.appendChild(card);
-     });
-   },
- 
-   /**
-    * Open validation form (modal or panel)
-    */
-   async openValidationForm(upload, options = {}) {
-     try {
-       const { metadata, ocr, previewUrl } = await DocumentActions.fetchUploadDetails(upload.id);
-       if (!metadata) throw new Error('No details available');
-       if (metadata.job_state && metadata.job_state !== 'ocr_done') {
-         showToast('OCR not finished yet. Check the Processing tab.', 'warning');
-         await this.switchTab('processing');
-         return;
+@@ -785,57 +870,119 @@ export const DocumentNavigation = {
+         this.validationPreviewLink.href = metadata.preview_url || previewUrl || '#';
        }
  
-       const confirmFirst = options.confirmFirst === true;
-       const reviewMode = options.reviewMode === true;
-       this.validationInitialOcrText = ocr?.ocr_text || '';
-       this.setValidationExpanded(!confirmFirst);
-       this.setValidationMode({ reviewMode });
+       if (this.validationFileName) {
+         this.validationFileName.textContent = metadata.filename || '';
+       }
  
-       if (this.validationModal) {
-         this.validationModal.dataset.uploadId = upload.id;
-@@ -1032,26 +1031,26 @@ export const DocumentNavigation = {
+       if (this.validationDocumentTypeSelect) {
+         this.validationDocumentTypeSelect.value = metadata.document_type || '';
+       }
+ 
+       if (this.validationPatientSearch) {
+         this.validationPatientSearch.value = '';
+         this.validationPatientSearch.dataset.patientId = '';
+       }
+ 
+        if (this.validationToggleFullscreen) {
+         this.validationToggleFullscreen.innerHTML = '<i class="fas fa-expand"></i> Expand OCR';
+       }
+ 
+       this.clearSelectedPatient();
+       const preselectedPatientId = metadata.patient_id || window.app?.documentManager?.currentUploadPatientId || null;
+       if (preselectedPatientId) {
+         await this.setSelectedPatientById(preselectedPatientId);
+       }
++      const draft = this.loadValidationDraft(upload.id);
++      if (draft) {
++        if (draft.documentType && this.validationDocumentTypeSelect) {
++          this.validationDocumentTypeSelect.value = draft.documentType;
++        }
++        if (draft.ocrText && this.validationOcrField) {
++          this.validationOcrField.value = draft.ocrText;
++          this.setValidationExpanded(true);
++        }
++        if (draft.patientId) {
++          await this.setSelectedPatientById(draft.patientId);
++        } else if (draft.patientLabel && this.validationPatientSearch) {
++          this.validationPatientSearch.value = draft.patientLabel;
++        }
++      }
+       this.updateCompleteButtonState();
+     } catch (err) {
+       console.error('openValidationForm error:', err);
+       showToast('Error loading validation data', 'error');
+     }
+   },
+ 
++  getValidationDraftKey(uploadId) {
++    return `validationDraft:${uploadId}`;
++  },
++
++  loadValidationDraft(uploadId) {
++    if (!uploadId) return null;
++    try {
++      const raw = localStorage.getItem(this.getValidationDraftKey(uploadId));
++      return raw ? JSON.parse(raw) : null;
++    } catch (error) {
++      console.warn('Failed to load validation draft', error);
++      return null;
++    }
++  },
++
++  saveValidationDraft() {
++    if (!this.validationModal) return;
++    const uploadId = this.validationModal.dataset.uploadId;
++    if (!uploadId) {
++      showToast('No upload selected to save', 'warning');
++      return;
++    }
++    const draft = {
++      patientId: this.validationSelectedPatientId || this.validationPatientSearch?.dataset?.patientId || null,
++      patientLabel: this.validationPatientSearch?.value || '',
++      documentType: this.validationDocumentTypeSelect?.value || '',
++      ocrText: this.validationOcrField?.value || '',
++      savedAt: new Date().toISOString(),
++    };
++    try {
++      localStorage.setItem(this.getValidationDraftKey(uploadId), JSON.stringify(draft));
++      showToast('Draft saved', 'success');
++    } catch (error) {
++      console.error('Failed to save draft', error);
++      showToast('Failed to save draft', 'error');
++    }
++  },
++
++  clearValidationDraft(uploadId) {
++    if (!uploadId) return;
++    try {
++      localStorage.removeItem(this.getValidationDraftKey(uploadId));
++    } catch (error) {
++      console.warn('Failed to clear draft', error);
++    }
++  },
++
+  setValidationMode({ reviewMode = false } = {}) {
+     if (!this.validationModal) return;
+     this.validationModal.classList.toggle('validation-modal--review', reviewMode);
+   },
+ 
+    async setSelectedPatientById(patientId) {
+     if (!patientId) return;
+     const patientManager = window.app?.patientManager;
+     let patient = null;
+     if (patientManager?.getPatientById) {
+       patient = await patientManager.getPatientById(patientId);
+     }
+     if (!patient && patientManager?.patients) {
+       patient = patientManager.patients.find(p => p.id === patientId) || null;
+     }
+     if (patient) {
+       this.setSelectedPatient(patient);
+     }
+   },
+ 
+    buildPatientLabel(patient) {
+     return [patient?.given_name, patient?.family_name].filter(Boolean).join(' ').trim() || 'Unnamed';
+   },
+ 
+   buildPatientMeta(patient) {
+@@ -971,86 +1118,88 @@ export const DocumentNavigation = {
+     this.clearSelectedPatient();
+     this.clearPatientResults();
+     document.body.classList.remove('modal-open');
+     this.setValidationExpanded(true);
+     if (this.validationCompleteBtn) {
+       this.validationCompleteBtn.innerHTML = '<i class="fas fa-check"></i> Assign &amp; complete';
+     }
+     this.updateCompleteButtonState();
+   },
+ 
+   async handleCompleteAction() {
+     if (!this.validationModal) return;
+     const uploadId = this.validationModal.dataset.uploadId;
+     const patientId = this.validationSelectedPatientId || this.validationPatientSearch?.dataset?.patientId;
+     const editedText = this.validationOcrField?.value || '';
+     const documentType = this.validationDocumentTypeSelect?.value || null;
+ 
+     if (!patientId) {
+       showToast('Select a patient first', 'warning');
+       return;
+     }
+ 
+     try {
+       if (this.validationCompleteBtn) {
+         this.validationCompleteBtn.disabled = true;
+-        this.validationCompleteBtn.textContent = 'Completing...';
++        this.validationCompleteBtn.innerHTML = '<i class="fas fa-check"></i> Completing...';
+       }
+       const editedOcrText = editedText !== this.validationInitialOcrText ? editedText : null;
+       await DocumentActions.completeUpload(uploadId, patientId, editedOcrText, documentType);
+       showToast('Completed', 'success');
++      this.clearValidationDraft(uploadId);
+       this.closeValidationModal();
+       await this.switchTab('validation');
+       await this.switchTab('completed');
+     } catch (err) {
+       console.error('Complete error', err);
+       if (err.status === 409) {
+         showToast('OCR not finished. Please retry later.', 'warning');
+       } else if (err.status === 404) {
+         showToast('Patient not found. Refresh patient list.', 'error');
+         this.clearSelectedPatient();
+       } else if (err.status === 403) {
+         showToast('Not allowed for this clinic.', 'error');
+       } else {
+         showToast(err.message || 'Could not complete upload', 'error');
+       }
+     } finally {
+       if (this.validationCompleteBtn) {
+         this.validationCompleteBtn.disabled = false;
+         this.validationCompleteBtn.innerHTML = '<i class="fas fa-check"></i> Assign &amp; complete';
+       }
+     }
+   },
+ 
+   async confirmReject(upload) {
+     const id = upload?.id || this.validationModal?.dataset?.uploadId;
+     if (!id) return;
+     const confirmed = window.confirm('Reject & delete this upload permanently?');
+     if (!confirmed) return;
+ 
+     try {
        if (this.validationRejectBtn) {
          this.validationRejectBtn.disabled = true;
        }
        await DocumentActions.rejectUpload(id);
        showToast('Deleted', 'success');
++      this.clearValidationDraft(id);
        this.closeValidationModal();
        if (this.activeTab) {
          await this.switchTab(this.activeTab);
@@ -2413,126 +2060,41 @@ index bb192e51133bff2d0031bca5a064e2e8a91492ec..1a3e43a84bfb4a4b76a1616942dc43cb
        }
      }
    },
--}
-\ No newline at end of file
-+}
-diff --git a/static/js/upload-handler.js b/static/js/upload-handler.js
-index 64ef306b7c636a03bf02c10596a2b5a6260537f6..3529b7e1171f75b8961f30169afe59b575d6cbd7 100644
---- a/static/js/upload-handler.js
-+++ b/static/js/upload-handler.js
-@@ -1,103 +1,104 @@
- // upload-handler.js
- // ES Module version
- // Handles file selection, compression, and uploading documents
- 
--import { compressImage } from './image-compression.js';
--import { showToast } from './ui.js'; // UI helper for notifications
-+import { apiFetch, apiUrl, API_CONFIG } from './app.js';
-+import { compressImage } from './image-compression.js';
-+import { showToast } from './ui.js'; // UI helper for notifications
- 
- /* *
-  * Handle selection of one or more files (from input or drop).
-  * @param {FileList|File[]} files - Selected files
-  * @param {string|number} patientId - ID of the patient the files belong to
-  * @param {string} apiBase - API base URL
-  */
- export async function handleFileSelect(files, patientId, apiBase = '/') {
-     if (!patientId) {
-         showToast('Please select a patient first', 'warning');
-         return;
-     }
- 
-     for (let file of files) {
-         await uploadFile(file, patientId, apiBase);
-     }
  }
- 
- /* *
-  * Upload a single file to the API.
-  * Optionally compresses images before upload.
-  * @param {File} file - File to upload
-  * @param {string|number} patientId - Patient ID
-  * @param {string} apiBase - API base URL
-  */
- export async function uploadFile(file, patientId, apiBase = '/') {
-     try {
-         let fileToUpload = file;
- 
-         // If file is an image, compress before upload
-         if (file.type.startsWith('image/')) {
-             fileToUpload = await compressImage(file, { maxWidth: 1600, maxHeight: 1600, quality: 0.7 });
+diff --git a/static/js/navigation.js b/static/js/navigation.js
+index fa4412c7b28da79486b192dc0f371af5b79e5c2b..45f5d7ed53ac6db7dd848e805b1e84223d254ca0 100644
+--- a/static/js/navigation.js
++++ b/static/js/navigation.js
+@@ -66,27 +66,30 @@ export class Navigation {
+             return;
          }
  
-         const formData = new FormData();
-         formData.append('file', fileToUpload);
- 
-         // Perform upload
--        const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `/upload?patient_id=${patientId}`), {
--            method: 'POST',
--            body: formData
--        });
-+        const response = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `/upload?patient_id=${patientId}`), {
-+            method: 'POST',
-+            body: formData
-+        });
- 
-         if (!response.ok) {
-             throw new Error(`Upload failed: ${response.status}`);
-         }
- 
-         const result = await response.json();
-         showToast(`${file.name} uploaded successfully!`, 'success');
- 
-         // Auto-start OCR after short delay
-         setTimeout(async () => {
-             try {
--                await fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `/${result.document_id}/process-ocr`, { method: 'POST' }));
--                showToast('OCR processing completed!', 'success');
--            } catch {
-+                await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `/${result.document_id}/process-ocr`, { method: 'POST' }));
-+                showToast('OCR processing completed!', 'success');
-+            } catch {
-                 showToast('OCR processing failed', 'error');
+         // Update nav link highlighting
+         this.navLinks.forEach(link => {
+             if (link.dataset.section === sectionId) {
+                 link.classList.add('active');
+             } else {
+                 link.classList.remove('active');
              }
-         }, 1000);
+         });
  
-     } catch (error) {
-         console.error('Upload failed:', error);
-         showToast(`Failed to upload ${file.name}: ${error.message}`, 'error');
+         // Handle sub-sections (tabs)
+         if (subSection && sectionId === 'documents') {
+             const tab = document.querySelector(`[data-tab="${subSection}"]`);
+             if (tab) tab.click();
+         }
+ 
+         //Set patient context for documents if provided
+         if (patientId && sectionId === 'documents' && this.app?.documentManager) {
+             this.app.documentManager.setUploadContext(patientId);
+         }
+         
+         // Let the app know the active section changed
+         this.app.activeSection = sectionId;
++        if (typeof this.app.handleSectionChange === 'function') {
++            this.app.handleSectionChange(sectionId);
++        }
      }
- }
- 
- /* *
-  * Setup drag-and-drop area for file uploads.
-  * @param {string} areaId - The ID of the upload area element
-  * @param {Function} onFilesSelected - Callback when files are selected
-  */
- export function setupUploadArea(areaId, onFilesSelected) {
-     const uploadArea = document.getElementById(areaId);
-     if (!uploadArea) return;
- 
-     const preventDefaults = e => {
-         e.preventDefault();
-         e.stopPropagation();
-     };
- 
-     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-         uploadArea.addEventListener(eventName, preventDefaults, false);
-     });
- 
-     ['dragenter', 'dragover'].forEach(eventName => {
-         uploadArea.addEventListener(eventName, () => uploadArea.classList.add('dragover'), false);
-     });
- 
-     ['dragleave', 'drop'].forEach(eventName => {
-         uploadArea.addEventListener(eventName, () => uploadArea.classList.remove('dragover'), false);
-     });
- 
-     uploadArea.addEventListener('drop', e => {
-         const files = e.dataTransfer.files;
-         onFilesSelected(files);
-     }, false);
 -}
 \ No newline at end of file
 +}

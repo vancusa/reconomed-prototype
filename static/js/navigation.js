@@ -88,5 +88,8 @@ export class Navigation {
         
         // Let the app know the active section changed
         this.app.activeSection = sectionId;
+        if (typeof this.app.handleSectionChange === 'function') {
+            this.app.handleSectionChange(sectionId);
+        }
     }
 }

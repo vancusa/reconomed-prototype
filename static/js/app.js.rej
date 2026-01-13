@@ -1,0 +1,129 @@
+diff a/static/js/app.js b/static/js/app.js	(rejected hunks)
+@@ -104,50 +104,52 @@ if (typeof window !== 'undefined' && window.fetch && !window._reconomedFetchPatc
+ 
+ 
+ class ReconoMedApp {
+     // =========================================================================
+     // CONSTRUCTOR: Object Creation Only
+     // =========================================================================
+     // Purpose: Create the object and set up basic properties
+     // When called: Immediately when "new ReconoMedApp()" runs
+     // What it does: Sets initial values, creates child objects
+     // What it DOESN'T do: Touch the DOM, make network calls, or access external resources
+     constructor() {
+         // Basic application properties
+         this.apiBase = '/';
+         this.currentUser = null;
+         this.patients = [];
+         this.documents = [];
+         this.selectedPatient = null;
+         
+         // Create manager instances (but don't initialize them yet)
+         // These constructors should also only set properties, not touch DOM
+         this.navigation = new Navigation(this);
+         this.patientManager = new PatientManager(this);
+         this.documentManager = new DocumentManager(this);
+         this.consultationManager = new ConsultationManager(this);
+         this.clinicManager = new ClinicManager();
++        this.dashboardPollingId = null;
++        this.dashboardPollingIntervalMs = 3000;
+     }
+ 
+     // =========================================================================
+     // INIT METHOD: Object Initialization
+     // =========================================================================
+     // Purpose: Set up the application after DOM is ready
+     // When called: Manually after page loads (DOMContentLoaded)
+     // What it does: Touch DOM, set up event listeners, make network calls
+     async init() {
+         // =====================================================================
+         // STEP 1: Authentication Check (can redirect, so do this first)
+         // =====================================================================
+         if (!checkAuthentication(this)) {
+             window.location.href = '/static/login.html';
+             return; // Exit if not authenticated
+         }
+ 
+         // =====================================================================
+         // STEP 2: Load Clinic Data (needed by all managers)
+         // =====================================================================
+         try {
+             await this.clinicManager.loadClinicData();
+             window.clinicManager = this.clinicManager; // Make globally available
+         } catch (err) {
+             console.error('Clinic data loading failed:', err);
+@@ -188,50 +190,74 @@ class ReconoMedApp {
+     // =========================================================================
+     // DATA LOADING: Separate Async Operations
+     // =========================================================================
+     async loadInitialData() {
+         try {
+             showLoading(); // Show spinner while loading
+             
+             // Load patients from backend
+             await this.patientManager.loadPatients();
+             this.updateDashboardStats();
+             await this.loadTodayConsultations();
+ 
+         } catch (err) {
+             console.error('Data loading failed:', err);
+             showToast('Failed to load initial data', 'error');
+             // Application still works, just without initial data
+         } finally {
+             hideLoading(); // Hide spinner regardless of success/failure
+         }
+     }
+ 
+     async refreshActivity() {
+         await this.loadTodayConsultations();
+     }
+ 
++    handleSectionChange(sectionId) {
++        if (sectionId === 'dashboard') {
++            this.startDashboardPolling();
++        } else {
++            this.stopDashboardPolling();
++        }
++        this.documentManager?.nav?.handleSectionChange?.(sectionId);
++    }
++
++    startDashboardPolling() {
++        if (this.dashboardPollingId) return;
++        this.loadTodayConsultations();
++        this.dashboardPollingId = setInterval(() => {
++            if (this.activeSection !== 'dashboard') return;
++            this.loadTodayConsultations();
++        }, this.dashboardPollingIntervalMs);
++    }
++
++    stopDashboardPolling() {
++        if (!this.dashboardPollingId) return;
++        clearInterval(this.dashboardPollingId);
++        this.dashboardPollingId = null;
++    }
++
+     // =========================================================================
+     // UTILITY METHODS: Application Logic
+     // =========================================================================
+     updateDashboardStats() {
+         // 1. Update total patients (existing logic)
+         const totalPatientsEl = document.getElementById('total-patients');
+         if (totalPatientsEl) {
+             totalPatientsEl.textContent = this.patients.length;
+         }
+     }
+ 
+     async loadTodayConsultations() {
+         try {
+             const queueRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, 'today/queue'));
+             if (!queueRes.ok) throw new Error('Failed to load today consultations');
+             const queue = await queueRes.json();
+ 
+             const validationRes = await apiFetch(apiUrl(API_CONFIG.ENDPOINTS.documents, 'uploads?tab=validation'));
+             if (!validationRes.ok) throw new Error('Failed to load validation uploads');
+             const validationData = await validationRes.json();
+             const validationCount = validationData?.items?.length || 0;
+ 
+             this.updateDashboardTodayCards(queue, validationCount);
+             this.renderTodayConsultations(queue);
+         } catch (err) {

@@ -16,6 +16,8 @@ export const DocumentNavigation = {
   validationSelectedPatientId: null,
   patientSearchResults: [],
   patientSearchActiveIndex: -1,
+  pollingIntervalId: null,
+  pollingIntervalMs: 3000,
 
   /**
    * Initialize tab and event bindings
@@ -51,6 +53,7 @@ export const DocumentNavigation = {
     this.validationFileName = document.getElementById('validation-filename');
     this.validationCompleteBtn = document.getElementById('validation-complete');
     this.validationRejectBtn = document.getElementById('validation-reject');
+    this.validationSaveDraftBtn = document.getElementById('validation-save-draft');
     this.validationToggleFullscreen = document.getElementById('validation-toggle-fullscreen');
     this.tabCountCache = { unprocessed: 0, processing: 0, validation: 0 };
     this.maxUploads = window.clinicManager?.clinicData?.max_uploads || 20;
@@ -168,6 +171,10 @@ export const DocumentNavigation = {
       this.validationRejectBtn.addEventListener('click', () => this.confirmReject());
     }
 
+    if (this.validationSaveDraftBtn) {
+      this.validationSaveDraftBtn.addEventListener('click', () => this.saveValidationDraft());
+    }
+
     if (this.validationPatientSearch) {
       this.validationPatientSearch.addEventListener('input', (e) => this.handlePatientSearch(e.target.value));
       this.validationPatientSearch.addEventListener('keydown', (e) => this.handlePatientSearchKeydown(e));
@@ -203,15 +210,82 @@ export const DocumentNavigation = {
         this.clearPatientResults();
       }
     });
+  },
 
-    setInterval(async () => {
-      if (this.activeTab === 'processing') {
-        await this.switchTab('processing');
+  handleSectionChange(sectionId) {
+    if (sectionId === 'documents') {
+      this.startPolling();
+    } else {
+      this.stopPolling();
+    }
+  },
+
+  startPolling() {
+    if (this.pollingIntervalId) return;
+    this.pollDocuments();
+    this.pollingIntervalId = setInterval(() => {
+      this.pollDocuments();
+    }, this.pollingIntervalMs);
+  },
+
+  stopPolling() {
+    if (!this.pollingIntervalId) return;
+    clearInterval(this.pollingIntervalId);
+    this.pollingIntervalId = null;
+  },
+
+  isPollingAllowed() {
+    if (window.app?.activeSection !== 'documents') return false;
+    if (this.validationModal?.classList.contains('open')) return false;
+    return true;
+  },
+
+  async pollDocuments() {
+    if (!this.isPollingAllowed()) return;
+    if (!this.activeTab) return;
+    try {
+      const activeTab = this.activeTab;
+      const activeUploads = await DocumentActions.fetchTab(activeTab);
+      await this.renderTab(activeTab, activeUploads);
+      await this.refreshTabCounts(activeTab, activeUploads);
+    } catch (error) {
+      console.error('Polling documents failed:', error);
+    }
+  },
+
+  async refreshTabCounts(activeTab, activeUploads) {
+    const tabs = ['unprocessed', 'processing', 'validation', 'completed', 'error'];
+    const requests = tabs.map(async (tab) => {
+      if (tab === activeTab && Array.isArray(activeUploads)) {
+        return { tab, count: activeUploads.length };
       }
-      if (this.activeTab === 'validation') {
-        await this.switchTab('validation');
-      }
-    }, 4000);
+      const uploads = await DocumentActions.fetchTab(tab);
+      return { tab, count: uploads?.length || 0 };
+    });
+
+    const results = await Promise.allSettled(requests);
+    results.forEach((result) => {
+      if (result.status !== 'fulfilled') return;
+      const { tab, count } = result.value;
+      this.updateTabCount(tab, count);
+    });
+  },
+
+  getTabPanel(tabKey) {
+    if (this.contentArea) {
+      const panel = this.contentArea.querySelector(`#${tabKey}-tab`);
+      if (panel) return panel;
+    }
+    return document.getElementById(`${tabKey}-tab`);
+  },
+
+  renderMissingContainer(tabKey, message) {
+    const panel = this.getTabPanel(tabKey);
+    if (panel) {
+      panel.innerHTML = `<div class="error-banner">${message}</div>`;
+      return;
+    }
+    showToast(message, 'error');
   },
 
   /**
@@ -251,14 +325,11 @@ export const DocumentNavigation = {
    * @returns nothing
    */
   async renderTab(tabKey, uploads) {
-    let container = null;
-    if (this.contentArea) {
-      container = this.contentArea.querySelector(`#${tabKey}-tab`);
-    }
+    const container = this.getTabPanel(tabKey);
     if (!container) {
-      container = document.getElementById(`${tabKey}-tab`);
+      this.renderMissingContainer(tabKey, `Missing ${tabKey} tab container.`);
+      return;
     }
-    if (!container) return;
     
     this.updateTabCount(tabKey, uploads?.length || 0);
 
@@ -282,9 +353,12 @@ export const DocumentNavigation = {
   },
 
   renderError(tabKey, error) {
-    const container = this.contentArea?.querySelector(`#${tabKey}-tab`);
-    if (!container) return;
-    container.innerHTML = `<div class="error-message">Could not load ${tabKey} uploads. ${error?.message || ''}</div>`;
+    const container = this.getTabPanel(tabKey);
+    if (!container) {
+      this.renderMissingContainer(tabKey, `Missing ${tabKey} tab container.`);
+      return;
+    }
+    container.innerHTML = `<div class="error-banner">Could not load ${tabKey} uploads. ${error?.message || ''}</div>`;
   },
 
   /**
@@ -563,7 +637,7 @@ export const DocumentNavigation = {
     const countBadge = document.getElementById('processing-count');
 
     if (!container) {
-      console.log('Processing container not found');
+      this.renderMissingContainer('processing', 'Processing list container missing.');
       return;
     }
 
@@ -610,7 +684,10 @@ export const DocumentNavigation = {
   */
   renderValidation(docs) {
     const container = document.getElementById('validation-list');
-    if (!container) return;
+    if (!container) {
+      this.renderMissingContainer('validation', 'Validation list container missing.');
+      return;
+    }
     container.innerHTML = '';
 
     if (!docs.length) {
@@ -657,6 +734,10 @@ export const DocumentNavigation = {
 
   renderCompleted(docs) {
     const container = document.getElementById('completed-list');
+    if (!container) {
+      this.renderMissingContainer('completed', 'Completed list container missing.');
+      return;
+    }
     container.innerHTML = '';
 
     if (!docs.length) {
@@ -678,6 +759,10 @@ export const DocumentNavigation = {
 
   renderErrors(docs) {
     const container = document.getElementById('error-list');
+    if (!container) {
+      this.renderMissingContainer('error', 'Error list container missing.');
+      return;
+    }
     container.innerHTML = '';
 
     if (!docs.length) {
@@ -713,7 +798,7 @@ export const DocumentNavigation = {
     const count = documents.length;
 
     if (!container) {
-      console.error('File container not found in Unprocessed tab');
+      this.renderMissingContainer('unprocessed', 'Unprocessed list container missing.');
       return;
     }
 
@@ -807,10 +892,72 @@ export const DocumentNavigation = {
       if (preselectedPatientId) {
         await this.setSelectedPatientById(preselectedPatientId);
       }
+      const draft = this.loadValidationDraft(upload.id);
+      if (draft) {
+        if (draft.documentType && this.validationDocumentTypeSelect) {
+          this.validationDocumentTypeSelect.value = draft.documentType;
+        }
+        if (draft.ocrText && this.validationOcrField) {
+          this.validationOcrField.value = draft.ocrText;
+          this.setValidationExpanded(true);
+        }
+        if (draft.patientId) {
+          await this.setSelectedPatientById(draft.patientId);
+        } else if (draft.patientLabel && this.validationPatientSearch) {
+          this.validationPatientSearch.value = draft.patientLabel;
+        }
+      }
       this.updateCompleteButtonState();
     } catch (err) {
       console.error('openValidationForm error:', err);
       showToast('Error loading validation data', 'error');
+    }
+  },
+
+  getValidationDraftKey(uploadId) {
+    return `validationDraft:${uploadId}`;
+  },
+
+  loadValidationDraft(uploadId) {
+    if (!uploadId) return null;
+    try {
+      const raw = localStorage.getItem(this.getValidationDraftKey(uploadId));
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      console.warn('Failed to load validation draft', error);
+      return null;
+    }
+  },
+
+  saveValidationDraft() {
+    if (!this.validationModal) return;
+    const uploadId = this.validationModal.dataset.uploadId;
+    if (!uploadId) {
+      showToast('No upload selected to save', 'warning');
+      return;
+    }
+    const draft = {
+      patientId: this.validationSelectedPatientId || this.validationPatientSearch?.dataset?.patientId || null,
+      patientLabel: this.validationPatientSearch?.value || '',
+      documentType: this.validationDocumentTypeSelect?.value || '',
+      ocrText: this.validationOcrField?.value || '',
+      savedAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(this.getValidationDraftKey(uploadId), JSON.stringify(draft));
+      showToast('Draft saved', 'success');
+    } catch (error) {
+      console.error('Failed to save draft', error);
+      showToast('Failed to save draft', 'error');
+    }
+  },
+
+  clearValidationDraft(uploadId) {
+    if (!uploadId) return;
+    try {
+      localStorage.removeItem(this.getValidationDraftKey(uploadId));
+    } catch (error) {
+      console.warn('Failed to clear draft', error);
     }
   },
 
@@ -993,11 +1140,12 @@ export const DocumentNavigation = {
     try {
       if (this.validationCompleteBtn) {
         this.validationCompleteBtn.disabled = true;
-        this.validationCompleteBtn.textContent = 'Completing...';
+        this.validationCompleteBtn.innerHTML = '<i class="fas fa-check"></i> Completing...';
       }
       const editedOcrText = editedText !== this.validationInitialOcrText ? editedText : null;
       await DocumentActions.completeUpload(uploadId, patientId, editedOcrText, documentType);
       showToast('Completed', 'success');
+      this.clearValidationDraft(uploadId);
       this.closeValidationModal();
       await this.switchTab('validation');
       await this.switchTab('completed');
@@ -1033,6 +1181,7 @@ export const DocumentNavigation = {
       }
       await DocumentActions.rejectUpload(id);
       showToast('Deleted', 'success');
+      this.clearValidationDraft(id);
       this.closeValidationModal();
       if (this.activeTab) {
         await this.switchTab(this.activeTab);

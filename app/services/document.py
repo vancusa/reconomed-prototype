@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 import logging
 
-from app.services.bulk_ocr import RomanianBulkOCR
+from app.services.ocr_provider import OpenAIOCRProvider
+from app.utils.file import normalize_mime_type
 
 app_logger = logging.getLogger("reconomed.app")
 
@@ -30,14 +31,14 @@ class DocumentProcessingResult:
 class DocumentService:
     """
     v1 Document service:
-    - Runs bulk OCR (Romanian + English) using Tesseract with preprocessing + multi-config selection.
+    - Runs OCR via OpenAI Vision for images and PDFs.
     - Returns OCR text + confidence + minimal metadata.
     - Leaves document_type empty (or passes through hint, but does not infer).
     - structured_data is always {} in v1.
     """
 
     def __init__(self) -> None:
-        self.ocr = RomanianBulkOCR()
+        self.ocr = OpenAIOCRProvider()
 
     def process_document_bulk(
         self,
@@ -52,25 +53,25 @@ class DocumentService:
         """
         try:
             # DO NOT log OCR text or file content (PHI). Keep logs metadata-only.
-            app_logger.debug("DocumentService: starting bulk OCR")
-
-            result = self.ocr.process(file_content, hint_document_type=hint_type)
+            app_logger.debug("DocumentService: starting OCR")
+            mime_type = normalize_mime_type(file_content)
+            result = self.ocr.extract_text(file_content, mime_type)
 
             payload = DocumentProcessingResult(
                 success=True,
-                ocr_text=(result.ocr_text or ""),
-                confidence_score=int(result.confidence_score or 0),
+                ocr_text=(result.text or ""),
+                confidence_score=0,
                 # v1: no classification; we optionally echo hint for convenience
                 document_type=hint_type,
                 structured_data={},  # v1 by design
-                processing_metadata=(result.metadata or {"method": "bulk_ocr"}),
+                processing_metadata=(result.metadata or {"method": "openai_ocr"}),
                 error=None,
             )
             return payload.__dict__
 
         except Exception as e:
             # Log exception safely; no PHI.
-            app_logger.error("DocumentService: bulk OCR failed", exc_info=True)
+            app_logger.error("DocumentService: OCR failed", exc_info=True)
 
             payload = DocumentProcessingResult(
                 success=False,
@@ -78,7 +79,7 @@ class DocumentService:
                 confidence_score=0,
                 document_type=hint_type,
                 structured_data={},
-                processing_metadata={"method": "bulk_ocr"},
+                processing_metadata={"method": "openai_ocr"},
                 error=str(e),
             )
             return payload.__dict__

@@ -1,0 +1,34 @@
+diff a/static/js/navigation.js b/static/js/navigation.js	(rejected hunks)
+@@ -66,27 +66,30 @@ export class Navigation {
+             return;
+         }
+ 
+         // Update nav link highlighting
+         this.navLinks.forEach(link => {
+             if (link.dataset.section === sectionId) {
+                 link.classList.add('active');
+             } else {
+                 link.classList.remove('active');
+             }
+         });
+ 
+         // Handle sub-sections (tabs)
+         if (subSection && sectionId === 'documents') {
+             const tab = document.querySelector(`[data-tab="${subSection}"]`);
+             if (tab) tab.click();
+         }
+ 
+         //Set patient context for documents if provided
+         if (patientId && sectionId === 'documents' && this.app?.documentManager) {
+             this.app.documentManager.setUploadContext(patientId);
+         }
+         
+         // Let the app know the active section changed
+         this.app.activeSection = sectionId;
++        if (typeof this.app.handleSectionChange === 'function') {
++            this.app.handleSectionChange(sectionId);
++        }
+     }
+-}
+\ No newline at end of file
++}

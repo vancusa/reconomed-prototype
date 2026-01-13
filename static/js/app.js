@@ -126,6 +126,8 @@ class ReconoMedApp {
         this.documentManager = new DocumentManager(this);
         this.consultationManager = new ConsultationManager(this);
         this.clinicManager = new ClinicManager();
+        this.dashboardPollingId = null;
+        this.dashboardPollingIntervalMs = 3000;
     }
 
     // =========================================================================
@@ -208,6 +210,30 @@ class ReconoMedApp {
 
     async refreshActivity() {
         await this.loadTodayConsultations();
+    }
+
+    handleSectionChange(sectionId) {
+        if (sectionId === 'dashboard') {
+            this.startDashboardPolling();
+        } else {
+            this.stopDashboardPolling();
+        }
+        this.documentManager?.nav?.handleSectionChange?.(sectionId);
+    }
+
+    startDashboardPolling() {
+        if (this.dashboardPollingId) return;
+        this.loadTodayConsultations();
+        this.dashboardPollingId = setInterval(() => {
+            if (this.activeSection !== 'dashboard') return;
+            this.loadTodayConsultations();
+        }, this.dashboardPollingIntervalMs);
+    }
+
+    stopDashboardPolling() {
+        if (!this.dashboardPollingId) return;
+        clearInterval(this.dashboardPollingId);
+        this.dashboardPollingId = null;
     }
 
     // =========================================================================
