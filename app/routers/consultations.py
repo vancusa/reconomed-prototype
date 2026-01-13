@@ -870,7 +870,7 @@ async def process_consultation_audio(
         existing_data = consultation.structured_data or {}
         
         # Deep merge: extracted data goes in, but existing manual entries stay
-        merged_data = self._deep_merge_with_confidence(existing_data, extracted_data)
+        merged_data = _deep_merge_with_confidence(existing_data, extracted_data)
         
         consultation.structured_data = merged_data
         consultation.last_autosave_at = datetime.utcnow()
