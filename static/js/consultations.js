@@ -157,8 +157,7 @@ class ConsultationManager {
         const formData = new FormData(form);
         const payload = {
           patient_id: formData.get('patient_id') || this.currentPatientId,
-          consultation_type: formData.get('consultation_type'),
-          notes: (formData.get('notes') || '').trim(),
+          specialty: formData.get('specialty') || formData.get('consultation_type'),
         };
         await this.startNewConsultation(payload);
       };
@@ -389,10 +388,12 @@ class ConsultationManager {
       consultations.forEach(c => {
         const card = document.createElement('div');
         card.className = 'consultation-item';
+        const specialtyLabel = c.specialty || c.consultation_type || 'Consultation';
+        const consultationDate = c.consultation_date || c.timestamp;
         card.innerHTML = `
           <div class="consultation-meta">
-            <strong>${c.consultation_type || 'Consultation'}</strong>
-            <div class="muted">${new Date(c.timestamp).toLocaleString()}</div>
+            <strong>${specialtyLabel}</strong>
+            <div class="muted">${consultationDate ? new Date(consultationDate).toLocaleString() : ''}</div>
           </div>
           <div class="consultation-notes-snippet">${(c.notes || '').slice(0, 200)}</div>
           <div class="consultation-actions">
@@ -483,7 +484,7 @@ class ConsultationManager {
 
   /**
    * Start a new consultation (creates it in backend and sets currentConsultationId).
-   * @param {Object} payload - { patient_id, consultation_type, notes }
+   * @param {Object} payload - { patient_id, specialty }
    */
   async startNewConsultation(payload = {}) {
     try {
@@ -493,10 +494,8 @@ class ConsultationManager {
       }
       const body = {
         patient_id: payload.patient_id,
-        consultation_type: payload.consultation_type || 'general',
-        notes: payload.notes || '',
-        status: 'in_progress',
-        timestamp: new Date().toISOString(),
+        specialty: payload.specialty || 'internal_medicine',
+        consultation_date: new Date().toISOString(),
       };
       const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations), {
         method: 'POST',
@@ -507,7 +506,7 @@ class ConsultationManager {
       const created = await res.json();
       this.currentConsultationId = created.id;
       this.currentPatientId = payload.patient_id;
-      this.currentNotes = body.notes;
+      this.currentNotes = '';
       showToast('New consultation started', 'success');
 
       // start autosave only after a consultation exists

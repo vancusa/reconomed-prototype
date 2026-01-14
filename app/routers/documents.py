@@ -49,6 +49,8 @@ from app.schemas import (
     UploadRejectResponse,
     UploadBatchAssignRequest,
     UploadBatchTypeRequest,
+    #Patient document list item
+    PatientDocumentListItem,
 )
 
 # File utils (adjust these imports to your actual module paths/names)
@@ -70,7 +72,7 @@ def _preview_url(upload_id: str) -> str:
     UI can use this as a stable link for preview/download.
     Adjust if your frontend expects another URL.
     """
-    return f"/documents/uploads/{upload_id}/download"
+    return f"/api/documents/uploads/{upload_id}/download"
 
 def _make_upload_card(db: Session, upload: Upload) -> UploadCardResponse:
     """
@@ -144,7 +146,6 @@ def _require_same_clinic(user: User, upload: Upload) -> None:
     if upload.clinic_id != user.clinic_id:
         raise HTTPException(status_code=403, detail="Forbidden (wrong clinic)")
 
-
 def _remove_upload_file(upload: Upload) -> None:
     if not upload.file_path:
         return
@@ -161,6 +162,40 @@ def _remove_upload_file(upload: Upload) -> None:
 # ----------------------------
 # Upload endpoints
 # ----------------------------
+
+@router.get("/", response_model=List[PatientDocumentListItem])
+async def list_patient_documents(
+    request: Request,
+    patient_id: str = Query(...),
+    db: Session = Depends(get_db),
+) -> List[PatientDocumentListItem]:
+    """List documents for a patient in the current clinic."""
+    user = get_user_from_header(db, request)
+
+    patient = db.query(Patient).filter(
+        Patient.id == patient_id,
+        Patient.clinic_id == user.clinic_id,
+    ).first()
+
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    documents = db.query(Document).filter(
+        Document.patient_id == patient_id,
+        Document.clinic_id == user.clinic_id,
+    ).order_by(Document.created_at.desc()).all()
+
+    return [
+        PatientDocumentListItem(
+            id=doc.id,
+            filename=doc.filename,
+            document_type=doc.document_type,
+            created_at=doc.created_at,
+            upload_id=doc.upload_id,
+            preview_url=_preview_url(doc.upload_id) if doc.upload_id else None,
+        )
+        for doc in documents
+    ]
 
 @router.post("/uploads", response_model=List[UploadCardResponse])
 async def upload_files(
@@ -524,6 +559,49 @@ def download_upload_file(
         filename=upload.filename,
         media_type="application/octet-stream",
     )
+
+@router.get("", response_model=List[PatientDocumentListItem])
+def list_patient_documents(
+    request: Request,
+    patient_id: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+):
+    """List documents for a given patient.
+
+    Used by the patient "Documents & History" view.
+    Only returns documents for the caller's clinic.
+    """
+    user = get_user_from_header(db, request)
+
+    # Ensure patient exists in this clinic (prevents cross-clinic leakage)
+    patient = (
+        db.query(Patient)
+        .filter(Patient.id == patient_id, Patient.clinic_id == user.clinic_id)
+        .first()
+    )
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    docs = (
+        db.query(Document)
+        .filter(Document.patient_id == patient_id, Document.clinic_id == user.clinic_id)
+        .order_by(Document.created_at.desc())
+        .all()
+    )
+
+    return [
+        PatientDocumentListItem(
+            id=d.id,
+            patient_id=d.patient_id,
+            clinic_id=d.clinic_id,
+            filename=d.filename,
+            document_type=getattr(d, "document_type", None),
+            created_at=d.created_at,
+            upload_id=getattr(d, "upload_id", None),
+            preview_url=_preview_url(d.upload_id) if getattr(d, "upload_id", None) else None,
+        )
+        for d in docs
+    ]
 
 # ----------------------------
 # Optional debug/admin endpoints (keep for now, can remove later)

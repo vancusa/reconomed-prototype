@@ -22,10 +22,10 @@ from app.schemas import (
     ConsultationAudioUploadResponse, ConsultationAudioProcessResponse,
     ConsultationTranscriptResponse, ApiMessageResponse
 )
-from app.services.template_service import TemplateService
 from app.services.audio_service import AudioTranscriptionService
 from app.services.llm_extraction_service import LLMExtractionService
 from app.services.template_service import TemplateService
+from app.services.openehr_composer import build_composition
 
 
 router = APIRouter(tags=["consultations"])
@@ -545,6 +545,42 @@ async def get_consultations(
     ).offset(skip).limit(limit).all()
     
     return consultations
+
+@router.get("/{consultation_id}/openehr")
+async def get_consultation_openehr(
+    consultation_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Build an openEHR composition-like payload for a consultation."""
+    current_user = get_user_from_header(db, request)
+
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id,
+    ).first()
+
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+
+    template_service = TemplateService(db)
+    try:
+        template = template_service.get_template(consultation.specialty)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="No template found for specialty")
+
+    if not consultation.structured_data:
+        raise HTTPException(status_code=400, detail="No structured data available")
+
+    context = {
+        "consultation_id": consultation.id,
+        "consultation_date": consultation.consultation_date,
+        "specialty": consultation.specialty,
+        "language": "ro",
+        "territory": "RO",
+    }
+
+    return build_composition(template, consultation.structured_data, context)
 
 @router.get("/{consultation_id}", response_model=ConsultationResponse)
 async def get_consultation(

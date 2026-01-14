@@ -1,4 +1,4 @@
-    //Patient CRUD + rendering
+//Patient CRUD + rendering
 // patients.js
 // -----------------------------------------------------------------------------
 // Handles patient-related functionality for the SPA
@@ -563,45 +563,82 @@ export class PatientManager {
         container.innerHTML = '<div class="loading-placeholder">Loading documents...</div>';
         
         try {
-            // Fetch consultations for this patient
-            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`));
-            
-            if (!response.ok) throw new Error('Failed to load consultations');
-            
-            const consultations = await response.json();
-            
-            if (consultations.length === 0) {
+            // Fetch consultations and patient-linked documents
+            const [consultationsResponse, documentsResponse] = await Promise.all([
+                fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)),
+                fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)),
+            ]);
+
+            if (!consultationsResponse.ok) throw new Error('Failed to load consultations');
+            if (!documentsResponse.ok) throw new Error('Failed to load documents');
+
+            const [consultations, documents] = await Promise.all([
+                consultationsResponse.json(),
+                documentsResponse.json(),
+            ]);
+
+            if (consultations.length === 0 && documents.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-icon">📄</div>
-                        <h4>No consultations yet</h4>
-                        <p>Consultations will appear here once created</p>
+                        <h4>No files or consultations yet</h4>
+                        <p>Documents and consultations will appear here once created</p>
                     </div>
                 `;
                 return;
             }
-            
-            // Render consultations
-            container.innerHTML = consultations.map(consultation => `
-                <div class="consultation-history-item">
-                    <div class="consultation-date">
-                        ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric'
-                        })}
+
+            const documentsSection = documents.length
+                ? this.renderGroupedDocuments(documents)
+                : `
+                    <div class="empty-state">
+                        <div class="empty-icon">📁</div>
+                        <h4>No files yet</h4>
+                        <p>Uploaded documents will appear here once available</p>
                     </div>
-                    <div class="consultation-details">
-                        <span class="consultation-type-badge">${consultation.consultation_type}</span>
-                        <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
-                        ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
+                `;
+
+            const consultationsSection = consultations.length
+                ? consultations.map(consultation => {
+                    const specialtyLabel = consultation.specialty || consultation.consultation_type || 'Consultation';
+                    return `
+                        <div class="consultation-history-item">
+                            <div class="consultation-date">
+                                ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                })}
+                            </div>
+                            <div class="consultation-details">
+                                <span class="consultation-type-badge">${specialtyLabel}</span>
+                                <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
+                                ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('')
+                : `
+                    <div class="empty-state">
+                        <div class="empty-icon">🩺</div>
+                        <h4>No consultations yet</h4>
+                        <p>Consultations will appear here once created</p>
                     </div>
+                `;
+
+            container.innerHTML = `
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Files</h4>
+                    ${documentsSection}
                 </div>
-            `).join('');
-            
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
+                    ${consultationsSection}
+                </div>
+            `;
         } catch (err) {
-            console.error('Failed to load consultations:', err);
-            container.innerHTML = '<p class="text-error">Failed to load consultation history</p>';
+            console.error('Failed to load documents or consultations:', err);
+            container.innerHTML = '<p class="text-error">Failed to load documents and consultation history</p>';
         }
     }
 
@@ -616,8 +653,7 @@ export class PatientManager {
         }, {});
         
         // Render each group
-        const container = document.getElementById('documents-list');
-        const html = Object.entries(grouped).map(([type, docs]) => `
+        const html = Object.entries(grouped).sort(([typeA], [typeB]) => typeA.localeCompare(typeB)).map(([type, docs]) => `
             <div class="document-group">
                 <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
                     <i class="fas fa-chevron-down"></i>
@@ -628,11 +664,13 @@ export class PatientManager {
                     ${docs.map(doc => `
                         <div class="document-item-row">
                             <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
-                            <span class="document-title">${doc.filename || doc.title}</span>
+                            <span class="document-title">${doc.filename || doc.title|| 'Untitled'}</span>
                             <div class="document-actions">
-                                <button class="btn-small" onclick="app.viewDocument('${doc.id}')">
-                                    <i class="fas fa-eye"></i>
-                                </button>
+                                 ${doc.preview_url ? `
+                                    <a class="btn-small" href="${doc.preview_url}" target="_blank" rel="noopener">
+                                        <i class="fas fa-download"></i>
+                                    </a>
+                                ` : '<span class="text-muted">No file</span>'}
                             </div>
                         </div>
                     `).join('')}
@@ -640,7 +678,7 @@ export class PatientManager {
             </div>
         `).join('');
         
-        container.innerHTML = html;
+        return html;
     }
 
     // Actions from modal footer
