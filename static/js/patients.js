@@ -563,44 +563,96 @@ export class PatientManager {
         container.innerHTML = '<div class="loading-placeholder">Loading documents...</div>';
         
         try {
-            // Fetch consultations and patient-linked documents
-            const [consultationsResponse, documentsResponse] = await Promise.all([
-                fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)),
-                fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)),
+            const consultationsPromise = fetch(
+                apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)
+            ).then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to load consultations');
+                }
+                return response.json();
+            });
+
+            const documentsPromise = fetch(
+                apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)
+            ).then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to load documents');
+                }
+                return response.json();
+            });
+
+            const [consultationsResult, documentsResult] = await Promise.allSettled([
+                consultationsPromise,
+                documentsPromise,
             ]);
 
-            if (!consultationsResponse.ok) throw new Error('Failed to load consultations');
-            if (!documentsResponse.ok) throw new Error('Failed to load documents');
+            const consultations = consultationsResult.status === 'fulfilled'
+                ? consultationsResult.value
+                : [];
+            const documents = documentsResult.status === 'fulfilled'
+                ? documentsResult.value
+                : [];
+            const consultationsError = consultationsResult.status === 'rejected'
+                ? 'Unable to load consultations right now.'
+                : '';
+            const documentsError = documentsResult.status === 'rejected'
+                ? 'Unable to load documents right now.'
+                : '';
 
-            const [consultations, documents] = await Promise.all([
-                consultationsResponse.json(),
-                documentsResponse.json(),
-            ]);
-
-            if (consultations.length === 0 && documents.length === 0) {
+            if (
+                consultations.length === 0 &&
+                documents.length === 0 &&
+                !consultationsError &&
+                !documentsError
+            ) {
                 container.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-icon">📄</div>
-                        <h4>No files or consultations yet</h4>
-                        <p>Documents and consultations will appear here once created</p>
+                        <h4>No consultations or documents yet</h4>
+                        <p>Consultations and documents will appear here once created</p>
                     </div>
                 `;
                 return;
             }
 
-            const documentsSection = documents.length
+            const documentsSection = documentsError
+                ? `
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <h4>${documentsError}</h4>
+                        <p>Please try again later.</p>
+                    </div>
+                `
+                : documents.length
                 ? this.renderGroupedDocuments(documents)
                 : `
                     <div class="empty-state">
                         <div class="empty-icon">📁</div>
-                        <h4>No files yet</h4>
+                        <h4>No documents yet</h4>
                         <p>Uploaded documents will appear here once available</p>
                     </div>
                 `;
 
-            const consultationsSection = consultations.length
-                ? consultations.map(consultation => {
+            const sortedConsultations = [...consultations].sort((a, b) => {
+                const dateA = new Date(a.consultation_date || 0).getTime();
+                const dateB = new Date(b.consultation_date || 0).getTime();
+                return dateB - dateA;
+            });
+
+            const consultationsSection = consultationsError
+                ? `
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <h4>${consultationsError}</h4>
+                        <p>Please try again later.</p>
+                    </div>
+                `
+                : sortedConsultations.length
+                ? sortedConsultations.map(consultation => {
                     const specialtyLabel = consultation.specialty || consultation.consultation_type || 'Consultation';
+                    const safeSpecialty = this.escapeHtml(specialtyLabel);
+                    const statusLabel = consultation.status || 'unknown';
+                    const statusClass = String(statusLabel).toLowerCase().replace(/[^a-z0-9_-]/g, '');
                     return `
                         <div class="consultation-history-item">
                             <div class="consultation-date">
@@ -611,8 +663,8 @@ export class PatientManager {
                                 })}
                             </div>
                             <div class="consultation-details">
-                                <span class="consultation-type-badge">${specialtyLabel}</span>
-                                <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
+                                <span class="consultation-type-badge">${safeSpecialty}</span>
+                                <span class="consultation-status status-${statusClass}">${this.escapeHtml(statusLabel)}</span>
                                 ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
                             </div>
                         </div>
@@ -628,17 +680,27 @@ export class PatientManager {
 
             container.innerHTML = `
                 <div class="documents-section">
-                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Files</h4>
-                    ${documentsSection}
-                </div>
-                <div class="documents-section">
                     <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
                     ${consultationsSection}
                 </div>
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
+                    ${documentsSection}
+                </div>
             `;
+            this.bindDocumentHistoryActions();
         } catch (err) {
             console.error('Failed to load documents or consultations:', err);
-            container.innerHTML = '<p class="text-error">Failed to load documents and consultation history</p>';
+            container.innerHTML = `
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
+                    <p class="text-error">Unable to load consultations right now.</p>
+                </div>
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
+                    <p class="text-error">Unable to load documents right now.</p>
+                </div>
+            `;
         }
     }
 
@@ -646,39 +708,210 @@ export class PatientManager {
     renderGroupedDocuments(documents) {
         // Group documents by type
         const grouped = documents.reduce((acc, doc) => {
-            const type = doc.document_type || 'other';
+            const type = (doc.document_type || 'uncategorized').trim() || 'uncategorized';
             if (!acc[type]) acc[type] = [];
             acc[type].push(doc);
             return acc;
         }, {});
         
         // Render each group
-        const html = Object.entries(grouped).sort(([typeA], [typeB]) => typeA.localeCompare(typeB)).map(([type, docs]) => `
-            <div class="document-group">
-                <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
-                    <i class="fas fa-chevron-down"></i>
-                    <span class="document-group-title">${type.replace('_', ' ').toUpperCase()}</span>
-                    <span class="document-group-count">${docs.length}</span>
-                </div>
-                <div class="document-items">
-                    ${docs.map(doc => `
+        const html = Object.entries(grouped)
+            .sort(([typeA], [typeB]) => typeA.localeCompare(typeB))
+            .map(([type, docs]) => {
+                const sortedDocs = [...docs].sort((a, b) => {
+                    const dateA = new Date(a.created_at || 0).getTime();
+                    const dateB = new Date(b.created_at || 0).getTime();
+                    return dateB - dateA;
+                });
+
+                const titleLabel = this.escapeHtml(type.replace(/_/g, ' ').toUpperCase());
+                const groupItems = sortedDocs.map(doc => {
+                    const rawFilename = doc.filename || doc.title || 'Untitled';
+                    const filename = this.escapeHtml(rawFilename);
+                    const encodedFilename = encodeURIComponent(rawFilename);
+                    const snippet = doc.text_snippet || '';
+                    const truncatedSnippet = snippet
+                        ? this.escapeHtml(this.truncateText(snippet, 160))
+                        : '';
+                    const snippetMarkup = truncatedSnippet
+                        ? `<span class="document-snippet">${truncatedSnippet}</span>`
+                        : '<span class="document-snippet text-muted">No extracted text</span>';
+                    const downloadAction = doc.has_original_file && doc.download_url
+                        ? `
+                            <a class="btn-small" href="${doc.download_url}" target="_blank" rel="noopener">
+                                <i class="fas fa-download"></i>
+                            </a>
+                        `
+                        : '';
+
+                    return `
                         <div class="document-item-row">
-                            <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
-                            <span class="document-title">${doc.filename || doc.title|| 'Untitled'}</span>
+                            <div class="document-item-details">
+                                <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
+                                <span class="document-title">${filename}</span>
+                                ${snippetMarkup}
+                            </div>
                             <div class="document-actions">
-                                 ${doc.preview_url ? `
-                                    <a class="btn-small" href="${doc.preview_url}" target="_blank" rel="noopener">
-                                        <i class="fas fa-download"></i>
-                                    </a>
-                                ` : '<span class="text-muted">No file</span>'}
+                                <button
+                                    class="btn-small document-view-btn"
+                                    data-action="view-document-text"
+                                    data-document-id="${doc.id}"
+                                    data-full-text-url="${doc.full_text_url}"
+                                    data-document-title="${encodedFilename}"
+                                >
+                                    <i class="fas fa-eye"></i> View
+                                </button>
+                                ${downloadAction}
                             </div>
                         </div>
-                    `).join('')}
-                </div>
-            </div>
-        `).join('');
+                    `;
+                }).join('');
+
+                return `
+                    <div class="document-group">
+                        <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
+                            <i class="fas fa-chevron-down"></i>
+                            <span class="document-group-title">${titleLabel}</span>
+                            <span class="document-group-count">${sortedDocs.length}</span>
+                        </div>
+                        <div class="document-items">
+                            ${groupItems}
+                        </div>
+                    </div>
+                `;
+            })
+            .join('');
         
         return html;
+    }
+
+    bindDocumentHistoryActions() {
+        const container = document.getElementById('documents-list');
+        if (!container || container.dataset.actionsBound) {
+            return;
+        }
+
+        container.addEventListener('click', (event) => {
+            const target = event.target.closest('[data-action="view-document-text"]');
+            if (!target) {
+                return;
+            }
+            const documentId = target.dataset.documentId;
+            const fullTextUrl = target.dataset.fullTextUrl;
+            const documentTitle = target.dataset.documentTitle;
+            this.openDocumentTextModal(documentId, fullTextUrl, documentTitle);
+        });
+
+        container.dataset.actionsBound = 'true';
+    }
+
+    ensureDocumentTextModal() {
+        let modal = document.getElementById('document-text-modal');
+        if (modal) {
+            return modal;
+        }
+
+        modal = document.createElement('div');
+        modal.id = 'document-text-modal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content large">
+                <div class="modal-header">
+                    <h2 id="document-text-modal-title">Extracted Text</h2>
+                    <button class="modal-close" data-action="close-document-text-modal">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="document-text-modal-content">
+                        <div class="loading-placeholder">Loading text...</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" data-action="close-document-text-modal">Close</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+                hideModal('document-text-modal');
+            }
+        });
+
+        modal.querySelectorAll('[data-action="close-document-text-modal"]').forEach(button => {
+            button.addEventListener('click', () => hideModal('document-text-modal'));
+        });
+
+        return modal;
+    }
+
+    async openDocumentTextModal(documentId, fullTextUrl, documentTitle) {
+        if (!documentId || !fullTextUrl) {
+            showToast('Document text is unavailable.', 'warning');
+            return;
+        }
+
+        const modal = this.ensureDocumentTextModal();
+        const title = modal.querySelector('#document-text-modal-title');
+        const content = modal.querySelector('#document-text-modal-content');
+        let decodedTitle = '';
+        if (documentTitle) {
+            try {
+                decodedTitle = decodeURIComponent(documentTitle);
+            } catch (error) {
+                decodedTitle = documentTitle;
+            }
+        }
+
+        title.textContent = documentTitle
+            ? `Extracted Text - ${decodedTitle}`
+            : 'Extracted Text';
+        content.innerHTML = '<div class="loading-placeholder">Loading text...</div>';
+        showModal('document-text-modal');
+
+        try {
+            const response = await fetch(fullTextUrl);
+            if (!response.ok) {
+                throw new Error('Failed to load document text');
+            }
+            const data = await response.json();
+            const text = data?.text || '';
+            content.innerHTML = text
+                ? `
+                    <pre style="white-space: pre-wrap; max-height: 400px; overflow-y: auto; margin: 0;">
+${this.escapeHtml(text)}
+                    </pre>
+                `
+                : '<p class="text-muted">No extracted text available.</p>';
+        } catch (error) {
+            console.error('Failed to load document text:', error);
+            content.innerHTML = '<p class="text-error">Unable to load extracted text.</p>';
+        }
+    }
+
+    escapeHtml(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    truncateText(text, maxLength) {
+        if (!text) {
+            return '';
+        }
+        if (text.length <= maxLength) {
+            return text;
+        }
+        return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
     }
 
     // Actions from modal footer

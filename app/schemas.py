@@ -297,18 +297,6 @@ class UploadDocumentSummary(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-class PatientDocumentListItem(BaseModel):
-    """Document list item for patient document history."""
-    id: str
-    filename: str
-    document_type: Optional[str] = None
-    created_at: datetime
-    upload_id: Optional[str] = None
-    preview_url: Optional[str] = None
-    clinic_id: Optional[str] = None
-    
-    model_config = ConfigDict(from_attributes=True)
-
 class UploadDetailResponse(BaseModel):
     """
     Upload details + document summary.
@@ -350,15 +338,23 @@ class UploadOCRResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class PatientDocumentListItem(BaseModel):
-    """Minimal document info for patient profile/history views."""
+    """Document list item for patient profile/history views."""
     id: str
-    patient_id: Optional[str] = None
-    clinic_id: str
     filename: str
     document_type: Optional[str] = None
     created_at: datetime
-    upload_id: Optional[str] = None
-    preview_url: Optional[str] = None
+    text_snippet: str
+    has_full_text: bool
+    has_original_file: bool
+    download_url: Optional[str] = None
+    full_text_url: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+class DocumentTextResponse(BaseModel):
+    """Full extracted OCR text for a document."""
+    id: str
+    text: str
 
     model_config = ConfigDict(from_attributes=True)
     

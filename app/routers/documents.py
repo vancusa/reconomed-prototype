@@ -49,8 +49,9 @@ from app.schemas import (
     UploadRejectResponse,
     UploadBatchAssignRequest,
     UploadBatchTypeRequest,
-    #Patient document list item
+    # Patient document list item
     PatientDocumentListItem,
+    DocumentTextResponse,
 )
 
 # File utils (adjust these imports to your actual module paths/names)
@@ -159,43 +160,19 @@ def _remove_upload_file(upload: Upload) -> None:
         # In MVP: do not block delete if file removal fails.
         pass
 
+def _document_has_original_file(upload: Upload | None) -> bool:
+    if not upload or not upload.file_path:
+        return False
+    return os.path.exists(upload.file_path)
+
+def _make_document_snippet(text: str | None, length: int = 300) -> str:
+    if not text:
+        return ""
+    return text.strip()[:length]
+
 # ----------------------------
 # Upload endpoints
 # ----------------------------
-
-@router.get("/", response_model=List[PatientDocumentListItem])
-async def list_patient_documents(
-    request: Request,
-    patient_id: str = Query(...),
-    db: Session = Depends(get_db),
-) -> List[PatientDocumentListItem]:
-    """List documents for a patient in the current clinic."""
-    user = get_user_from_header(db, request)
-
-    patient = db.query(Patient).filter(
-        Patient.id == patient_id,
-        Patient.clinic_id == user.clinic_id,
-    ).first()
-
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
-    documents = db.query(Document).filter(
-        Document.patient_id == patient_id,
-        Document.clinic_id == user.clinic_id,
-    ).order_by(Document.created_at.desc()).all()
-
-    return [
-        PatientDocumentListItem(
-            id=doc.id,
-            filename=doc.filename,
-            document_type=doc.document_type,
-            created_at=doc.created_at,
-            upload_id=doc.upload_id,
-            preview_url=_preview_url(doc.upload_id) if doc.upload_id else None,
-        )
-        for doc in documents
-    ]
 
 @router.post("/uploads", response_model=List[UploadCardResponse])
 async def upload_files(
@@ -589,19 +566,50 @@ def list_patient_documents(
         .all()
     )
 
-    return [
-        PatientDocumentListItem(
-            id=d.id,
-            patient_id=d.patient_id,
-            clinic_id=d.clinic_id,
-            filename=d.filename,
-            document_type=getattr(d, "document_type", None),
-            created_at=d.created_at,
-            upload_id=getattr(d, "upload_id", None),
-            preview_url=_preview_url(d.upload_id) if getattr(d, "upload_id", None) else None,
+    items: List[PatientDocumentListItem] = []
+    for doc in docs:
+        ocr_text = getattr(doc, "ocr_text", None) or ""
+        has_full_text = bool(ocr_text.strip())
+        has_original_file = _document_has_original_file(doc.upload)
+        items.append(
+            PatientDocumentListItem(
+                id=doc.id,
+                filename=doc.filename or doc.original_filename,
+                document_type=getattr(doc, "document_type", None),
+                created_at=doc.created_at,
+                text_snippet=_make_document_snippet(ocr_text),
+                has_full_text=has_full_text,
+                has_original_file=has_original_file,
+                download_url=_preview_url(doc.upload_id)
+                if getattr(doc, "upload_id", None) and has_original_file
+                else None,
+                full_text_url=f"/api/documents/{doc.id}/text",
+            )
         )
-        for d in docs
-    ]
+
+    return items
+
+@router.get("/{document_id}/text", response_model=DocumentTextResponse)
+def get_document_text(
+    document_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Return full OCR text for a document."""
+    user = get_user_from_header(db, request)
+
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.clinic_id == user.clinic_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return DocumentTextResponse(
+        id=doc.id,
+        text=(doc.ocr_text or ""),
+    )
 
 # ----------------------------
 # Optional debug/admin endpoints (keep for now, can remove later)

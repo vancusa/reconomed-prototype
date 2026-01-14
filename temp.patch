@@ -1,154 +1,8 @@
-diff --git a/app/routers/consultations.py b/app/routers/consultations.py
-index 59c02a5ee28d588d8fa2e0a23d8241731fe81f31..1148aa58e960c330e882278b1f407aae23227e97 100644
---- a/app/routers/consultations.py
-+++ b/app/routers/consultations.py
-@@ -1,53 +1,53 @@
- 
- """Consultation management endpoints - Phase 4A"""
- from fastapi import APIRouter, Depends, HTTPException, Query,UploadFile, File, Request
- from sqlalchemy.orm import Session
- from sqlalchemy import func, or_
- from typing import List, Optional, Dict, Any
- import uuid
- import aiofiles
- import logging
- from datetime import datetime, date
- from pathlib import Path
- import os
- 
- from app.database import get_db
- from app.auth import get_user_from_header
- from app.models import Consultation, User, Patient, GDPRAuditLog, Document
- from app.schemas import (
-     ConsultationStart, ConsultationAutoSave, ConsultationCreate,
-     ConsultationUpdate, ConsultationResponse, ConsultationListItem,
-     ConsultationCountsResponse, ConsultationTodayStatsResponse,
-     ConsultationTodayQueueResponse, ConsultationTodayQueueItem,
-     ConsultationAudioUploadResponse, ConsultationAudioProcessResponse,
-     ConsultationTranscriptResponse, ApiMessageResponse
- )
--from app.services.template_service import TemplateService
- from app.services.audio_service import AudioTranscriptionService
- from app.services.llm_extraction_service import LLMExtractionService
- from app.services.template_service import TemplateService
-+from app.services.openehr_composer import build_composition
- 
- 
- router = APIRouter(tags=["consultations"])
- 
- # Loggers
- audit_logger = logging.getLogger("reconomed.audit")
- app_logger = logging.getLogger("reconomed.app")
- 
- 
- # Initialize services (use environment variables in production)
- audio_service = AudioTranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
- llm_service = LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
- 
- #--------------
- # Get counts
- #------------------
- @router.get("/counts", response_model=ConsultationCountsResponse)
- async def get_consultation_counts(
-     request: Request,
-     db: Session = Depends(get_db),
- )-> ConsultationCountsResponse:
-     """Get consultation counts for tab badges"""
-     # Get demo doctor
-     current_user = get_user_from_header(db, request)
- 
-@@ -524,50 +524,86 @@ async def get_consultations(
-     patient_id: Optional[str] = Query(None),
-     status: Optional[str] = Query(None),
-     skip: int = Query(0, ge=0),
-     limit: int = Query(100, ge=1, le=1000),
-     db: Session = Depends(get_db),
- )-> List[ConsultationResponse]:
-     """Get consultations with optional filters"""
-     current_user = get_user_from_header(db, request)
-     
-     query = db.query(Consultation).filter(
-         Consultation.clinic_id == current_user.clinic_id
-     )
-     
-     if patient_id:
-         query = query.filter(Consultation.patient_id == patient_id)
-     
-     if status:
-         query = query.filter(Consultation.status == status)
-     
-     consultations = query.order_by(
-         Consultation.consultation_date.desc()
-     ).offset(skip).limit(limit).all()
-     
-     return consultations
- 
-+@router.get("/{consultation_id}/openehr")
-+async def get_consultation_openehr(
-+    consultation_id: str,
-+    request: Request,
-+    db: Session = Depends(get_db),
-+) -> Dict[str, Any]:
-+    """Build an openEHR composition-like payload for a consultation."""
-+    current_user = get_user_from_header(db, request)
-+
-+    consultation = db.query(Consultation).filter(
-+        Consultation.id == consultation_id,
-+        Consultation.clinic_id == current_user.clinic_id,
-+    ).first()
-+
-+    if not consultation:
-+        raise HTTPException(status_code=404, detail="Consultation not found")
-+
-+    template_service = TemplateService(db)
-+    try:
-+        template = template_service.get_template(consultation.specialty)
-+    except ValueError:
-+        raise HTTPException(status_code=400, detail="No template found for specialty")
-+
-+    if not consultation.structured_data:
-+        raise HTTPException(status_code=400, detail="No structured data available")
-+
-+    context = {
-+        "consultation_id": consultation.id,
-+        "consultation_date": consultation.consultation_date,
-+        "specialty": consultation.specialty,
-+        "language": "ro",
-+        "territory": "RO",
-+    }
-+
-+    return build_composition(template, consultation.structured_data, context)
-+
- @router.get("/{consultation_id}", response_model=ConsultationResponse)
- async def get_consultation(
-     consultation_id: str,
-     request:Request,
-     db: Session = Depends(get_db),
- )-> ConsultationResponse:
-     """Get specific consultation"""
-     current_user = get_user_from_header(db, request)
-     
-     consultation = db.query(Consultation).filter(
-         Consultation.id == consultation_id,
-         Consultation.clinic_id == current_user.clinic_id
-     ).first()
-     
-     if not consultation:
-         raise HTTPException(status_code=404, detail="Consultation not found")
-     
-     return consultation
- 
- @router.put("/{consultation_id}", response_model=ConsultationResponse)
- async def update_consultation(
-     consultation_id: str,
-     consultation_data: ConsultationUpdate,
-     request:Request,
-     db: Session = Depends(get_db)
 diff --git a/app/routers/documents.py b/app/routers/documents.py
-index b4a4f660886c95ea984bee8f04665b5e084be3f7..ae09b54f6b76a55291ad31fc1f0e4d3684db2800 100644
+index c57f0011ed3ff4ae83fb9f1c3672c9ebcfb57ea0..e570abffeddea0e498609f59a0bb5c757aa547c7 100644
 --- a/app/routers/documents.py
 +++ b/app/routers/documents.py
-@@ -27,72 +27,73 @@ import os
+@@ -27,52 +27,53 @@ import os
  from datetime import datetime, timedelta
  from pathlib import Path
  from uuid import uuid4
@@ -174,7 +28,10 @@ index b4a4f660886c95ea984bee8f04665b5e084be3f7..ae09b54f6b76a55291ad31fc1f0e4d36
      UploadRejectResponse,
      UploadBatchAssignRequest,
      UploadBatchTypeRequest,
-+    PatientDocumentListItem,
+-    #Patient document list item
++    # Patient document list item
+     PatientDocumentListItem,
++    DocumentTextResponse,
  )
  
  # File utils (adjust these imports to your actual module paths/names)
@@ -196,41 +53,22 @@ index b4a4f660886c95ea984bee8f04665b5e084be3f7..ae09b54f6b76a55291ad31fc1f0e4d36
      UI can use this as a stable link for preview/download.
      Adjust if your frontend expects another URL.
      """
--    return f"/documents/uploads/{upload_id}/download"
-+    return f"/api/documents/uploads/{upload_id}/download"
+     return f"/api/documents/uploads/{upload_id}/download"
  
  def _make_upload_card(db: Session, upload: Upload) -> UploadCardResponse:
      """
-     Build UploadCardResponse, including optional OCR snippet from the linked Document.
-     """
-     doc = db.query(Document).filter(Document.upload_id == upload.id).first()
-     snippet = None
-     if doc and getattr(doc, "ocr_text", None):
-         snippet = (doc.ocr_text or "")[:500]
- 
-     patient_name = None
-     if upload.patient:
-         patient_name = " ".join(
-             part for part in [upload.patient.given_name, upload.patient.family_name] if part
-         ).strip() or None
- 
-     return UploadCardResponse(
-         id=upload.id,
-         clinic_id=upload.clinic_id,
-         filename=upload.filename,
-         file_size=getattr(upload, "file_size", None),
-         document_type=getattr(upload, "document_type", None) or getattr(doc, "document_type", None),
-         job_state=upload.job_state,
-         uploaded_at=upload.uploaded_at,
+@@ -137,88 +138,64 @@ def _make_upload_detail(db: Session, upload: Upload) -> UploadDetailResponse:
          expires_at=upload.expires_at,
-@@ -140,50 +141,84 @@ def _make_upload_detail(db: Session, upload: Upload) -> UploadDetailResponse:
+         preview_url=_preview_url(upload.id),
+         document=doc_summary,
+     )
+ 
  def _require_same_clinic(user: User, upload: Upload) -> None:
      """
      Multi-tenant guard: user can only act within their clinic.
      """
      if upload.clinic_id != user.clinic_id:
          raise HTTPException(status_code=403, detail="Forbidden (wrong clinic)")
- 
  
  def _remove_upload_file(upload: Upload) -> None:
      if not upload.file_path:
@@ -245,44 +83,54 @@ index b4a4f660886c95ea984bee8f04665b5e084be3f7..ae09b54f6b76a55291ad31fc1f0e4d36
          # In MVP: do not block delete if file removal fails.
          pass
  
++def _document_has_original_file(upload: Upload | None) -> bool:
++    if not upload or not upload.file_path:
++        return False
++    return os.path.exists(upload.file_path)
++
++def _make_document_snippet(text: str | None, length: int = 300) -> str:
++    if not text:
++        return ""
++    return text.strip()[:length]
++
  # ----------------------------
  # Upload endpoints
  # ----------------------------
  
-+@router.get("/", response_model=List[PatientDocumentListItem])
-+async def list_patient_documents(
-+    request: Request,
-+    patient_id: str = Query(...),
-+    db: Session = Depends(get_db),
-+) -> List[PatientDocumentListItem]:
-+    """List documents for a patient in the current clinic."""
-+    user = get_user_from_header(db, request)
-+
-+    patient = db.query(Patient).filter(
-+        Patient.id == patient_id,
-+        Patient.clinic_id == user.clinic_id,
-+    ).first()
-+
-+    if not patient:
-+        raise HTTPException(status_code=404, detail="Patient not found")
-+
-+    documents = db.query(Document).filter(
-+        Document.patient_id == patient_id,
-+        Document.clinic_id == user.clinic_id,
-+    ).order_by(Document.created_at.desc()).all()
-+
-+    return [
-+        PatientDocumentListItem(
-+            id=doc.id,
-+            filename=doc.filename,
-+            document_type=doc.document_type,
-+            created_at=doc.created_at,
-+            upload_id=doc.upload_id,
-+            preview_url=_preview_url(doc.upload_id) if doc.upload_id else None,
-+        )
-+        for doc in documents
-+    ]
-+
+-@router.get("/", response_model=List[PatientDocumentListItem])
+-async def list_patient_documents(
+-    request: Request,
+-    patient_id: str = Query(...),
+-    db: Session = Depends(get_db),
+-) -> List[PatientDocumentListItem]:
+-    """List documents for a patient in the current clinic."""
+-    user = get_user_from_header(db, request)
+-
+-    patient = db.query(Patient).filter(
+-        Patient.id == patient_id,
+-        Patient.clinic_id == user.clinic_id,
+-    ).first()
+-
+-    if not patient:
+-        raise HTTPException(status_code=404, detail="Patient not found")
+-
+-    documents = db.query(Document).filter(
+-        Document.patient_id == patient_id,
+-        Document.clinic_id == user.clinic_id,
+-    ).order_by(Document.created_at.desc()).all()
+-
+-    return [
+-        PatientDocumentListItem(
+-            id=doc.id,
+-            filename=doc.filename,
+-            document_type=doc.document_type,
+-            created_at=doc.created_at,
+-            upload_id=doc.upload_id,
+-            preview_url=_preview_url(doc.upload_id) if doc.upload_id else None,
+-        )
+-        for doc in documents
+-    ]
+-
  @router.post("/uploads", response_model=List[UploadCardResponse])
  async def upload_files(
      request: Request,
@@ -308,11 +156,118 @@ index b4a4f660886c95ea984bee8f04665b5e084be3f7..ae09b54f6b76a55291ad31fc1f0e4d36
          # Validate file type (pdf/jpg/png/etc.)
          if not validate_file_type(f.content_type, f.filename):
              raise HTTPException(status_code=400, detail=f"Unsupported file type: {f.filename}")
+@@ -567,63 +544,94 @@ def list_patient_documents(
+     db: Session = Depends(get_db),
+ ):
+     """List documents for a given patient.
+ 
+     Used by the patient "Documents & History" view.
+     Only returns documents for the caller's clinic.
+     """
+     user = get_user_from_header(db, request)
+ 
+     # Ensure patient exists in this clinic (prevents cross-clinic leakage)
+     patient = (
+         db.query(Patient)
+         .filter(Patient.id == patient_id, Patient.clinic_id == user.clinic_id)
+         .first()
+     )
+     if not patient:
+         raise HTTPException(status_code=404, detail="Patient not found")
+ 
+     docs = (
+         db.query(Document)
+         .filter(Document.patient_id == patient_id, Document.clinic_id == user.clinic_id)
+         .order_by(Document.created_at.desc())
+         .all()
+     )
+ 
+-    return [
+-        PatientDocumentListItem(
+-            id=d.id,
+-            patient_id=d.patient_id,
+-            clinic_id=d.clinic_id,
+-            filename=d.filename,
+-            document_type=getattr(d, "document_type", None),
+-            created_at=d.created_at,
+-            upload_id=getattr(d, "upload_id", None),
+-            preview_url=_preview_url(d.upload_id) if getattr(d, "upload_id", None) else None,
++    items: List[PatientDocumentListItem] = []
++    for doc in docs:
++        ocr_text = getattr(doc, "ocr_text", None) or ""
++        has_full_text = bool(ocr_text.strip())
++        has_original_file = _document_has_original_file(doc.upload)
++        items.append(
++            PatientDocumentListItem(
++                id=doc.id,
++                filename=doc.filename or doc.original_filename,
++                document_type=getattr(doc, "document_type", None),
++                created_at=doc.created_at,
++                text_snippet=_make_document_snippet(ocr_text),
++                has_full_text=has_full_text,
++                has_original_file=has_original_file,
++                download_url=_preview_url(doc.upload_id)
++                if getattr(doc, "upload_id", None) and has_original_file
++                else None,
++                full_text_url=f"/api/documents/{doc.id}/text",
++            )
+         )
+-        for d in docs
+-    ]
++
++    return items
++
++@router.get("/{document_id}/text", response_model=DocumentTextResponse)
++def get_document_text(
++    document_id: str,
++    request: Request,
++    db: Session = Depends(get_db),
++):
++    """Return full OCR text for a document."""
++    user = get_user_from_header(db, request)
++
++    doc = (
++        db.query(Document)
++        .filter(Document.id == document_id, Document.clinic_id == user.clinic_id)
++        .first()
++    )
++    if not doc:
++        raise HTTPException(status_code=404, detail="Document not found")
++
++    return DocumentTextResponse(
++        id=doc.id,
++        text=(doc.ocr_text or ""),
++    )
+ 
+ # ----------------------------
+ # Optional debug/admin endpoints (keep for now, can remove later)
+ # ----------------------------
+ 
+ @router.post("/processing/run-next")
+ def run_next_ocr_job_for_clinic(
+     request: Request,
+     db: Session = Depends(get_db),
+ ):
+     """
+     Debug/admin endpoint:
+     - Claims next queued job for the current clinic and processes it.
+     In production, the background worker should handle this automatically.
+     """
+     user = get_user_from_header(db, request)
+ 
+     # Optional stale recovery for this clinic
+     processing_svc.recover_stale_jobs(db, clinic_id=user.clinic_id)
+ 
+     upl = processing_svc.claim_next(db, clinic_id=user.clinic_id)
+     if not upl:
+         return {"processed": False, "message": "No queued uploads"}
+ 
+     result = processing_svc.process_upload(db, upload_id=upl.id)
 diff --git a/app/schemas.py b/app/schemas.py
-index e7ee9c14e1e712b385d0fbe7fd5fccb7b52c6bde..7c05e0d8a5de4f4151260bf67a0850482168516a 100644
+index 80d509fd3c3449820f5bfa44b86e94371f56b25a..2f2c06917d89ef714615754d9203879478f02106 100644
 --- a/app/schemas.py
 +++ b/app/schemas.py
-@@ -275,50 +275,61 @@ class UploadUpdate(BaseModel):
+@@ -275,112 +275,108 @@ class UploadUpdate(BaseModel):
      claimed_by: Optional[str] = None
      error_message: Optional[str] = None
  
@@ -338,17 +293,18 @@ index e7ee9c14e1e712b385d0fbe7fd5fccb7b52c6bde..7c05e0d8a5de4f4151260bf67a085048
  
      model_config = ConfigDict(from_attributes=True)
  
-+class PatientDocumentListItem(BaseModel):
-+    """Document list item for patient document history."""
-+    id: str
-+    filename: str
-+    document_type: Optional[str] = None
-+    created_at: datetime
-+    upload_id: Optional[str] = None
-+    preview_url: Optional[str] = None
-+
-+    model_config = ConfigDict(from_attributes=True)
-+
+-class PatientDocumentListItem(BaseModel):
+-    """Document list item for patient document history."""
+-    id: str
+-    filename: str
+-    document_type: Optional[str] = None
+-    created_at: datetime
+-    upload_id: Optional[str] = None
+-    preview_url: Optional[str] = None
+-    clinic_id: Optional[str] = None
+-    
+-    model_config = ConfigDict(from_attributes=True)
+-
  class UploadDetailResponse(BaseModel):
      """
      Upload details + document summary.
@@ -374,391 +330,74 @@ index e7ee9c14e1e712b385d0fbe7fd5fccb7b52c6bde..7c05e0d8a5de4f4151260bf67a085048
      preview_url: Optional[str] = None
      document: Optional[UploadDocumentSummary] = None
  
-diff --git a/app/services/openehr_composer.py b/app/services/openehr_composer.py
-new file mode 100644
-index 0000000000000000000000000000000000000000..615273d998e229cbc7829f533c60fa6dc9fa77fa
---- /dev/null
-+++ b/app/services/openehr_composer.py
-@@ -0,0 +1,177 @@
-+"""openEHR composition builder for consultation payloads.
-+
-+Example:
-+    >>> template = {
-+    ...     "sections": [
-+    ...         {
-+    ...             "section_id": "chief_complaint",
-+    ...             "fields": [
-+    ...                 {
-+    ...                     "field_id": "complaint_description",
-+    ...                     "field_type": "text",
-+    ...                     "openehr_archetype": "openEHR-EHR-OBSERVATION.story.v1",
-+    ...                     "openehr_path": "/data/events/any_event/data/items[complaint]",
-+    ...                 }
-+    ...             ],
-+    ...         }
-+    ...     ]
-+    ... }
-+    >>> data = {"chief_complaint": {"complaint_description": "Headache"}}
-+    >>> build_composition(template, data, {"consultation_id": "c1", "specialty": "internal_medicine"})
-+    {'language': 'ro', 'territory': 'RO', 'category': 'event', 'context': {'consultation_id': 'c1', 'specialty': 'internal_medicine'}, 'content': [{'archetype': 'openEHR-EHR-OBSERVATION.story.v1', 'data': {'data': {'events': {'any_event': {'data': {'items': {'complaint': 'Headache'}}}}}}}]}
-+"""
-+
-+from __future__ import annotations
-+
-+from datetime import date, datetime
-+from typing import Any, Dict, Iterable
-+import re
-+
-+
-+PATH_PART_PATTERN = re.compile(r"^(?P<name>[^\[]+)(?:\[(?P<key>.+)\])?$")
-+
-+
-+def build_composition(template: Dict[str, Any], structured_data: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-+    """
-+    Build a composition-like payload using relative openEHR paths.
-+    """
-+    language = context.get("language") or "ro"
-+    territory = context.get("territory") or "RO"
-+    category = context.get("category") or "event"
-+
-+    composition_context = {
-+        key: _normalize_context_value(value)
-+        for key, value in context.items()
-+        if value is not None and key not in {"language", "territory", "category"}
-+    }
-+
-+    entries: Dict[str, Dict[str, Any]] = {}
-+
-+    for section in template.get("sections", []):
-+        section_id = section.get("section_id")
-+        section_values = structured_data.get(section_id, {}) if section_id else {}
-+        for field in section.get("fields", []):
-+            archetype = field.get("openehr_archetype")
-+            path = field.get("openehr_path")
-+            if not archetype or not path:
-+                continue
-+
-+            field_id = field.get("field_id")
-+            value = section_values.get(field_id) if field_id else None
-+            if _is_empty(value):
-+                continue
-+
-+            value = _normalize_value(field.get("field_type"), value)
-+            entry_data = entries.setdefault(archetype, {})
-+            _apply_relative_path(entry_data, path, value)
-+
-+    content = [
-+        {"archetype": archetype, "data": data}
-+        for archetype, data in sorted(entries.items(), key=lambda item: item[0])
-+    ]
-+
-+    return {
-+        "language": language,
-+        "territory": territory,
-+        "category": category,
-+        "context": composition_context,
-+        "content": content,
-+    }
-+
-+
-+def _apply_relative_path(target: Dict[str, Any], path: str, value: Any) -> None:
-+    parts = [part for part in path.split("/") if part]
-+    current = target
-+
-+    for index, part in enumerate(parts):
-+        match = PATH_PART_PATTERN.match(part)
-+        if not match:
-+            key = part
-+            nested_key = None
-+        else:
-+            key = match.group("name")
-+            nested_key = match.group("key")
-+
-+        is_last = index == len(parts) - 1
-+        if nested_key is not None:
-+            current = _ensure_mapping(current, key)
-+            if is_last:
-+                current[nested_key] = value
-+                return
-+            current = _ensure_mapping(current, nested_key)
-+            continue
-+
-+        if is_last:
-+            current[key] = value
-+            return
-+        current = _ensure_mapping(current, key)
-+
-+
-+def _ensure_mapping(container: Dict[str, Any], key: str) -> Dict[str, Any]:
-+    existing = container.get(key)
-+    if not isinstance(existing, dict):
-+        container[key] = {}
-+    return container[key]
-+
-+
-+def _normalize_value(field_type: str | None, value: Any) -> Any:
-+    if field_type in {"number", "quantity"}:
-+        return _normalize_number(value)
-+    if field_type == "date":
-+        return _normalize_date(value)
-+    return value
-+
-+
-+def _normalize_context_value(value: Any) -> Any:
-+    if isinstance(value, (datetime, date)):
-+        return value.isoformat()
-+    return value
-+
-+
-+def _normalize_number(value: Any) -> Any:
-+    if isinstance(value, (int, float)):
-+        return value
-+    if isinstance(value, str):
-+        text = value.strip()
-+        if not text:
-+            return value
-+        try:
-+            if "." in text:
-+                return float(text)
-+            return int(text)
-+        except ValueError:
-+            return value
-+    return value
-+
-+
-+def _normalize_date(value: Any) -> Any:
-+    if isinstance(value, datetime):
-+        return value.isoformat()
-+    if isinstance(value, date):
-+        return value.isoformat()
-+    if isinstance(value, str):
-+        text = value.strip()
-+        if not text:
-+            return value
-+        try:
-+            return datetime.fromisoformat(text).isoformat()
-+        except ValueError:
-+            return value
-+    return value
-+
-+
-+def _is_empty(value: Any) -> bool:
-+    if value is None:
-+        return True
-+    if isinstance(value, str):
-+        return value.strip() == ""
-+    if isinstance(value, dict):
-+        return len(value) == 0
-+    if isinstance(value, (list, tuple, set)):
-+        return len(value) == 0
-+    if isinstance(value, Iterable) and not isinstance(value, (bytes, bytearray)):
-+        try:
-+            return len(value) == 0
-+        except TypeError:
-+            return False
-+    return False
-diff --git a/static/js/consultations.js b/static/js/consultations.js
-index b3604d85e3a615b5c5aae645a1e40de72d78d515..112851b81778f57cf54fa94cbe437ef29888461b 100644
---- a/static/js/consultations.js
-+++ b/static/js/consultations.js
-@@ -135,52 +135,51 @@ class ConsultationManager {
-       }, 400);
+     model_config = ConfigDict(from_attributes=True)
  
-       consultSearchInput.addEventListener('input', onSearch);
-       this._domHandlers.push({ el: consultSearchInput, type: 'input', handler: onSearch });
-     }
+ class UploadOCRResponse(BaseModel):
+     """
+     Full OCR output payload.
+     Recommended for: GET /uploads/{id}/ocr
+     """
+     upload_id: str
+     document_id: str
+     ocr_text: str
+     # Optional metadata (keep non-PHI)
+     ocr_metadata: Optional[Dict[str, Any]] = None
  
-     // --- Ensure tab switching once you have a selected patient
-     const changePatientBtn = document.getElementById('change-patient');
-     if (changePatientBtn) {
-       changePatientBtn.addEventListener('click', () => {
-         this.selectedPatient = null;
-         document.getElementById('patient-header').classList.add('hidden');
-         this.switchConsultationTab('patient-selection'); // 👈 Go back to first tab
-       });
-     }
+     model_config = ConfigDict(from_attributes=True)
  
-     // --- New consultation form submit ---
-     const newForm = document.getElementById('new-consultation-form');
-     if (newForm) {
-       const submitHandler = async (e) => {
-         e.preventDefault();
-         const form = e.currentTarget;
-         const formData = new FormData(form);
-         const payload = {
-           patient_id: formData.get('patient_id') || this.currentPatientId,
--          consultation_type: formData.get('consultation_type'),
--          notes: (formData.get('notes') || '').trim(),
-+          specialty: formData.get('specialty') || formData.get('consultation_type'),
-         };
-         await this.startNewConsultation(payload);
-       };
-       newForm.addEventListener('submit', submitHandler);
-       this._domHandlers.push({ el: newForm, type: 'submit', handler: submitHandler });
-     }
+ class PatientDocumentListItem(BaseModel):
+-    """Minimal document info for patient profile/history views."""
++    """Document list item for patient profile/history views."""
+     id: str
+-    patient_id: Optional[str] = None
+-    clinic_id: str
+     filename: str
+     document_type: Optional[str] = None
+     created_at: datetime
+-    upload_id: Optional[str] = None
+-    preview_url: Optional[str] = None
++    text_snippet: str
++    has_full_text: bool
++    has_original_file: bool
++    download_url: Optional[str] = None
++    full_text_url: str
++
++    model_config = ConfigDict(from_attributes=True)
++
++class DocumentTextResponse(BaseModel):
++    """Full extracted OCR text for a document."""
++    id: str
++    text: str
  
-     // --- Start audio recording button ---
-     const startAudioBtn = document.getElementById('start-audio-recording');
-     if (startAudioBtn) {
-       const startHandler = (e) => {
-         e.preventDefault();
-         this.switchConsultationTab('patient-review'); // optional UX: move to review/record section if desired
-         this.startAudioRecording();
-       };
-       startAudioBtn.addEventListener('click', startHandler);
-       this._domHandlers.push({ el: startAudioBtn, type: 'click', handler: startHandler });
-     }
+     model_config = ConfigDict(from_attributes=True)
+     
+ # ----------------------------
+ # Public Workflow Actions (Doctor)
+ # ----------------------------
  
-     // --- Consultation notes input (debounced autosave) ---
-     const notesEl = document.getElementById('consultation-notes');
-     if (notesEl) {
-       const inputHandler = (e) => {
-         this.currentNotes = e.target.value;
-         this._debouncedSaveDraft();
-@@ -367,54 +366,56 @@ class ConsultationManager {
-       sel.appendChild(opt);
-     });
-   }
+ class UploadCompleteRequest(BaseModel):
+     """
+     One-button doctor action:
+     - assigns patient
+     - approves validation
+     - optionally edits OCR text
+     - optionally sets document_type
+     Recommended for: POST /uploads/{id}/complete
+     """
+     patient_id: str = Field(..., min_length=1)
+     document_type: Optional[str] = None
+     edited_ocr_text: Optional[str] = None  # if doctor edited the OCR result
  
-   /**
-    * Load consultations for a given patient and render them in #patient-consultations.
-    * @param {string} patientId
-    */
-   async loadConsultationsForPatient(patientId) {
-     if (!patientId) return;
-     try {
-       const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${encodeURIComponent(patientId)}`));
-       if (!res.ok) throw new Error('Failed to load consultations');
-       const consultations = await res.json();
- 
-       const container = document.getElementById('patient-consultations');
-       if (!container) return;
-       container.innerHTML = '';
-       if (!consultations.length) {
-         container.innerHTML = '<div class="empty-state">No completed consultations for this patient.</div>';
-         return;
-       }
-       consultations.forEach(c => {
-         const card = document.createElement('div');
-         card.className = 'consultation-item';
-+        const specialtyLabel = c.specialty || c.consultation_type || 'Consultation';
-+        const consultationDate = c.consultation_date || c.timestamp;
-         card.innerHTML = `
-           <div class="consultation-meta">
--            <strong>${c.consultation_type || 'Consultation'}</strong>
--            <div class="muted">${new Date(c.timestamp).toLocaleString()}</div>
-+            <strong>${specialtyLabel}</strong>
-+            <div class="muted">${consultationDate ? new Date(consultationDate).toLocaleString() : ''}</div>
-           </div>
-           <div class="consultation-notes-snippet">${(c.notes || '').slice(0, 200)}</div>
-           <div class="consultation-actions">
-             <button data-id="${c.id}" class="btn-secondary btn-generate-discharge">Generate Discharge</button>
-           </div>
-         `;
-         container.appendChild(card);
-       });
- 
-       // attach handlers for "Generate Discharge" buttons
-       container.querySelectorAll('.btn-generate-discharge').forEach(btn => {
-         btn.addEventListener('click', async (e) => {
-           const cid = e.currentTarget.dataset.id;
-           await this.generateDischargeSummaryByConsultation(cid);
-         });
-       });
- 
-       showToast('Consultations loaded', 'success');
-     } catch (err) {
-       console.error('loadConsultationsForPatient', err);
-       showToast('Failed to load consultations', 'error');
-     }
-   }
- 
-   /**
-@@ -461,75 +462,73 @@ class ConsultationManager {
-     });
-   }
- 
-   /**
-    * Select a patient, update header, and set context
-    */
-   selectPatient(id, data = {}) {
-     this.currentPatientId = id;
-     const header = document.getElementById('patient-header');
-     const nameEl = document.getElementById('patient-name');
-     const detailsEl = document.getElementById('patient-details');
- 
-     if (header) header.classList.remove('hidden');
-     if (nameEl) nameEl.textContent = data.name || 'Selected Patient';
-     if (detailsEl) detailsEl.textContent = data.details || '';
- 
-     showToast(`Patient selected: ${data.name}`, 'success');
-   }
- 
- 
-   
-   /* ============================ Consultation lifecycle: create/save/finalize ============================ */
- 
-   /**
-    * Start a new consultation (creates it in backend and sets currentConsultationId).
--   * @param {Object} payload - { patient_id, consultation_type, notes }
-+   * @param {Object} payload - { patient_id, specialty }
-    */
-   async startNewConsultation(payload = {}) {
-     try {
-       if (!payload.patient_id) {
-         showToast('Please select a patient', 'warning');
-         return null;
-       }
-       const body = {
-         patient_id: payload.patient_id,
--        consultation_type: payload.consultation_type || 'general',
--        notes: payload.notes || '',
--        status: 'in_progress',
--        timestamp: new Date().toISOString(),
-+        specialty: payload.specialty || 'internal_medicine',
-+        consultation_date: new Date().toISOString(),
-       };
-       const res = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations), {
-         method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
-         body: JSON.stringify(body),
-       });
-       if (!res.ok) throw new Error(`Failed to create consultation (${res.status})`);
-       const created = await res.json();
-       this.currentConsultationId = created.id;
-       this.currentPatientId = payload.patient_id;
--      this.currentNotes = body.notes;
-+      this.currentNotes = '';
-       showToast('New consultation started', 'success');
- 
-       // start autosave only after a consultation exists
-       this.startPeriodicAutosave();
-       return created;
-     } catch (err) {
-       console.error('startNewConsultation', err);
-       showToast('Failed to start consultation', 'error');
-       return null;
-     }
-   }
- 
-   /**
-    * Debounced draft save: called on input events. Waits for user to pause to avoid hammering backend.
-    * Uses this._debounceDelay.
-    * @private
-    */
-   _debouncedSaveDraft() {
-     if (this._debounceSaveTimer) clearTimeout(this._debounceSaveTimer);
-     this._debounceSaveTimer = setTimeout(() => {
-       this.saveConsultationDraft().catch(() => { /* ignore */ });
-     }, this._debounceDelay);
-   }
- 
-   /**
+ class UploadCompleteResponse(BaseModel):
+     """
+     Return updated card-friendly payload after completion.
+     """
+     upload: UploadDetailResponse
 diff --git a/static/js/patients.js b/static/js/patients.js
-index 10f0985eaaed2d45520f7c58e326b54756c7af15..76d3d25ae7621e0cb0a6c2e63db82c5311e19221 100644
+index 6bb505226111cc73c35e40c339ccf7769941a110..57204a3b48d62cfb00344133c0dc761e44acda4d 100644
 --- a/static/js/patients.js
 +++ b/static/js/patients.js
-@@ -541,128 +541,164 @@ export class PatientManager {
+@@ -541,168 +541,401 @@ export class PatientManager {
          tabButtons.forEach(button => {
              button.addEventListener('click', () => {
                  const targetTab = button.dataset.tab;
@@ -784,109 +423,168 @@ index 10f0985eaaed2d45520f7c58e326b54756c7af15..76d3d25ae7621e0cb0a6c2e63db82c53
          container.innerHTML = '<div class="loading-placeholder">Loading documents...</div>';
          
          try {
--            // Fetch consultations for this patient
--            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`));
--            
--            if (!response.ok) throw new Error('Failed to load consultations');
--            
--            const consultations = await response.json();
--            
--            if (consultations.length === 0) {
-+            const [consultationsResponse, documentsResponse] = await Promise.all([
-+                fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)),
-+                fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)),
-+            ]);
+-            // Fetch consultations and patient-linked documents
+-            const [consultationsResponse, documentsResponse] = await Promise.all([
+-                fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)),
+-                fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)),
+-            ]);
++            const consultationsPromise = fetch(
++                apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)
++            ).then(response => {
++                if (!response.ok) {
++                    throw new Error('Failed to load consultations');
++                }
++                return response.json();
++            });
+ 
+-            if (!consultationsResponse.ok) throw new Error('Failed to load consultations');
+-            if (!documentsResponse.ok) throw new Error('Failed to load documents');
++            const documentsPromise = fetch(
++                apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)
++            ).then(response => {
++                if (!response.ok) {
++                    throw new Error('Failed to load documents');
++                }
++                return response.json();
++            });
+ 
+-            const [consultations, documents] = await Promise.all([
+-                consultationsResponse.json(),
+-                documentsResponse.json(),
++            const [consultationsResult, documentsResult] = await Promise.allSettled([
++                consultationsPromise,
++                documentsPromise,
+             ]);
+ 
+-            if (consultations.length === 0 && documents.length === 0) {
++            const consultations = consultationsResult.status === 'fulfilled'
++                ? consultationsResult.value
++                : [];
++            const documents = documentsResult.status === 'fulfilled'
++                ? documentsResult.value
++                : [];
++            const consultationsError = consultationsResult.status === 'rejected'
++                ? 'Unable to load consultations right now.'
++                : '';
++            const documentsError = documentsResult.status === 'rejected'
++                ? 'Unable to load documents right now.'
++                : '';
 +
-+            if (!consultationsResponse.ok) throw new Error('Failed to load consultations');
-+            if (!documentsResponse.ok) throw new Error('Failed to load documents');
-+
-+            const [consultations, documents] = await Promise.all([
-+                consultationsResponse.json(),
-+                documentsResponse.json(),
-+            ]);
-+
-+            if (consultations.length === 0 && documents.length === 0) {
++            if (
++                consultations.length === 0 &&
++                documents.length === 0 &&
++                !consultationsError &&
++                !documentsError
++            ) {
                  container.innerHTML = `
                      <div class="empty-state">
                          <div class="empty-icon">📄</div>
--                        <h4>No consultations yet</h4>
--                        <p>Consultations will appear here once created</p>
-+                        <h4>No files or consultations yet</h4>
-+                        <p>Documents and consultations will appear here once available</p>
+-                        <h4>No files or consultations yet</h4>
+-                        <p>Documents and consultations will appear here once created</p>
++                        <h4>No consultations or documents yet</h4>
++                        <p>Consultations and documents will appear here once created</p>
                      </div>
                  `;
                  return;
              }
--            
--            // Render consultations
--            container.innerHTML = consultations.map(consultation => `
--                <div class="consultation-history-item">
--                    <div class="consultation-date">
--                        ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
--                            year: 'numeric',
--                            month: 'long',
--                            day: 'numeric'
--                        })}
-+
-+            const documentsSection = documents.length
-+                ? this.renderGroupedDocuments(documents)
-+                : `
+ 
+-            const documentsSection = documents.length
++            const documentsSection = documentsError
++                ? `
 +                    <div class="empty-state">
-+                        <div class="empty-icon">📁</div>
-+                        <h4>No files yet</h4>
-+                        <p>Uploaded documents will appear here once available</p>
++                        <div class="empty-icon">⚠️</div>
++                        <h4>${documentsError}</h4>
++                        <p>Please try again later.</p>
++                    </div>
++                `
++                : documents.length
+                 ? this.renderGroupedDocuments(documents)
+                 : `
+                     <div class="empty-state">
+                         <div class="empty-icon">📁</div>
+-                        <h4>No files yet</h4>
++                        <h4>No documents yet</h4>
+                         <p>Uploaded documents will appear here once available</p>
                      </div>
--                    <div class="consultation-details">
--                        <span class="consultation-type-badge">${consultation.consultation_type}</span>
--                        <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
--                        ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
-+                `;
+                 `;
+ 
+-            const consultationsSection = consultations.length
+-                ? consultations.map(consultation => {
++            const sortedConsultations = [...consultations].sort((a, b) => {
++                const dateA = new Date(a.consultation_date || 0).getTime();
++                const dateB = new Date(b.consultation_date || 0).getTime();
++                return dateB - dateA;
++            });
 +
-+            const consultationsSection = consultations.length
-+                ? consultations.map(consultation => {
-+                    const specialtyLabel = consultation.specialty || consultation.consultation_type || 'Consultation';
-+                    return `
-+                        <div class="consultation-history-item">
-+                            <div class="consultation-date">
-+                                ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
-+                                    year: 'numeric',
-+                                    month: 'long',
-+                                    day: 'numeric'
-+                                })}
-+                            </div>
-+                            <div class="consultation-details">
-+                                <span class="consultation-type-badge">${specialtyLabel}</span>
-+                                <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
-+                                ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
-+                            </div>
-+                        </div>
-+                    `;
-+                }).join('')
-+                : `
++            const consultationsSection = consultationsError
++                ? `
 +                    <div class="empty-state">
-+                        <div class="empty-icon">🩺</div>
-+                        <h4>No consultations yet</h4>
-+                        <p>Consultations will appear here once created</p>
++                        <div class="empty-icon">⚠️</div>
++                        <h4>${consultationsError}</h4>
++                        <p>Please try again later.</p>
++                    </div>
++                `
++                : sortedConsultations.length
++                ? sortedConsultations.map(consultation => {
+                     const specialtyLabel = consultation.specialty || consultation.consultation_type || 'Consultation';
++                    const safeSpecialty = this.escapeHtml(specialtyLabel);
++                    const statusLabel = consultation.status || 'unknown';
++                    const statusClass = String(statusLabel).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                     return `
+                         <div class="consultation-history-item">
+                             <div class="consultation-date">
+                                 ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
+                                     year: 'numeric',
+                                     month: 'long',
+                                     day: 'numeric'
+                                 })}
+                             </div>
+                             <div class="consultation-details">
+-                                <span class="consultation-type-badge">${specialtyLabel}</span>
+-                                <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
++                                <span class="consultation-type-badge">${safeSpecialty}</span>
++                                <span class="consultation-status status-${statusClass}">${this.escapeHtml(statusLabel)}</span>
+                                 ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
+                             </div>
+                         </div>
+                     `;
+                 }).join('')
+                 : `
+                     <div class="empty-state">
+                         <div class="empty-icon">🩺</div>
+                         <h4>No consultations yet</h4>
+                         <p>Consultations will appear here once created</p>
                      </div>
-+                `;
-+
+                 `;
+ 
+             container.innerHTML = `
+-                <div class="documents-section">
+-                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Files</h4>
+-                    ${documentsSection}
+-                </div>
+                 <div class="documents-section">
+                     <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
+                     ${consultationsSection}
+                 </div>
++                <div class="documents-section">
++                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
++                    ${documentsSection}
++                </div>
+             `;
++            this.bindDocumentHistoryActions();
+         } catch (err) {
+             console.error('Failed to load documents or consultations:', err);
+-            container.innerHTML = '<p class="text-error">Failed to load documents and consultation history</p>';
 +            container.innerHTML = `
 +                <div class="documents-section">
-+                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Files</h4>
-+                    ${documentsSection}
-                 </div>
--            `).join('');
--            
-+                <div class="documents-section">
 +                    <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
-+                    ${consultationsSection}
++                    <p class="text-error">Unable to load consultations right now.</p>
++                </div>
++                <div class="documents-section">
++                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
++                    <p class="text-error">Unable to load documents right now.</p>
 +                </div>
 +            `;
-         } catch (err) {
--            console.error('Failed to load consultations:', err);
--            container.innerHTML = '<p class="text-error">Failed to load consultation history</p>';
-+            console.error('Failed to load documents or consultations:', err);
-+            container.innerHTML = '<p class="text-error">Failed to load documents and consultation history</p>';
          }
      }
  
@@ -894,49 +592,233 @@ index 10f0985eaaed2d45520f7c58e326b54756c7af15..76d3d25ae7621e0cb0a6c2e63db82c53
      renderGroupedDocuments(documents) {
          // Group documents by type
          const grouped = documents.reduce((acc, doc) => {
-             const type = doc.document_type || 'other';
+-            const type = doc.document_type || 'other';
++            const type = (doc.document_type || 'uncategorized').trim() || 'uncategorized';
              if (!acc[type]) acc[type] = [];
              acc[type].push(doc);
              return acc;
          }, {});
          
--        // Render each group
--        const container = document.getElementById('documents-list');
--        const html = Object.entries(grouped).map(([type, docs]) => `
-+        const html = Object.entries(grouped).sort(([typeA], [typeB]) => typeA.localeCompare(typeB)).map(([type, docs]) => `
-             <div class="document-group">
-                 <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
-                     <i class="fas fa-chevron-down"></i>
-                     <span class="document-group-title">${type.replace('_', ' ').toUpperCase()}</span>
-                     <span class="document-group-count">${docs.length}</span>
-                 </div>
-                 <div class="document-items">
-                     ${docs.map(doc => `
+         // Render each group
+-        const html = Object.entries(grouped).sort(([typeA], [typeB]) => typeA.localeCompare(typeB)).map(([type, docs]) => `
+-            <div class="document-group">
+-                <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
+-                    <i class="fas fa-chevron-down"></i>
+-                    <span class="document-group-title">${type.replace('_', ' ').toUpperCase()}</span>
+-                    <span class="document-group-count">${docs.length}</span>
+-                </div>
+-                <div class="document-items">
+-                    ${docs.map(doc => `
++        const html = Object.entries(grouped)
++            .sort(([typeA], [typeB]) => typeA.localeCompare(typeB))
++            .map(([type, docs]) => {
++                const sortedDocs = [...docs].sort((a, b) => {
++                    const dateA = new Date(a.created_at || 0).getTime();
++                    const dateB = new Date(b.created_at || 0).getTime();
++                    return dateB - dateA;
++                });
++
++                const titleLabel = this.escapeHtml(type.replace(/_/g, ' ').toUpperCase());
++                const groupItems = sortedDocs.map(doc => {
++                    const rawFilename = doc.filename || doc.title || 'Untitled';
++                    const filename = this.escapeHtml(rawFilename);
++                    const encodedFilename = encodeURIComponent(rawFilename);
++                    const snippet = doc.text_snippet || '';
++                    const truncatedSnippet = snippet
++                        ? this.escapeHtml(this.truncateText(snippet, 160))
++                        : '';
++                    const snippetMarkup = truncatedSnippet
++                        ? `<span class="document-snippet">${truncatedSnippet}</span>`
++                        : '<span class="document-snippet text-muted">No extracted text</span>';
++                    const downloadAction = doc.has_original_file && doc.download_url
++                        ? `
++                            <a class="btn-small" href="${doc.download_url}" target="_blank" rel="noopener">
++                                <i class="fas fa-download"></i>
++                            </a>
++                        `
++                        : '';
++
++                    return `
                          <div class="document-item-row">
-                             <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
--                            <span class="document-title">${doc.filename || doc.title}</span>
-+                            <span class="document-title">${doc.filename || doc.title || 'Untitled'}</span>
+-                            <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
+-                            <span class="document-title">${doc.filename || doc.title|| 'Untitled'}</span>
++                            <div class="document-item-details">
++                                <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
++                                <span class="document-title">${filename}</span>
++                                ${snippetMarkup}
++                            </div>
                              <div class="document-actions">
--                                <button class="btn-small" onclick="app.viewDocument('${doc.id}')">
--                                    <i class="fas fa-eye"></i>
--                                </button>
-+                                ${doc.preview_url ? `
-+                                    <a class="btn-small" href="${doc.preview_url}" target="_blank" rel="noopener">
-+                                        <i class="fas fa-download"></i>
-+                                    </a>
-+                                ` : '<span class="text-muted">No file</span>'}
+-                                 ${doc.preview_url ? `
+-                                    <a class="btn-small" href="${doc.preview_url}" target="_blank" rel="noopener">
+-                                        <i class="fas fa-download"></i>
+-                                    </a>
+-                                ` : '<span class="text-muted">No file</span>'}
++                                <button
++                                    class="btn-small document-view-btn"
++                                    data-action="view-document-text"
++                                    data-document-id="${doc.id}"
++                                    data-full-text-url="${doc.full_text_url}"
++                                    data-document-title="${encodedFilename}"
++                                >
++                                    <i class="fas fa-eye"></i> View
++                                </button>
++                                ${downloadAction}
                              </div>
                          </div>
-                     `).join('')}
-                 </div>
-             </div>
-         `).join('');
--        
--        container.innerHTML = html;
+-                    `).join('')}
+-                </div>
+-            </div>
+-        `).join('');
++                    `;
++                }).join('');
 +
-+        return html;
++                return `
++                    <div class="document-group">
++                        <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
++                            <i class="fas fa-chevron-down"></i>
++                            <span class="document-group-title">${titleLabel}</span>
++                            <span class="document-group-count">${sortedDocs.length}</span>
++                        </div>
++                        <div class="document-items">
++                            ${groupItems}
++                        </div>
++                    </div>
++                `;
++            })
++            .join('');
+         
+         return html;
      }
  
++    bindDocumentHistoryActions() {
++        const container = document.getElementById('documents-list');
++        if (!container || container.dataset.actionsBound) {
++            return;
++        }
++
++        container.addEventListener('click', (event) => {
++            const target = event.target.closest('[data-action="view-document-text"]');
++            if (!target) {
++                return;
++            }
++            const documentId = target.dataset.documentId;
++            const fullTextUrl = target.dataset.fullTextUrl;
++            const documentTitle = target.dataset.documentTitle;
++            this.openDocumentTextModal(documentId, fullTextUrl, documentTitle);
++        });
++
++        container.dataset.actionsBound = 'true';
++    }
++
++    ensureDocumentTextModal() {
++        let modal = document.getElementById('document-text-modal');
++        if (modal) {
++            return modal;
++        }
++
++        modal = document.createElement('div');
++        modal.id = 'document-text-modal';
++        modal.className = 'modal';
++        modal.innerHTML = `
++            <div class="modal-content large">
++                <div class="modal-header">
++                    <h2 id="document-text-modal-title">Extracted Text</h2>
++                    <button class="modal-close" data-action="close-document-text-modal">
++                        <i class="fas fa-times"></i>
++                    </button>
++                </div>
++                <div class="modal-body">
++                    <div id="document-text-modal-content">
++                        <div class="loading-placeholder">Loading text...</div>
++                    </div>
++                </div>
++                <div class="modal-footer">
++                    <button class="btn-secondary" data-action="close-document-text-modal">Close</button>
++                </div>
++            </div>
++        `;
++
++        document.body.appendChild(modal);
++
++        modal.addEventListener('click', (event) => {
++            if (event.target === modal) {
++                hideModal('document-text-modal');
++            }
++        });
++
++        modal.querySelectorAll('[data-action="close-document-text-modal"]').forEach(button => {
++            button.addEventListener('click', () => hideModal('document-text-modal'));
++        });
++
++        return modal;
++    }
++
++    async openDocumentTextModal(documentId, fullTextUrl, documentTitle) {
++        if (!documentId || !fullTextUrl) {
++            showToast('Document text is unavailable.', 'warning');
++            return;
++        }
++
++        const modal = this.ensureDocumentTextModal();
++        const title = modal.querySelector('#document-text-modal-title');
++        const content = modal.querySelector('#document-text-modal-content');
++        let decodedTitle = '';
++        if (documentTitle) {
++            try {
++                decodedTitle = decodeURIComponent(documentTitle);
++            } catch (error) {
++                decodedTitle = documentTitle;
++            }
++        }
++
++        title.textContent = documentTitle
++            ? `Extracted Text - ${decodedTitle}`
++            : 'Extracted Text';
++        content.innerHTML = '<div class="loading-placeholder">Loading text...</div>';
++        showModal('document-text-modal');
++
++        try {
++            const response = await fetch(fullTextUrl);
++            if (!response.ok) {
++                throw new Error('Failed to load document text');
++            }
++            const data = await response.json();
++            const text = data?.text || '';
++            content.innerHTML = text
++                ? `
++                    <pre style="white-space: pre-wrap; max-height: 400px; overflow-y: auto; margin: 0;">
++${this.escapeHtml(text)}
++                    </pre>
++                `
++                : '<p class="text-muted">No extracted text available.</p>';
++        } catch (error) {
++            console.error('Failed to load document text:', error);
++            content.innerHTML = '<p class="text-error">Unable to load extracted text.</p>';
++        }
++    }
++
++    escapeHtml(value) {
++        if (value === null || value === undefined) {
++            return '';
++        }
++        return String(value)
++            .replace(/&/g, '&amp;')
++            .replace(/</g, '&lt;')
++            .replace(/>/g, '&gt;')
++            .replace(/"/g, '&quot;')
++            .replace(/'/g, '&#39;');
++    }
++
++    truncateText(text, maxLength) {
++        if (!text) {
++            return '';
++        }
++        if (text.length <= maxLength) {
++            return text;
++        }
++        return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
++    }
++
      // Actions from modal footer
      editPatientFromView() {
          if (this.currentViewPatientId) {
@@ -960,32 +842,5 @@ index 10f0985eaaed2d45520f7c58e326b54756c7af15..76d3d25ae7621e0cb0a6c2e63db82c53
              // Fetch patient details
              const url = apiUrl(API_CONFIG.ENDPOINTS.patients, `${patientId}`);
              const response = await fetch(url);
-@@ -1077,26 +1113,26 @@ export class PatientManager {
-                         </div>
-                         <div class="history-details">
-                             <div class="history-performed-by">
-                                 <i class="fas fa-user"></i> By: ${entry.details.granted_by || entry.details.withdrawn_by || entry.details.renewed_by || 'Unknown'}
-                             </div>
-                             ${entry.details.reason ? `
-                                 <div class="history-reason">
-                                     <strong>Reason:</strong> ${entry.details.reason}
-                                 </div>
-                             ` : ''}
-                         </div>
-                     </div>
-                 `;
-             }).join('');
+             if (!response.ok) throw new Error('Failed to load patient');
              
-             timeline.innerHTML = historyHTML;
-         }
-         
-         showModal('consent-history-modal');
-     }
- 
-     exportConsentHistory() {
-         showToast('Export to PDF - coming soon', 'info');
-         // Future: Generate PDF report of consent history
-     }
--}
-\ No newline at end of file
-+}
