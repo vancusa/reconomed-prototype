@@ -587,6 +587,9 @@ def list_patient_documents(
             )
         )
 
+    #log the document list for debugging
+    print(f"Patient {patient_id} has {len(items)} documents")
+    print(f"Documents: {[item.id for item in items]}")
     return items
 
 @router.get("/{document_id}/text", response_model=DocumentTextResponse)

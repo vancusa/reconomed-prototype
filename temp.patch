@@ -1,550 +1,339 @@
-diff --git a/app/routers/documents.py b/app/routers/documents.py
-index c57f0011ed3ff4ae83fb9f1c3672c9ebcfb57ea0..e570abffeddea0e498609f59a0bb5c757aa547c7 100644
---- a/app/routers/documents.py
-+++ b/app/routers/documents.py
-@@ -27,52 +27,53 @@ import os
- from datetime import datetime, timedelta
- from pathlib import Path
- from uuid import uuid4
- from typing import List
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/static/js/app.js b/static/js/app.js
+index 7e022f95e39a436921f076d7bc0ffe807cf67338..7b347d92b104c35846a3e4cd619c0061792c8540 100644
+--- a/static/js/app.js
++++ b/static/js/app.js
+@@ -1,66 +1,79 @@
+ // app.js
+ import { checkAuthentication, logout } from './auth.js';
+ import { Navigation } from './navigation.js';
+ import { PatientManager } from './patients.js';
+ import { DocumentManager } from './documents.js';
+ import { ConsultationManager } from './consultations.js';
+ import { showLoading, hideLoading, showToast, showModal, hideModal} from './ui.js';
+ import { startLiveClock } from './utils.js';
+ import { ClinicManager } from './clinics.js';   
  
- from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Query
- from fastapi.responses import FileResponse
- from sqlalchemy.orm import Session
+ // =========================================================================
+ // API CONFIGURATION 
+ // for consistent endpoint management
+ // put them in alphabetical order, like in the routers folder, so that you can check easily
+ // =========================================================================
+ const API_CONFIG = {
+     BASE_URL: '/api',  // Change to '/api/v1' or '/api/v2' when needed
+     ENDPOINTS: {
+-        auth: '/auth/',
+-        clinics:'/clinics/',
+-        consultations: '/consultations/',
++        auth: '/auth',
++        clinics:'/clinics',
++        consultations: '/consultations',
+         consultationCounts: '/consultations/counts',
+-        dashboard: '/dashboard/',
+-        documents: '/documents/', 
+-        patients: '/patients/',
+-        search: '/search/'
++        dashboard: '/dashboard',
++        documents: '/documents', 
++        patients: '/patients',
++        search: '/search'
+     }  
+ };
  
- from app.database import get_db
- from app.models import Upload, Document, Patient, User
- from app.auth import get_user_from_header
- 
- from app.schemas import (
-     # Enums
-     JobState, ValidationStatus, TabName,
-     # Upload list/detail schemas
-     UploadCardResponse, UploadListResponse,
-     UploadDocumentSummary, UploadDetailResponse,
-     UploadOCRResponse,
-     # Workflow actions
-     UploadCompleteRequest, UploadCompleteResponse,
-     UploadRejectResponse,
-     UploadBatchAssignRequest,
-     UploadBatchTypeRequest,
--    #Patient document list item
-+    # Patient document list item
-     PatientDocumentListItem,
-+    DocumentTextResponse,
- )
- 
- # File utils (adjust these imports to your actual module paths/names)
- from app.utils.file import validate_file_type, save_uploaded_file
- 
- # OCR processing service (Step 2)
- from app.services.upload_processing import UploadProcessingService
- 
- router = APIRouter(tags=["documents"])
- 
- processing_svc = UploadProcessingService(max_attempts=3, stale_timeout_seconds=600)
- 
- # ----------------------------
- # Helpers
- # ----------------------------
- 
- def _preview_url(upload_id: str) -> str:
-     """
-     UI can use this as a stable link for preview/download.
-     Adjust if your frontend expects another URL.
-     """
-     return f"/api/documents/uploads/{upload_id}/download"
- 
- def _make_upload_card(db: Session, upload: Upload) -> UploadCardResponse:
-     """
-@@ -137,88 +138,64 @@ def _make_upload_detail(db: Session, upload: Upload) -> UploadDetailResponse:
-         expires_at=upload.expires_at,
-         preview_url=_preview_url(upload.id),
-         document=doc_summary,
-     )
- 
- def _require_same_clinic(user: User, upload: Upload) -> None:
-     """
-     Multi-tenant guard: user can only act within their clinic.
-     """
-     if upload.clinic_id != user.clinic_id:
-         raise HTTPException(status_code=403, detail="Forbidden (wrong clinic)")
- 
- def _remove_upload_file(upload: Upload) -> None:
-     if not upload.file_path:
-         return
-     try:
-         file_path = Path(upload.file_path)
-         if file_path.exists():
-             file_path.unlink()
-         if file_path.parent.exists() and not any(file_path.parent.iterdir()):
-             file_path.parent.rmdir()
-     except Exception:
-         # In MVP: do not block delete if file removal fails.
-         pass
- 
-+def _document_has_original_file(upload: Upload | None) -> bool:
-+    if not upload or not upload.file_path:
-+        return False
-+    return os.path.exists(upload.file_path)
-+
-+def _make_document_snippet(text: str | None, length: int = 300) -> str:
-+    if not text:
-+        return ""
-+    return text.strip()[:length]
-+
- # ----------------------------
- # Upload endpoints
- # ----------------------------
- 
--@router.get("/", response_model=List[PatientDocumentListItem])
--async def list_patient_documents(
--    request: Request,
--    patient_id: str = Query(...),
--    db: Session = Depends(get_db),
--) -> List[PatientDocumentListItem]:
--    """List documents for a patient in the current clinic."""
--    user = get_user_from_header(db, request)
--
--    patient = db.query(Patient).filter(
--        Patient.id == patient_id,
--        Patient.clinic_id == user.clinic_id,
--    ).first()
--
--    if not patient:
--        raise HTTPException(status_code=404, detail="Patient not found")
--
--    documents = db.query(Document).filter(
--        Document.patient_id == patient_id,
--        Document.clinic_id == user.clinic_id,
--    ).order_by(Document.created_at.desc()).all()
--
--    return [
--        PatientDocumentListItem(
--            id=doc.id,
--            filename=doc.filename,
--            document_type=doc.document_type,
--            created_at=doc.created_at,
--            upload_id=doc.upload_id,
--            preview_url=_preview_url(doc.upload_id) if doc.upload_id else None,
--        )
--        for doc in documents
--    ]
--
- @router.post("/uploads", response_model=List[UploadCardResponse])
- async def upload_files(
-     request: Request,
-     files: List[UploadFile] = File(...),
-     db: Session = Depends(get_db),
- ):
-     """
-     Upload one or multiple files (no patient required).
-     Behavior:
-     - Saves file to disk
-     - Creates Upload rows in DB
-     - Sets job_state=queued immediately (server-side auto OCR)
-     - Returns UploadCardResponse cards for UI rendering
-     """
-     user = get_user_from_header(db, request)
- 
-     if not files:
-         raise HTTPException(status_code=400, detail="No files provided")
- 
-     created: List[Upload] = []
- 
-     for f in files:
-         # Validate file type (pdf/jpg/png/etc.)
-         if not validate_file_type(f.content_type, f.filename):
-             raise HTTPException(status_code=400, detail=f"Unsupported file type: {f.filename}")
-@@ -567,63 +544,94 @@ def list_patient_documents(
-     db: Session = Depends(get_db),
- ):
-     """List documents for a given patient.
- 
-     Used by the patient "Documents & History" view.
-     Only returns documents for the caller's clinic.
-     """
-     user = get_user_from_header(db, request)
- 
-     # Ensure patient exists in this clinic (prevents cross-clinic leakage)
-     patient = (
-         db.query(Patient)
-         .filter(Patient.id == patient_id, Patient.clinic_id == user.clinic_id)
-         .first()
-     )
-     if not patient:
-         raise HTTPException(status_code=404, detail="Patient not found")
- 
-     docs = (
-         db.query(Document)
-         .filter(Document.patient_id == patient_id, Document.clinic_id == user.clinic_id)
-         .order_by(Document.created_at.desc())
-         .all()
-     )
- 
--    return [
--        PatientDocumentListItem(
--            id=d.id,
--            patient_id=d.patient_id,
--            clinic_id=d.clinic_id,
--            filename=d.filename,
--            document_type=getattr(d, "document_type", None),
--            created_at=d.created_at,
--            upload_id=getattr(d, "upload_id", None),
--            preview_url=_preview_url(d.upload_id) if getattr(d, "upload_id", None) else None,
-+    items: List[PatientDocumentListItem] = []
-+    for doc in docs:
-+        ocr_text = getattr(doc, "ocr_text", None) or ""
-+        has_full_text = bool(ocr_text.strip())
-+        has_original_file = _document_has_original_file(doc.upload)
-+        items.append(
-+            PatientDocumentListItem(
-+                id=doc.id,
-+                filename=doc.filename or doc.original_filename,
-+                document_type=getattr(doc, "document_type", None),
-+                created_at=doc.created_at,
-+                text_snippet=_make_document_snippet(ocr_text),
-+                has_full_text=has_full_text,
-+                has_original_file=has_original_file,
-+                download_url=_preview_url(doc.upload_id)
-+                if getattr(doc, "upload_id", None) and has_original_file
-+                else None,
-+                full_text_url=f"/api/documents/{doc.id}/text",
-+            )
-         )
--        for d in docs
--    ]
-+
-+    return items
-+
-+@router.get("/{document_id}/text", response_model=DocumentTextResponse)
-+def get_document_text(
-+    document_id: str,
-+    request: Request,
-+    db: Session = Depends(get_db),
-+):
-+    """Return full OCR text for a document."""
-+    user = get_user_from_header(db, request)
-+
-+    doc = (
-+        db.query(Document)
-+        .filter(Document.id == document_id, Document.clinic_id == user.clinic_id)
-+        .first()
-+    )
-+    if not doc:
-+        raise HTTPException(status_code=404, detail="Document not found")
-+
-+    return DocumentTextResponse(
-+        id=doc.id,
-+        text=(doc.ocr_text or ""),
-+    )
- 
- # ----------------------------
- # Optional debug/admin endpoints (keep for now, can remove later)
- # ----------------------------
- 
- @router.post("/processing/run-next")
- def run_next_ocr_job_for_clinic(
-     request: Request,
-     db: Session = Depends(get_db),
- ):
-     """
-     Debug/admin endpoint:
-     - Claims next queued job for the current clinic and processes it.
-     In production, the background worker should handle this automatically.
-     """
-     user = get_user_from_header(db, request)
- 
-     # Optional stale recovery for this clinic
-     processing_svc.recover_stale_jobs(db, clinic_id=user.clinic_id)
- 
-     upl = processing_svc.claim_next(db, clinic_id=user.clinic_id)
-     if not upl:
-         return {"processed": False, "message": "No queued uploads"}
- 
-     result = processing_svc.process_upload(db, upload_id=upl.id)
-diff --git a/app/schemas.py b/app/schemas.py
-index 80d509fd3c3449820f5bfa44b86e94371f56b25a..2f2c06917d89ef714615754d9203879478f02106 100644
---- a/app/schemas.py
-+++ b/app/schemas.py
-@@ -275,112 +275,108 @@ class UploadUpdate(BaseModel):
-     claimed_by: Optional[str] = None
-     error_message: Optional[str] = None
- 
-     document_type: Optional[str] = None
-     patient_id: Optional[str] = None
- 
- 
- # ----------------------------
- # Document (Internal Artifact) Schemas (reachable via Upload)
- # ----------------------------
- 
- class UploadDocumentSummary(BaseModel):
-     """
-     Minimal document info for list/detail views.
-     (Upload-centric: this is never created/updated directly by clients.)
-     """
-     id: str
-     upload_id: str
- 
-     validation_status: ValidationStatus = ValidationStatus.PENDING
-     validated_by: Optional[str] = None
-     validated_at: Optional[datetime] = None
- 
-     model_config = ConfigDict(from_attributes=True)
- 
--class PatientDocumentListItem(BaseModel):
--    """Document list item for patient document history."""
--    id: str
--    filename: str
--    document_type: Optional[str] = None
--    created_at: datetime
--    upload_id: Optional[str] = None
--    preview_url: Optional[str] = None
--    clinic_id: Optional[str] = None
--    
--    model_config = ConfigDict(from_attributes=True)
--
- class UploadDetailResponse(BaseModel):
-     """
-     Upload details + document summary.
-     Recommended for: GET /uploads/{id}
-     """
-     id: str
-     clinic_id: str
-     filename: str
-     file_path: str
-     file_size: Optional[int] = None
-     document_type: Optional[str] = None
- 
-     job_state: JobState
-     attempts: int
-     claimed_at: Optional[datetime] = None
-     claimed_by: Optional[str] = None
-     error_message: Optional[str] = None
- 
-     patient_id: Optional[str] = None
-     uploaded_at: datetime
-     expires_at: datetime
- 
-     preview_url: Optional[str] = None
-     document: Optional[UploadDocumentSummary] = None
- 
-     model_config = ConfigDict(from_attributes=True)
- 
- class UploadOCRResponse(BaseModel):
-     """
-     Full OCR output payload.
-     Recommended for: GET /uploads/{id}/ocr
-     """
-     upload_id: str
-     document_id: str
-     ocr_text: str
-     # Optional metadata (keep non-PHI)
-     ocr_metadata: Optional[Dict[str, Any]] = None
- 
-     model_config = ConfigDict(from_attributes=True)
- 
- class PatientDocumentListItem(BaseModel):
--    """Minimal document info for patient profile/history views."""
-+    """Document list item for patient profile/history views."""
-     id: str
--    patient_id: Optional[str] = None
--    clinic_id: str
-     filename: str
-     document_type: Optional[str] = None
-     created_at: datetime
--    upload_id: Optional[str] = None
--    preview_url: Optional[str] = None
-+    text_snippet: str
-+    has_full_text: bool
-+    has_original_file: bool
-+    download_url: Optional[str] = None
-+    full_text_url: str
-+
-+    model_config = ConfigDict(from_attributes=True)
-+
-+class DocumentTextResponse(BaseModel):
-+    """Full extracted OCR text for a document."""
-+    id: str
-+    text: str
- 
-     model_config = ConfigDict(from_attributes=True)
+ // Helper function to build API URLs
+ function apiUrl(endpoint, path = '',params = {}) {
+     let url = `${API_CONFIG.BASE_URL}${endpoint}`;
      
- # ----------------------------
- # Public Workflow Actions (Doctor)
- # ----------------------------
+     // 1. Substitute Path Parameters (like :clinicId)
+     // We explicitly check for :clinicId
+     if (params.clinicId) {
+         url = url.replace(':clinicId', params.clinicId);
+     }
  
- class UploadCompleteRequest(BaseModel):
-     """
-     One-button doctor action:
-     - assigns patient
-     - approves validation
-     - optionally edits OCR text
-     - optionally sets document_type
-     Recommended for: POST /uploads/{id}/complete
-     """
-     patient_id: str = Field(..., min_length=1)
-     document_type: Optional[str] = None
-     edited_ocr_text: Optional[str] = None  # if doctor edited the OCR result
+-    // 2. Append the rest of the path
+-    url = `${url}${path}`; 
++    // 2. Append the rest of the path with stable slash handling
++    const normalizedPath = String(path || '');
++    if (!normalizedPath) {
++        return url;
++    }
++
++    // query-string only path: keep route untouched
++    if (normalizedPath.startsWith('?')) {
++        return `${url}${normalizedPath}`;
++    }
++
++    // enforce exactly one slash between endpoint and appended path segment
++    const baseNoSlash = url.replace(/\/+$/, '');
++    const pathNoSlash = normalizedPath.replace(/^\/+/, '');
++    url = `${baseNoSlash}/${pathNoSlash}`;
  
- class UploadCompleteResponse(BaseModel):
-     """
-     Return updated card-friendly payload after completion.
-     """
-     upload: UploadDetailResponse
+     // 3. Handle Query Parameters (if you ever need them)
+     // (Omitted for brevity, but a complete helper would handle them here)
+     
+     return url;
+ }
+ 
+ function apiFetch(input, init = {}) {
+   return fetch(input, withUserHeader(init));
+ }
+ 
+ // Export for ES modules
+ export { API_CONFIG, apiUrl, apiFetch };
+ 
+ // Keep backward compatibility for legacy scripts
+ if (typeof window !== 'undefined') {
+   window.API_CONFIG = API_CONFIG;
+   window.apiUrl = apiUrl;
+   window.apiFetch = apiFetch;
+ }
+ 
+ // =========================================================================
+ // Request helpers: ensure X-User header is present for backend context
+ // =========================================================================
+ function getStoredUserEmail() {
 diff --git a/static/js/patients.js b/static/js/patients.js
-index 6bb505226111cc73c35e40c339ccf7769941a110..57204a3b48d62cfb00344133c0dc761e44acda4d 100644
+index 57204a3b48d62cfb00344133c0dc761e44acda4d..f6204fb87a74f4c2c094849b34ba85c92c812219 100644
 --- a/static/js/patients.js
 +++ b/static/js/patients.js
-@@ -541,168 +541,401 @@ export class PatientManager {
+@@ -1,68 +1,84 @@
+ //Patient CRUD + rendering
+ // patients.js
+ // -----------------------------------------------------------------------------
+ // Handles patient-related functionality for the SPA
+ //
+ // Responsibilities:
+ //  - Load, search, render patients
+ //  - Add new patients via form submission
+ //  - Support programmatic actions like view/edit
+ //  - Integrate with UI for notifications and modals
+ //
+ // Assumes HTML structure contains:
+ //   - <div id="patients-grid"></div> for patient cards
+ //   - <form id="add-patient-form"></form> for adding / editing patients
+ //   - <input id="patient-search" /> for live search/filtering
+ // -----------------------------------------------------------------------------
+ 
+ import { showToast, showModal, hideModal } from './ui.js';
+ 
+ export class PatientManager {
+     constructor(app) {
+         this.app = app;
+         this.patients = [];
++        this.viewPatientTabsInitialized = false;
++        this.latestDocumentsRequestToken = 0;
+ 
+         //for showing patients with pagination:
+         this.currentPage = 1;
+         this.perPage = 8;
+         this.totalPages = 1;
+         this.totalPatients = 0;
+         this.hasNext = false;
+         this.hasPrev = false;
+ 
+         // DOM references
+         this.gridContainer = document.getElementById('patients-grid');
+         this.addForm = document.getElementById('add-patient-form');
+         this.searchInput = document.getElementById('patient-search');
+         this.sortSelect = document.getElementById('patient-sort');
+ 
+         //DOM pagination references
+         this.paginationContainer = document.getElementById('patients-pagination');
+         this.patientCountDisplay = document.getElementById('patient-count-display');
+     }
+ 
++    getViewPatientModalElements() {
++        const modal = document.getElementById('view-patient-modal');
++        if (!modal) {
++            return { modal: null, tabButtons: [], tabContents: [], documentsContainer: null };
++        }
++
++        return {
++            modal,
++            tabButtons: Array.from(modal.querySelectorAll('.modal-tabs .tab-button')),
++            tabContents: Array.from(modal.querySelectorAll('.modal-body .tab-content')),
++            documentsContainer: modal.querySelector('#documents-list')
++        };
++    }
++
+     // -------------------------------------------------------------------------
+     // Initialization
+     // -------------------------------------------------------------------------
+     init() {
+         if (this.addForm) {
+             this.addForm.onsubmit = (e) => {
+             e.preventDefault();
+             this.addPatient();
+             };
+         //    this.addForm.addEventListener('submit', (e) => {
+         //        e.preventDefault();
+         //        this.addPatient();
+         //    });
+         }
+ 
+         //console.log('PatientManager init called');
+         //console.log('Search input found:', this.searchInput);
+ 
+         if (this.searchInput) {
+             //console.log('Adding search listener');
+             // Debounced search - Debouncing = Instead of running the search function immediately every time a user types a character  (which can be resource-intensive, especially for network requests), debouncing ensures the function is only executed after a specific period of inactivity has passed since the last event (e.g., the last keypress).
+             let searchTimeout;
+         
+             this.searchInput.addEventListener('input', (e) => {
+                 const value = e.target.value;  // capture immediately
+@@ -513,114 +529,136 @@ export class PatientManager {
+                             (isGranted ? 'Granted' : 'Not Granted');
+             
+             const dateText = consent.granted_at ? 
+                 new Date(consent.granted_at).toLocaleDateString('ro-RO') : 'N/A';
+             
+             return `
+                 <div class="consent-status-item ${status}">
+                     <i class="fas ${icon}"></i>
+                     <div class="consent-info">
+                         <div class="consent-name">
+                             ${key.replace('_', ' ').toUpperCase()}: ${statusText}
+                         </div>
+                         <div class="consent-date">
+                             ${isGranted ? `Granted: ${dateText}` : ''}
+                             ${consent.expires_at ? ` • Expires: ${new Date(consent.expires_at).toLocaleDateString('ro-RO')}` : ''}
+                         </div>
+                     </div>
+                 </div>
+             `;
+         }).join('');
+         
+         container.innerHTML = consentHTML;
+     }
+ 
+     initViewPatientTabs() {
+-        const tabButtons = document.querySelectorAll('.modal-tabs .tab-button');
+-        const tabContents = document.querySelectorAll('.modal-body .tab-content');
+-        
++        if (this.viewPatientTabsInitialized) {
++            return;
++        }
++
++        const { modal, tabButtons, tabContents } = this.getViewPatientModalElements();
++        if (!modal || tabButtons.length === 0 || tabContents.length === 0) {
++            return;
++        }
++
          tabButtons.forEach(button => {
              button.addEventListener('click', () => {
                  const targetTab = button.dataset.tab;
-                 
-                 // Remove active from all
+-                
+-                // Remove active from all
++                if (!targetTab) {
++                    return;
++                }
++
                  tabButtons.forEach(btn => btn.classList.remove('active'));
                  tabContents.forEach(content => content.classList.remove('active'));
-                 
-                 // Add active to clicked
+-                
+-                // Add active to clicked
++
                  button.classList.add('active');
-                 document.getElementById(`${targetTab}-tab`).classList.add('active');
-                 
-                 // Load documents when switching to documents tab
+-                document.getElementById(`${targetTab}-tab`).classList.add('active');
+-                
+-                // Load documents when switching to documents tab
++                const targetContent = modal.querySelector(`#${targetTab}-tab`);
++                if (targetContent) {
++                    targetContent.classList.add('active');
++                }
++
                  if (targetTab === 'documents' && this.currentViewPatientId) {
                      this.loadPatientDocuments(this.currentViewPatientId);
                  }
              });
          });
++
++        this.viewPatientTabsInitialized = true;
      }
  
      async loadPatientDocuments(patientId) {
-         const container = document.getElementById('documents-list');
+-        const container = document.getElementById('documents-list');
++        const { documentsContainer: container } = this.getViewPatientModalElements();
++        if (!container) {
++            return;
++        }
++
++        const normalizedPatientId = encodeURIComponent(String(patientId || ''));
++        const requestToken = ++this.latestDocumentsRequestToken;
++
          container.innerHTML = '<div class="loading-placeholder">Loading documents...</div>';
          
          try {
--            // Fetch consultations and patient-linked documents
--            const [consultationsResponse, documentsResponse] = await Promise.all([
--                fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)),
--                fetch(apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)),
--            ]);
-+            const consultationsPromise = fetch(
-+                apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)
-+            ).then(response => {
-+                if (!response.ok) {
-+                    throw new Error('Failed to load consultations');
-+                }
-+                return response.json();
-+            });
+-            const consultationsPromise = fetch(
+-                apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)
++            const consultationsPromise = apiFetch(
++                apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${normalizedPatientId}`)
+             ).then(response => {
+                 if (!response.ok) {
+                     throw new Error('Failed to load consultations');
+                 }
+                 return response.json();
+             });
  
--            if (!consultationsResponse.ok) throw new Error('Failed to load consultations');
--            if (!documentsResponse.ok) throw new Error('Failed to load documents');
-+            const documentsPromise = fetch(
-+                apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)
-+            ).then(response => {
-+                if (!response.ok) {
-+                    throw new Error('Failed to load documents');
-+                }
-+                return response.json();
-+            });
+-            const documentsPromise = fetch(
+-                apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)
++            const documentsPromise = apiFetch(
++                apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${normalizedPatientId}`)
+             ).then(response => {
+                 if (!response.ok) {
+                     throw new Error('Failed to load documents');
+                 }
+                 return response.json();
+             });
  
--            const [consultations, documents] = await Promise.all([
--                consultationsResponse.json(),
--                documentsResponse.json(),
-+            const [consultationsResult, documentsResult] = await Promise.allSettled([
-+                consultationsPromise,
-+                documentsPromise,
+             const [consultationsResult, documentsResult] = await Promise.allSettled([
+                 consultationsPromise,
+                 documentsPromise,
              ]);
  
--            if (consultations.length === 0 && documents.length === 0) {
-+            const consultations = consultationsResult.status === 'fulfilled'
-+                ? consultationsResult.value
-+                : [];
-+            const documents = documentsResult.status === 'fulfilled'
-+                ? documentsResult.value
-+                : [];
-+            const consultationsError = consultationsResult.status === 'rejected'
-+                ? 'Unable to load consultations right now.'
-+                : '';
-+            const documentsError = documentsResult.status === 'rejected'
-+                ? 'Unable to load documents right now.'
-+                : '';
+             const consultations = consultationsResult.status === 'fulfilled'
+                 ? consultationsResult.value
+                 : [];
+             const documents = documentsResult.status === 'fulfilled'
+                 ? documentsResult.value
+                 : [];
+             const consultationsError = consultationsResult.status === 'rejected'
+                 ? 'Unable to load consultations right now.'
+                 : '';
+             const documentsError = documentsResult.status === 'rejected'
+                 ? 'Unable to load documents right now.'
+                 : '';
+ 
++            if (requestToken !== this.latestDocumentsRequestToken || this.currentViewPatientId !== patientId) {
++                return;
++            }
 +
-+            if (
-+                consultations.length === 0 &&
-+                documents.length === 0 &&
-+                !consultationsError &&
-+                !documentsError
-+            ) {
+             if (
+                 consultations.length === 0 &&
+                 documents.length === 0 &&
+                 !consultationsError &&
+                 !documentsError
+             ) {
                  container.innerHTML = `
                      <div class="empty-state">
                          <div class="empty-icon">📄</div>
--                        <h4>No files or consultations yet</h4>
--                        <p>Documents and consultations will appear here once created</p>
-+                        <h4>No consultations or documents yet</h4>
-+                        <p>Consultations and documents will appear here once created</p>
+                         <h4>No consultations or documents yet</h4>
+                         <p>Consultations and documents will appear here once created</p>
                      </div>
                  `;
                  return;
              }
  
--            const documentsSection = documents.length
-+            const documentsSection = documentsError
-+                ? `
-+                    <div class="empty-state">
-+                        <div class="empty-icon">⚠️</div>
-+                        <h4>${documentsError}</h4>
-+                        <p>Please try again later.</p>
-+                    </div>
-+                `
-+                : documents.length
-                 ? this.renderGroupedDocuments(documents)
-                 : `
+             const documentsSection = documentsError
+                 ? `
                      <div class="empty-state">
-                         <div class="empty-icon">📁</div>
--                        <h4>No files yet</h4>
-+                        <h4>No documents yet</h4>
-                         <p>Uploaded documents will appear here once available</p>
+                         <div class="empty-icon">⚠️</div>
+                         <h4>${documentsError}</h4>
+                         <p>Please try again later.</p>
                      </div>
-                 `;
- 
--            const consultationsSection = consultations.length
--                ? consultations.map(consultation => {
-+            const sortedConsultations = [...consultations].sort((a, b) => {
-+                const dateA = new Date(a.consultation_date || 0).getTime();
-+                const dateB = new Date(b.consultation_date || 0).getTime();
-+                return dateB - dateA;
-+            });
-+
-+            const consultationsSection = consultationsError
-+                ? `
-+                    <div class="empty-state">
-+                        <div class="empty-icon">⚠️</div>
-+                        <h4>${consultationsError}</h4>
-+                        <p>Please try again later.</p>
-+                    </div>
-+                `
-+                : sortedConsultations.length
-+                ? sortedConsultations.map(consultation => {
-                     const specialtyLabel = consultation.specialty || consultation.consultation_type || 'Consultation';
-+                    const safeSpecialty = this.escapeHtml(specialtyLabel);
-+                    const statusLabel = consultation.status || 'unknown';
-+                    const statusClass = String(statusLabel).toLowerCase().replace(/[^a-z0-9_-]/g, '');
-                     return `
-                         <div class="consultation-history-item">
-                             <div class="consultation-date">
-                                 ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
-                                     year: 'numeric',
-                                     month: 'long',
-                                     day: 'numeric'
-                                 })}
-                             </div>
-                             <div class="consultation-details">
--                                <span class="consultation-type-badge">${specialtyLabel}</span>
--                                <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
-+                                <span class="consultation-type-badge">${safeSpecialty}</span>
-+                                <span class="consultation-status status-${statusClass}">${this.escapeHtml(statusLabel)}</span>
-                                 ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
+                 `
+                 : documents.length
+@@ -669,50 +707,55 @@ export class PatientManager {
                              </div>
                          </div>
                      `;
@@ -558,33 +347,33 @@ index 6bb505226111cc73c35e40c339ccf7769941a110..57204a3b48d62cfb00344133c0dc761e
                  `;
  
              container.innerHTML = `
--                <div class="documents-section">
--                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Files</h4>
--                    ${documentsSection}
--                </div>
                  <div class="documents-section">
                      <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
                      ${consultationsSection}
                  </div>
-+                <div class="documents-section">
-+                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
-+                    ${documentsSection}
-+                </div>
+                 <div class="documents-section">
+                     <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
+                     ${documentsSection}
+                 </div>
              `;
-+            this.bindDocumentHistoryActions();
+             this.bindDocumentHistoryActions();
          } catch (err) {
              console.error('Failed to load documents or consultations:', err);
--            container.innerHTML = '<p class="text-error">Failed to load documents and consultation history</p>';
-+            container.innerHTML = `
-+                <div class="documents-section">
-+                    <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
-+                    <p class="text-error">Unable to load consultations right now.</p>
-+                </div>
-+                <div class="documents-section">
-+                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
-+                    <p class="text-error">Unable to load documents right now.</p>
-+                </div>
-+            `;
++
++            if (requestToken !== this.latestDocumentsRequestToken || this.currentViewPatientId !== patientId) {
++                return;
++            }
++
+             container.innerHTML = `
+                 <div class="documents-section">
+                     <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
+                     <p class="text-error">Unable to load consultations right now.</p>
+                 </div>
+                 <div class="documents-section">
+                     <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
+                     <p class="text-error">Unable to load documents right now.</p>
+                 </div>
+             `;
          }
      }
  
@@ -592,255 +381,14 @@ index 6bb505226111cc73c35e40c339ccf7769941a110..57204a3b48d62cfb00344133c0dc761e
      renderGroupedDocuments(documents) {
          // Group documents by type
          const grouped = documents.reduce((acc, doc) => {
--            const type = doc.document_type || 'other';
-+            const type = (doc.document_type || 'uncategorized').trim() || 'uncategorized';
+             const type = (doc.document_type || 'uncategorized').trim() || 'uncategorized';
              if (!acc[type]) acc[type] = [];
              acc[type].push(doc);
              return acc;
          }, {});
          
          // Render each group
--        const html = Object.entries(grouped).sort(([typeA], [typeB]) => typeA.localeCompare(typeB)).map(([type, docs]) => `
--            <div class="document-group">
--                <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
--                    <i class="fas fa-chevron-down"></i>
--                    <span class="document-group-title">${type.replace('_', ' ').toUpperCase()}</span>
--                    <span class="document-group-count">${docs.length}</span>
--                </div>
--                <div class="document-items">
--                    ${docs.map(doc => `
-+        const html = Object.entries(grouped)
-+            .sort(([typeA], [typeB]) => typeA.localeCompare(typeB))
-+            .map(([type, docs]) => {
-+                const sortedDocs = [...docs].sort((a, b) => {
-+                    const dateA = new Date(a.created_at || 0).getTime();
-+                    const dateB = new Date(b.created_at || 0).getTime();
-+                    return dateB - dateA;
-+                });
-+
-+                const titleLabel = this.escapeHtml(type.replace(/_/g, ' ').toUpperCase());
-+                const groupItems = sortedDocs.map(doc => {
-+                    const rawFilename = doc.filename || doc.title || 'Untitled';
-+                    const filename = this.escapeHtml(rawFilename);
-+                    const encodedFilename = encodeURIComponent(rawFilename);
-+                    const snippet = doc.text_snippet || '';
-+                    const truncatedSnippet = snippet
-+                        ? this.escapeHtml(this.truncateText(snippet, 160))
-+                        : '';
-+                    const snippetMarkup = truncatedSnippet
-+                        ? `<span class="document-snippet">${truncatedSnippet}</span>`
-+                        : '<span class="document-snippet text-muted">No extracted text</span>';
-+                    const downloadAction = doc.has_original_file && doc.download_url
-+                        ? `
-+                            <a class="btn-small" href="${doc.download_url}" target="_blank" rel="noopener">
-+                                <i class="fas fa-download"></i>
-+                            </a>
-+                        `
-+                        : '';
-+
-+                    return `
-                         <div class="document-item-row">
--                            <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
--                            <span class="document-title">${doc.filename || doc.title|| 'Untitled'}</span>
-+                            <div class="document-item-details">
-+                                <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
-+                                <span class="document-title">${filename}</span>
-+                                ${snippetMarkup}
-+                            </div>
-                             <div class="document-actions">
--                                 ${doc.preview_url ? `
--                                    <a class="btn-small" href="${doc.preview_url}" target="_blank" rel="noopener">
--                                        <i class="fas fa-download"></i>
--                                    </a>
--                                ` : '<span class="text-muted">No file</span>'}
-+                                <button
-+                                    class="btn-small document-view-btn"
-+                                    data-action="view-document-text"
-+                                    data-document-id="${doc.id}"
-+                                    data-full-text-url="${doc.full_text_url}"
-+                                    data-document-title="${encodedFilename}"
-+                                >
-+                                    <i class="fas fa-eye"></i> View
-+                                </button>
-+                                ${downloadAction}
-                             </div>
-                         </div>
--                    `).join('')}
--                </div>
--            </div>
--        `).join('');
-+                    `;
-+                }).join('');
-+
-+                return `
-+                    <div class="document-group">
-+                        <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
-+                            <i class="fas fa-chevron-down"></i>
-+                            <span class="document-group-title">${titleLabel}</span>
-+                            <span class="document-group-count">${sortedDocs.length}</span>
-+                        </div>
-+                        <div class="document-items">
-+                            ${groupItems}
-+                        </div>
-+                    </div>
-+                `;
-+            })
-+            .join('');
-         
-         return html;
-     }
+         const html = Object.entries(grouped)
  
-+    bindDocumentHistoryActions() {
-+        const container = document.getElementById('documents-list');
-+        if (!container || container.dataset.actionsBound) {
-+            return;
-+        }
-+
-+        container.addEventListener('click', (event) => {
-+            const target = event.target.closest('[data-action="view-document-text"]');
-+            if (!target) {
-+                return;
-+            }
-+            const documentId = target.dataset.documentId;
-+            const fullTextUrl = target.dataset.fullTextUrl;
-+            const documentTitle = target.dataset.documentTitle;
-+            this.openDocumentTextModal(documentId, fullTextUrl, documentTitle);
-+        });
-+
-+        container.dataset.actionsBound = 'true';
-+    }
-+
-+    ensureDocumentTextModal() {
-+        let modal = document.getElementById('document-text-modal');
-+        if (modal) {
-+            return modal;
-+        }
-+
-+        modal = document.createElement('div');
-+        modal.id = 'document-text-modal';
-+        modal.className = 'modal';
-+        modal.innerHTML = `
-+            <div class="modal-content large">
-+                <div class="modal-header">
-+                    <h2 id="document-text-modal-title">Extracted Text</h2>
-+                    <button class="modal-close" data-action="close-document-text-modal">
-+                        <i class="fas fa-times"></i>
-+                    </button>
-+                </div>
-+                <div class="modal-body">
-+                    <div id="document-text-modal-content">
-+                        <div class="loading-placeholder">Loading text...</div>
-+                    </div>
-+                </div>
-+                <div class="modal-footer">
-+                    <button class="btn-secondary" data-action="close-document-text-modal">Close</button>
-+                </div>
-+            </div>
-+        `;
-+
-+        document.body.appendChild(modal);
-+
-+        modal.addEventListener('click', (event) => {
-+            if (event.target === modal) {
-+                hideModal('document-text-modal');
-+            }
-+        });
-+
-+        modal.querySelectorAll('[data-action="close-document-text-modal"]').forEach(button => {
-+            button.addEventListener('click', () => hideModal('document-text-modal'));
-+        });
-+
-+        return modal;
-+    }
-+
-+    async openDocumentTextModal(documentId, fullTextUrl, documentTitle) {
-+        if (!documentId || !fullTextUrl) {
-+            showToast('Document text is unavailable.', 'warning');
-+            return;
-+        }
-+
-+        const modal = this.ensureDocumentTextModal();
-+        const title = modal.querySelector('#document-text-modal-title');
-+        const content = modal.querySelector('#document-text-modal-content');
-+        let decodedTitle = '';
-+        if (documentTitle) {
-+            try {
-+                decodedTitle = decodeURIComponent(documentTitle);
-+            } catch (error) {
-+                decodedTitle = documentTitle;
-+            }
-+        }
-+
-+        title.textContent = documentTitle
-+            ? `Extracted Text - ${decodedTitle}`
-+            : 'Extracted Text';
-+        content.innerHTML = '<div class="loading-placeholder">Loading text...</div>';
-+        showModal('document-text-modal');
-+
-+        try {
-+            const response = await fetch(fullTextUrl);
-+            if (!response.ok) {
-+                throw new Error('Failed to load document text');
-+            }
-+            const data = await response.json();
-+            const text = data?.text || '';
-+            content.innerHTML = text
-+                ? `
-+                    <pre style="white-space: pre-wrap; max-height: 400px; overflow-y: auto; margin: 0;">
-+${this.escapeHtml(text)}
-+                    </pre>
-+                `
-+                : '<p class="text-muted">No extracted text available.</p>';
-+        } catch (error) {
-+            console.error('Failed to load document text:', error);
-+            content.innerHTML = '<p class="text-error">Unable to load extracted text.</p>';
-+        }
-+    }
-+
-+    escapeHtml(value) {
-+        if (value === null || value === undefined) {
-+            return '';
-+        }
-+        return String(value)
-+            .replace(/&/g, '&amp;')
-+            .replace(/</g, '&lt;')
-+            .replace(/>/g, '&gt;')
-+            .replace(/"/g, '&quot;')
-+            .replace(/'/g, '&#39;');
-+    }
-+
-+    truncateText(text, maxLength) {
-+        if (!text) {
-+            return '';
-+        }
-+        if (text.length <= maxLength) {
-+            return text;
-+        }
-+        return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
-+    }
-+
-     // Actions from modal footer
-     editPatientFromView() {
-         if (this.currentViewPatientId) {
-             hideModal('view-patient-modal');
-             this.editPatient(this.currentViewPatientId);
-         }
-     }
- 
-     manageGDPRFromView() {
-         if (this.currentViewPatientId) {
-             hideModal('view-patient-modal');
-             this.manageGDPR(this.currentViewPatientId);
-         }
-     }
- 
-     // -------------------------------------------------------------------------
-     // Manage GDPR
-     // -------------------------------------------------------------------------
-     async manageGDPR(patientId) {
-         try {
-             // Fetch patient details
-             const url = apiUrl(API_CONFIG.ENDPOINTS.patients, `${patientId}`);
-             const response = await fetch(url);
-             if (!response.ok) throw new Error('Failed to load patient');
-             
+EOF
+)

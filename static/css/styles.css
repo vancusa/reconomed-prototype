@@ -777,11 +777,6 @@ body {
     color: var(--text-primary);
 }
 
-.patient-details {
-    color: var(--text-secondary);
-    font-size: 0.875rem;
-}
-
 .patient-actions {
     display: flex;
     gap: 0.5rem;
