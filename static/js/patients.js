@@ -559,6 +559,8 @@ export class PatientManager {
     }
 
     async loadPatientDocuments(patientId) {
+        //print a log to confirm the function is called and patientId is correct
+        //console.log('Loading documents for patient ID:', patientId);
         const container = document.getElementById('documents-list');
         container.innerHTML = '<div class="loading-placeholder">Loading documents...</div>';
         

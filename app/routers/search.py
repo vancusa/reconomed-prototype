@@ -10,7 +10,7 @@ router = APIRouter(
     tags=["search"],
 )
 
-@router.get("/")
+@router.get("")
 def search(
     q: str = None,
     patient_name: str = None,

@@ -27,23 +27,25 @@ const API_CONFIG = {
     }  
 };
 
-// Helper function to build API URLs
-function apiUrl(endpoint, path = '',params = {}) {
+/**
+ * Builds API URLs with path parameter substitution and trailing slash handling.
+ * Strips trailing slashes before query strings to avoid 307 redirects in Codespaces.
+ */
+function apiUrl(endpoint, path = '', params = {}) {
     let url = `${API_CONFIG.BASE_URL}${endpoint}`;
     
-    // 1. Substitute Path Parameters (like :clinicId)
-    // We explicitly check for :clinicId
+    // 1. Substitute path parameters (like :clinicId)
     if (params.clinicId) {
         url = url.replace(':clinicId', params.clinicId);
     }
-
-    // 2. Append the rest of the path
-    url = `${url}${path}`; 
-
-    // 3. Handle Query Parameters (if you ever need them)
-    // (Omitted for brevity, but a complete helper would handle them here)
     
-    return url;
+    // 2. Strip trailing slash if path starts with query string (prevents 307 redirects)
+    if (path.startsWith('?')) {
+        url = url.replace(/\/$/, '');
+    }
+    
+    // 3. Append the rest of the path
+    return `${url}${path}`;
 }
 
 function apiFetch(input, init = {}) {

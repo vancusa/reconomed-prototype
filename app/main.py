@@ -65,7 +65,8 @@ from app.services.ocr_worker import background_ocr_worker
 app = FastAPI(
     title="ReconoMed API",
     description="Healthcare Document Processing Platform - Premium MVP",
-    version="1.0.0"
+    version="1.0.1",
+    redirect_slashes=False
 )
 
 # Create directories

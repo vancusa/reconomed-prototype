@@ -548,6 +548,8 @@ def list_patient_documents(
     Used by the patient "Documents & History" view.
     Only returns documents for the caller's clinic.
     """
+    # print a log to confirm the function is called and patient_id is received
+    #print(f"Listing documents for patient ID: {patient_id}")
     user = get_user_from_header(db, request)
 
     # Ensure patient exists in this clinic (prevents cross-clinic leakage)
@@ -588,8 +590,8 @@ def list_patient_documents(
         )
 
     #log the document list for debugging
-    print(f"Patient {patient_id} has {len(items)} documents")
-    print(f"Documents: {[item.id for item in items]}")
+    #print(f"Patient {patient_id} has {len(items)} documents")
+    #print(f"Documents: {[item.id for item in items]}")
     return items
 
 @router.get("/{document_id}/text", response_model=DocumentTextResponse)

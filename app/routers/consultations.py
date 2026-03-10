@@ -482,7 +482,7 @@ async def get_patient_history_for_consultation(
 # EXISTING ENDPOINTS (Keep for backward compatibility)
 # ----------------------------
 
-@router.post("/", response_model=ConsultationResponse)
+@router.post("", response_model=ConsultationResponse)
 async def create_consultation(
     consultation_data: ConsultationCreate,
     request:Request,
@@ -518,7 +518,7 @@ async def create_consultation(
     
     return new_consultation
 
-@router.get("/", response_model=List[ConsultationResponse])
+@router.get("", response_model=List[ConsultationResponse])
 async def get_consultations(
     request:Request,
     patient_id: Optional[str] = Query(None),
