@@ -535,27 +535,36 @@ export class PatientManager {
     }
 
     initViewPatientTabs() {
-        const tabButtons = document.querySelectorAll('.modal-tabs .tab-button');
-        const tabContents = document.querySelectorAll('.modal-body .tab-content');
-        
-        tabButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                const targetTab = button.dataset.tab;
-                
-                // Remove active from all
-                tabButtons.forEach(btn => btn.classList.remove('active'));
-                tabContents.forEach(content => content.classList.remove('active'));
-                
-                // Add active to clicked
-                button.classList.add('active');
-                document.getElementById(`${targetTab}-tab`).classList.add('active');
-                
-                // Load documents when switching to documents tab
-                if (targetTab === 'documents' && this.currentViewPatientId) {
-                    this.loadPatientDocuments(this.currentViewPatientId);
-                }
+        //V4 - Always resets to Overview tab when opening the modal , Prevents duplicate event listeners scoped to the view-patient modal
+        const modal = document.getElementById('view-patient-modal');
+        const tabButtons = modal.querySelectorAll('.modal-tabs .tab-button');
+        const tabContents = modal.querySelectorAll('.modal-body .tab-content');
+ 
+        // Reset to overview tab
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        tabContents.forEach(content => content.classList.remove('active'));
+        modal.querySelector('.tab-button[data-tab="overview"]')?.classList.add('active');
+        document.getElementById('overview-tab')?.classList.add('active');
+ 
+        // Only bind listeners once
+        if (!this._viewTabsInitialized) {
+            this._viewTabsInitialized = true;
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const targetTab = button.dataset.tab;
+ 
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    tabContents.forEach(content => content.classList.remove('active'));
+ 
+                    button.classList.add('active');
+                    document.getElementById(`${targetTab}-tab`)?.classList.add('active');
+ 
+                    if (targetTab === 'documents' && this.currentViewPatientId) {
+                        this.loadPatientDocuments(this.currentViewPatientId);
+                    }
+                });
             });
-        });
+        }
     }
 
     async loadPatientDocuments(patientId) {
