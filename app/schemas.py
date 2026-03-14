@@ -96,6 +96,7 @@ class ConsultationAutoSave(BaseModel):
     structured_data: Optional[dict] = None
     audio_file_path: Optional[str] = None
     audio_duration_seconds: Optional[int] = None
+    pinned_files: Optional[List[str]] = None
     
 class ConsultationCreate(BaseModel):
     """Full consultation creation (for backward compatibility)"""
@@ -114,8 +115,10 @@ class ConsultationUpdate(BaseModel):
     structured_data: Optional[dict] = None
     audio_transcript: Optional[str] = None
     audio_duration_seconds: Optional[int] = None
-    status: Optional[str] = None  # draft, in_progress, completed, discharged, cancelled
+    status: Optional[str] = None  # scheduled, in_progress, pending_review, completed, cancelled
     is_signed: Optional[bool] = None
+    pinned_files: Optional[List[str]] = None
+    discharge_text: Optional[str] = None
 
 class ConsultationResponse(BaseModel):
     """Full consultation response"""
@@ -133,9 +136,13 @@ class ConsultationResponse(BaseModel):
     is_signed: bool
     signed_at: Optional[datetime]
     last_autosave_at: Optional[datetime]
+    pinned_files: Optional[List[str]] = None
+    discharge_text: Optional[str] = None
+    amended_at: Optional[datetime] = None
+    amendment_history: Optional[list] = None
     created_at: datetime
     updated_at: Optional[datetime]
-    
+
     class Config:
         from_attributes = True
 
@@ -190,20 +197,37 @@ class ConsultationListItem(BaseModel):
     is_signed: bool
     last_autosave_at: Optional[datetime]
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
-#------------------------------
-# GDPR logs
-#-------------------------------
-class GDPRAuditLogBase(BaseModel):
-    action: str
-    legal_basis: Optional[str] = None
-    data_category: Optional[str] = None
-    details: Optional[dict] = None
-    ip_address: Optional[str] = None
-    user_agent: Optional[str] = None
+class AgendaItem(BaseModel):
+    """Item for the Agenda view"""
+    id: str
+    patient_id: str
+    patient_name: str
+    specialty: str
+    consultation_date: datetime
+    status: str
+    is_signed: bool
+    has_discharge: bool
+
+    class Config:
+        from_attributes = True
+
+class ConsultationComplete(BaseModel):
+    """Schema for completing a consultation with discharge"""
+    discharge_text: str
+
+# ----------------------------
+# Document Schemas
+# ----------------------------
+class DocumentBase(BaseModel):
+    filename: str
+    document_type: Optional[str] = None
+    document_subtype: Optional[str] = None
+    ocr_text: Optional[str] = None
+    extracted_data: Optional[dict] = None
 
 class GDPRAuditLogCreate(GDPRAuditLogBase):
     clinic_id: str

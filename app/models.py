@@ -104,15 +104,25 @@ class Consultation(Base):
     audio_duration_seconds = Column(Integer)  # Track audio length
     
     # Enhanced status workflow
-    status = Column(String(20), default="draft")  # draft, in_progress, completed, discharged, cancelled
-    
+    status = Column(String(20), default="scheduled")  # scheduled, in_progress, pending_review, completed, cancelled
+
     # Auto-save tracking
-    last_autosave_at = Column(DateTime)  
-    
+    last_autosave_at = Column(DateTime)
+
+    # Pinned files for discharge generation
+    pinned_files = Column(JSON, default=list)  # Array of document IDs
+
+    # Discharge
+    discharge_text = Column(Text)  # Generated/edited discharge content
+
     # Signing fields
     is_signed = Column(Boolean, default=False)
     signed_at = Column(DateTime)
-    
+
+    # Amendment tracking
+    amended_at = Column(DateTime)  # Last amendment timestamp
+    amendment_history = Column(JSON, default=list)  # [{user_id, timestamp, changed_fields}]
+
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())  # Track updates

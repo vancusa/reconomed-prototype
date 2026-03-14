@@ -317,11 +317,7 @@ export class PatientManager {
                 this.manageGDPR(id);
                 break;
             case 'consult':
-                if (window.consultationManager) {
-                    window.consultationManager.startFromPatient(id);
-                } else {
-                    console.warn('ConsultationManager not initialized');
-                }
+                window.app.agendaManager.startConsultFromPatient(id);
                 break;
             case 'upload':
                 app.navigation.navigateTo('documents',null,id);

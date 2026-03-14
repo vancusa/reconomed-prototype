@@ -19,9 +19,9 @@
                 <span>ReconoMed</span>
             </div>
             <div class="nav-menu">
-                <a href="#" class="nav-link active" data-section="dashboard">
-                    <i class="fas fa-chart-line"></i>
-                    <span>Dashboard</span>
+                <a href="#" class="nav-link active" data-section="agenda">
+                    <i class="fas fa-calendar-alt"></i>
+                    <span>Agenda</span>
                 </a>
                 <a href="#" class="nav-link" data-section="patients">
                     <i class="fas fa-users"></i>
@@ -30,10 +30,6 @@
                 <a href="#" class="nav-link" data-section="documents">
                     <i class="fas fa-file-medical"></i>
                     <span>Documents</span>
-                </a>
-                <a href="#" class="nav-link" data-section="consultations">
-                    <i class="fas fa-stethoscope"></i>
-                    <span>Consultations</span>
                 </a>
             </div>
             <div class="nav-user">
@@ -50,100 +46,47 @@
 
     <!-- Main Content Area -->
     <main class="main-content">
-        <!-- Dashboard Section -->
-        <section id="dashboard" class="content-section active">
-            <div class="page-header">
-                <h1>Dashboard</h1>
-                <p>Today's healthcare activity overview</p>
-                <div class="dashboard-date">
-                    <a href="https://calendar.google.com/" target="_blank" alt="Open Google Calendar">
-                            <i class="fas fa-calendar"></i>
-                    </a>
-                    <span id="date-time"></span>
+        <!-- Agenda Section -->
+        <section id="agenda" class="content-section active">
+            <!-- Top Bar -->
+            <div class="agenda-topbar">
+                <div class="agenda-date-nav">
+                    <button class="btn-icon" id="agenda-prev" title="Previous day">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <button class="btn-secondary btn-sm" id="agenda-today-btn">Today</button>
+                    <button class="btn-icon" id="agenda-next" title="Next day">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                    <span class="agenda-date-display" id="agenda-date-display"></span>
                 </div>
-            </div>
-            
-            <!-- Today's Stats -->
-            <div class="stats-section">
-                <h2>Today's Activity</h2>
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon patients">
-                            <i class="fas fa-user-md"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="consults-remaining-today"></h3>
-                            <p>Consults remaining</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon validated">
-                            <i class="fas fa-check-circle"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="consults-done-today"></h3>
-                            <p>Consults done today</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon documents">
-                            <i class="fas fa-tasks"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="docs-needing-validation"></h3>
-                            <p>Docs needing validation</p>
-                        </div>
-                    </div>
+                <div class="agenda-topbar-right">
+                    <span class="agenda-doctor-name" id="agenda-doctor-name"></span>
+                    <button class="btn-primary btn-sm" id="agenda-add-patient">
+                        <i class="fas fa-plus"></i> Add Patient
+                    </button>
                 </div>
             </div>
 
-            <div class="dashboard-grid">
-                <div class="dashboard-card">
-                    <div class="card-header">
-                        <h3>Today’s consultations</h3>
-                        <button class="btn-tertiary" onclick="app.refreshActivity()">
-                            <i class="fas fa-sync-alt"></i>
-                        </button>
-                    </div>
-                    <div class="today-consultations">
-                        <div class="consultation-section">
-                            <h4>Remaining today</h4>
-                            <div id="today-consultations-remaining" class="consultation-list">
-                                <div class="loading-placeholder">Loading consultations...</div>
-                            </div>
-                        </div>
-                        <div class="consultation-section">
-                            <h4>Completed today</h4>
-                            <div id="today-consultations-completed" class="consultation-list">
-                                <div class="loading-placeholder">Loading consultations...</div>
-                            </div>
+            <!-- Two-column grid -->
+            <div class="agenda-grid">
+                <!-- Left: Today's Schedule -->
+                <div class="agenda-column agenda-today-col">
+                    <h3 class="agenda-column-title">Today</h3>
+                    <div id="agenda-list" class="agenda-list">
+                        <div class="empty-state">
+                            <p>No consultations scheduled</p>
                         </div>
                     </div>
                 </div>
-                
-                <div class="dashboard-card">
-                    <div class="card-header">
-                        <h3>Quick Actions</h3>
-                    </div>
-                    <div class="quick-actions">
-                        <button class="action-btn tertiary onclick="showAddPatientModal()">
-                            <i class="fas fa-user-plus"></i>
-                            Add New Patient
-                        </button>
-                        <button class="action-btn primary" onclick="app.navigation.navigateTo('documents')">
-                            <i class="fas fa-upload"></i>
-                            Upload Documents
-                        </button>
-                        <button class="action-btn primary" onclick="app.navigation.navigateTo('consultations')">
-                            <i class="fas fa-plus-circle"></i>
-                            Record Consultation
-                        </button>
-                        <button class="action-btn secondary" onclick="app.navigation.navigateTo('documents', 'validation')">
-                            <i class="fas fa-tasks"></i>
-                            Review Pending
-                        </button>
+
+                <!-- Right: Needs Attention -->
+                <div class="agenda-column agenda-attention-col">
+                    <h3 class="agenda-column-title">Needs Attention</h3>
+                    <div id="attention-list" class="agenda-list">
+                        <div class="empty-state">
+                            <p>All caught up</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -365,95 +308,11 @@
                     </div>
                 </div>
             </div>
+        </section>
 
-            <!-- Validation Detail Modal -->
-            <div id="validation-modal" class="validation-modal" style="display: none;">
-                <div class="validation-modal__content" role="dialog" aria-modal="true" aria-labelledby="validation-title">
-                    <div class="validation-modal__header">
-                        <div class="modal-title">
-                            <h3 id="validation-title">Document Validation</h3>
-                            <p id="validation-filename" class="validation-filename"></p>
-                        </div>
-                        <div class="validation-modal__action-bar">
-                            <button id="validation-save-draft" class="btn-tertiary" type="button">
-                                <i class="fas fa-save"></i>
-                                Save draft
-                            </button>
-                            <button id="validation-complete" class="btn-primary" disabled>
-                                <i class="fas fa-check"></i>
-                                Assign &amp; complete
-                            </button>
-                            <button id="validation-reject" class="btn-danger-soft" type="button">
-                                <i class="fas fa-trash"></i>
-                                Reject
-                            </button>
-                        </div>
-                        <button id="validation-close" class="modal-close" type="button" aria-label="Close validation modal">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
-                    <div class="validation-modal__body">
-                        <div class="validation-form">
-                            <div class="validation-section validation-section--assign">
-                                <div class="validation-row">
-                                    <div class="validation-field">
-                                        <label for="validation-patient-search">Assign to patient</label>
-                                        <div class="patient-search-selector">
-                                            <div class="search-bar search-bar--inline">
-                                                <input id="validation-patient-search" type="search" placeholder="Search by name, phone, or CNP…" autocomplete="off" class="search-input" />
-                                                <button class="search-btn" type="button" aria-label="Search patients">
-                                                    <i class="fas fa-search"></i>
-                                                </button>
-                                            </div>
-                                            <div id="validation-patient-results" class="patient-search-results" role="listbox"></div>
-                                        </div>
-                                    </div>
-                                    <div class="validation-field">
-                                        <label for="validation-document-type">Document type (optional)</label>
-                                        <select id="validation-document-type" class="validation-document-type">
-                                            <option value="">Select type...</option>
-                                            <option value="lab_result">Lab result</option>
-                                            <option value="imagistic_result">Imagistic result</option>
-                                            <option value="pharmacy">Pharmacy</option>
-                                            <option value="doctors_note">Doctor's note</option>
-                                            <option value="discharge">Discharge</option>
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="validation-section validation-section--ocr">
-                                <div class="validation-ocr-header">
-                                    <div>
-                                        <h4>OCR Text</h4>
-                                        <p>Review and edit the extracted text before completing.</p>
-                                    </div>
-                                    <div class="validation-ocr-actions">
-                                        <a id="validation-preview-link" href="#" target="_blank" rel="noopener" class="btn-secondary">
-                                            <i class="fas fa-eye"></i>
-                                            Open preview
-                                        </a>
-                                        <button id="validation-expand-ocr" class="btn-secondary" type="button">
-                                            <i class="fas fa-up-right-and-down-left-from-center"></i>
-                                            Show full OCR
-                                        </button>
-                                    </div>
-                                </div>
-                                <div id="validation-ocr-snippet" class="validation-ocr-snippet"></div>
-                                <div id="validation-expanded" class="validation-ocr-expanded" style="display: none;">
-                                    <textarea id="validation-ocr-text" rows="12" placeholder="OCR text will appear here"></textarea>
-                                    <div class="validation-ocr-footer">
-                                        <button id="validation-toggle-fullscreen" class="btn-secondary" type="button">
-                                            <i class="fas fa-expand"></i>
-                                            Expand OCR
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        <!-- Consult Section -->
+        <section id="consult" class="content-section">
+            <div id="consult-container"></div>
         </section>
 
         <!-- Consultations Section -->
@@ -947,6 +806,47 @@
                 <button class="btn-tertiary" onclick="app.exportConsentHistory()">
                     <i class="fas fa-download"></i> Export as PDF
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add to Agenda Modal -->
+    <div id="add-to-agenda-modal" class="modal">
+        <div class="modal-content small">
+            <div class="modal-header">
+                <h2>Add Patient to Agenda</h2>
+                <button class="modal-close" onclick="window.app.agendaManager.closeAddPatientOverlay()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <input type="text" id="agenda-patient-search" placeholder="Search by name or CNP..." autocomplete="off">
+                </div>
+                <div id="agenda-patient-results" class="agenda-search-results">
+                    <div class="empty-state">
+                        <p>Type to search for a patient</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Consult Confirmation Modal -->
+    <div id="delete-consult-modal" class="modal">
+        <div class="modal-content small">
+            <div class="modal-header">
+                <h2>Delete this consult?</h2>
+                <button class="modal-close" onclick="window.app.agendaManager.closeDeleteModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>This action cannot be undone. The consultation record will be permanently deleted.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="window.app.agendaManager.closeDeleteModal()">No</button>
+                <button class="btn-danger" id="confirm-delete-consult">Yes, delete</button>
             </div>
         </div>
     </div>

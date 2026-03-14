@@ -1,15 +1,13 @@
 
-"""Consultation management endpoints - Phase 4A"""
-from fastapi import APIRouter, Depends, HTTPException, Query,UploadFile, File, Request
+"""Consultation management endpoints - Agenda & Consult rework"""
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
-from typing import List, Optional, Dict, Any
+from sqlalchemy import func, or_, cast, Date
+from typing import List, Optional
 import uuid
 import aiofiles
 import logging
 from datetime import datetime, date
-from pathlib import Path
-import os
 
 from app.database import get_db
 from app.auth import get_user_from_header
@@ -17,10 +15,7 @@ from app.models import Consultation, User, Patient, GDPRAuditLog, Document
 from app.schemas import (
     ConsultationStart, ConsultationAutoSave, ConsultationCreate,
     ConsultationUpdate, ConsultationResponse, ConsultationListItem,
-    ConsultationCountsResponse, ConsultationTodayStatsResponse,
-    ConsultationTodayQueueResponse, ConsultationTodayQueueItem,
-    ConsultationAudioUploadResponse, ConsultationAudioProcessResponse,
-    ConsultationTranscriptResponse, ApiMessageResponse
+    AgendaItem, ConsultationComplete
 )
 from app.services.audio_service import AudioTranscriptionService
 from app.services.llm_extraction_service import LLMExtractionService
@@ -39,45 +34,112 @@ app_logger = logging.getLogger("reconomed.app")
 audio_service = AudioTranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
 llm_service = LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
 
-#--------------
-# Get counts
-#------------------
-@router.get("/counts", response_model=ConsultationCountsResponse)
-async def get_consultation_counts(
-    request: Request,
-    db: Session = Depends(get_db),
-)-> ConsultationCountsResponse:
-    """Get consultation counts for tab badges"""
-    # Get demo doctor
-    current_user = get_user_from_header(db, request)
+# ============================
+# AGENDA ENDPOINTS
+# ============================
+
+@router.get("/agenda")
+async def get_agenda(
+    target_date: Optional[str] = Query(None, alias="date"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get today's (or specified date's) consultations for the Agenda view.
+    Returns time-ordered list with patient names.
+    """
+    current_user = get_current_user(db)
+
+    if target_date:
+        try:
+            agenda_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    else:
+        agenda_date = date.today()
+
+    consultations = db.query(Consultation, Patient).join(
+        Patient, Consultation.patient_id == Patient.id
+    ).filter(
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id,
+        cast(Consultation.consultation_date, Date) == agenda_date,
+        Consultation.status != "cancelled"
+    ).order_by(
+        Consultation.consultation_date.asc()
+    ).all()
+
+    return [
+        {
+            "id": c.id,
+            "patient_id": c.patient_id,
+            "patient_name": f"{p.given_name} {p.family_name}",
+            "specialty": c.specialty,
+            "consultation_date": c.consultation_date.isoformat(),
+            "status": c.status,
+            "is_signed": c.is_signed,
+            "has_discharge": c.discharge_text is not None
+        }
+        for c, p in consultations
+    ]
+
+@router.get("/agenda/needs-attention")
+async def get_needs_attention(db: Session = Depends(get_db)):
+    """
+    Get past unfinished consultations (in_progress or pending_review from before today).
+    These are consults the doctor must not miss.
+    """
+    current_user = get_current_user(db)
+    today = date.today()
+
+    consultations = db.query(Consultation, Patient).join(
+        Patient, Consultation.patient_id == Patient.id
+    ).filter(
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id,
+        Consultation.status.in_(["in_progress", "pending_review"]),
+        cast(Consultation.consultation_date, Date) < today
+    ).order_by(
+        Consultation.consultation_date.desc()
+    ).all()
+
+    return [
+        {
+            "id": c.id,
+            "patient_id": c.patient_id,
+            "patient_name": f"{p.given_name} {p.family_name}",
+            "specialty": c.specialty,
+            "consultation_date": c.consultation_date.isoformat(),
+            "status": c.status,
+            "is_signed": c.is_signed,
+            "has_discharge": c.discharge_text is not None
+        }
+        for c, p in consultations
+    ]
+
+# ============================
+# CONSULTATION WORKFLOW
+# ============================
+
+@router.get("/counts")
+async def get_consultation_counts(db: Session = Depends(get_db)):
+    """Get consultation counts for badges"""
+    current_user = get_current_user(db)
 
     active_count = db.query(Consultation).filter(
         Consultation.clinic_id == current_user.clinic_id,
         Consultation.status == "in_progress"
     ).count()
-    
-    discharge_ready_count = db.query(Consultation).filter(
-        Consultation.clinic_id == current_user.clinic_id,
-        Consultation.is_signed == True,
-        Consultation.status != "discharged"
-    ).count()
-    
-    # Review pending - patients with consultations but needing follow-up
-    review_pending_count = db.query(Consultation).filter(
-        Consultation.clinic_id == current_user.clinic_id,
-        Consultation.status == "completed",
-        Consultation.is_signed == False
-    ).count()
-    return ConsultationCountsResponse(
-        active_consultations=active_count,
-        discharge_ready=discharge_ready_count,
-        review_pending=review_pending_count,
-    )
 
+    pending_review_count = db.query(Consultation).filter(
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.status == "pending_review"
+    ).count()
 
-# ----------------------------
-# Start New Consultation (Creates Draft)
-# ----------------------------
+    return {
+        "active_consultations": active_count,
+        "pending_review": pending_review_count
+    }
+
 @router.post("/start", response_model=ConsultationResponse)
 async def start_consultation(
     data: ConsultationStart,
@@ -85,28 +147,25 @@ async def start_consultation(
     db: Session = Depends(get_db)
 )-> ConsultationResponse:
     """
-    Start new consultation - creates draft with patient and specialty.
-    Called from: "Add New Consult" button or consultation search flow.
+    Start new consultation - creates scheduled consultation with patient and specialty.
+    Called from Agenda '+ Add Patient' or Patient card 'Start Consult'.
     """
-    current_user = get_user_from_header(db, request)
-    
-    # Verify patient exists
+    current_user = get_current_user(db)
+
     patient = db.query(Patient).filter(
         Patient.id == data.patient_id,
         Patient.clinic_id == current_user.clinic_id
     ).first()
-    
+
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    
-    # Verify specialty is valid for doctor
+
     if current_user.specialties and data.specialty not in current_user.specialties:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail=f"Doctor not authorized for specialty: {data.specialty}"
         )
-    
-    # Create draft consultation
+
     new_consultation = Consultation(
         id=str(uuid.uuid4()),
         patient_id=data.patient_id,
@@ -115,16 +174,15 @@ async def start_consultation(
         specialty=data.specialty,
         consultation_date=datetime.utcnow(),
         structured_data={},
-        status="draft",
+        status="scheduled",
         is_signed=False,
         last_autosave_at=datetime.utcnow()
     )
-    
+
     db.add(new_consultation)
     db.commit()
     db.refresh(new_consultation)
-    
-    # Audit log
+
     audit_log = GDPRAuditLog(
         clinic_id=current_user.clinic_id,
         user_id=current_user.id,
@@ -135,17 +193,14 @@ async def start_consultation(
         details={
             "consultation_id": new_consultation.id,
             "specialty": data.specialty,
-            "status": "draft"
+            "status": "scheduled"
         }
     )
     db.add(audit_log)
     db.commit()
-    
+
     return new_consultation
 
-# ----------------------------
-# Auto-Save Consultation
-# ----------------------------
 @router.put("/{consultation_id}/auto-save", response_model=ConsultationResponse)
 async def auto_save_consultation(
     consultation_id: str,
@@ -154,84 +209,76 @@ async def auto_save_consultation(
     db: Session = Depends(get_db)
 )-> ConsultationResponse:
     """
-    Auto-save consultation data every 60 seconds from frontend.
-    Updates structured_data, audio fields, and last_autosave_at timestamp.
+    Auto-save consultation data every 30 seconds from frontend.
+    Updates structured_data, pinned_files, audio fields, and last_autosave_at.
     """
-    current_user = get_user_from_header(db,request)
-    
+    current_user = get_current_user(db)
+
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
         Consultation.clinic_id == current_user.clinic_id,
         Consultation.doctor_id == current_user.id
     ).first()
-    
+
     if not consultation:
         raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    # Prevent auto-save on completed/discharged consultations
-    if consultation.status in ["completed", "discharged"]:
+
+    if consultation.status == "completed":
         raise HTTPException(
-            status_code=400, 
-            detail="Cannot auto-save completed/discharged consultation"
+            status_code=400,
+            detail="Cannot auto-save completed consultation"
         )
-    
-    # Update fields
+
     if data.structured_data is not None:
         consultation.structured_data = data.structured_data
     if data.audio_file_path is not None:
         consultation.audio_file_path = data.audio_file_path
     if data.audio_duration_seconds is not None:
         consultation.audio_duration_seconds = data.audio_duration_seconds
-    
+    if data.pinned_files is not None:
+        consultation.pinned_files = data.pinned_files
+
     consultation.last_autosave_at = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(consultation)
-    
+
     app_logger.info(f"Auto-saved consultation {consultation_id} for doctor {current_user.id}")
-    
+
     return consultation
 
-# ----------------------------
-# Change Specialty Mid-Consultation
-# ----------------------------
 @router.put("/{consultation_id}/specialty", response_model=ConsultationResponse)
 async def update_consultation_specialty(
     consultation_id: str,
     specialty: str,
     request:Request,
     db: Session = Depends(get_db)
-)-> ConsultationResponse:
-    """
-    Change specialty mid-consultation.
-    Validates doctor has access to new specialty.
-    """
-    current_user = get_user_from_header(db,request)
-    
+):
+    """Change specialty mid-consultation."""
+    current_user = get_current_user(db)
+
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
         Consultation.clinic_id == current_user.clinic_id,
         Consultation.doctor_id == current_user.id
     ).first()
-    
+
     if not consultation:
         raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    # Verify specialty is valid for doctor
+
     if current_user.specialties and specialty not in current_user.specialties:
         raise HTTPException(
             status_code=400,
             detail=f"Doctor not authorized for specialty: {specialty}"
         )
-    
+
     old_specialty = consultation.specialty
     consultation.specialty = specialty
     consultation.last_autosave_at = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(consultation)
-    
-    # Audit log
+
     audit_log = GDPRAuditLog(
         clinic_id=current_user.clinic_id,
         user_id=current_user.id,
@@ -247,12 +294,9 @@ async def update_consultation_specialty(
     )
     db.add(audit_log)
     db.commit()
-    
+
     return consultation
 
-# ----------------------------
-# Update Consultation Status
-# ----------------------------
 @router.put("/{consultation_id}/status", response_model=ConsultationResponse)
 async def update_consultation_status(
     consultation_id: str,
@@ -261,56 +305,53 @@ async def update_consultation_status(
     db: Session = Depends(get_db)
 )-> ConsultationResponse:
     """
-    Update consultation status: draft → in_progress → completed
-    Validates status transitions.
+    Update consultation status with validated transitions.
+    scheduled → in_progress → pending_review/completed
     """
-    current_user = get_user_from_header(db, request)
-    
-    valid_statuses = ["draft", "in_progress", "completed", "discharged", "cancelled"]
+    current_user = get_current_user(db)
+
+    valid_statuses = ["scheduled", "in_progress", "pending_review", "completed", "cancelled"]
     if status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
-    
+
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
         Consultation.clinic_id == current_user.clinic_id,
         Consultation.doctor_id == current_user.id
     ).first()
-    
+
     if not consultation:
         raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    # Validate status transitions
+
     valid_transitions = {
-        "draft": ["in_progress", "cancelled"],
-        "in_progress": ["completed", "draft", "cancelled"],
-        "completed": ["discharged"],
-        "discharged": [],  # Terminal state
-        "cancelled": []  # Terminal state
+        "scheduled": ["in_progress", "cancelled"],
+        "in_progress": ["pending_review", "completed", "cancelled"],
+        "pending_review": ["in_progress", "completed"],
+        "completed": [],  # Terminal — amendments use separate endpoint
+        "cancelled": []
     }
-    
+
     if status not in valid_transitions.get(consultation.status, []):
         raise HTTPException(
             status_code=400,
             detail=f"Cannot transition from {consultation.status} to {status}"
         )
-    
+
     old_status = consultation.status
     consultation.status = status
-    
-    # If completing, require signature
+
     if status == "completed" and not consultation.is_signed:
         consultation.is_signed = True
         consultation.signed_at = datetime.utcnow()
-    
+
     db.commit()
     db.refresh(consultation)
-    
-    # Audit log
+
     audit_log = GDPRAuditLog(
         clinic_id=current_user.clinic_id,
         user_id=current_user.id,
         patient_id=consultation.patient_id,
-        action=f"consultation_status_changed",
+        action="consultation_status_changed",
         legal_basis="consent",
         data_category="medical_consultation",
         details={
@@ -322,68 +363,375 @@ async def update_consultation_status(
     )
     db.add(audit_log)
     db.commit()
-    
+
     return consultation
 
-# ----------------------------
-# Get Draft Consultations
-# ----------------------------
-@router.get("/drafts", response_model=List[ConsultationListItem])
-async def get_draft_consultations(
-    request:Request,
-    db: Session = Depends(get_db)
-)-> List[ConsultationListItem]:
-    """
-    Get all draft consultations for current doctor.
-    Used for "Resume Draft" functionality.
-    """
-    current_user = get_user_from_header(db, request)
-    
-    drafts = db.query(Consultation).filter(
-        Consultation.clinic_id == current_user.clinic_id,
-        Consultation.doctor_id == current_user.id,
-        Consultation.status == "draft"
-    ).order_by(
-        Consultation.last_autosave_at.desc()
-    ).all()
-    
-    return drafts
-
-# ----------------------------
-# Cancel Consultation (Soft Delete)
-# ----------------------------
-@router.delete("/{consultation_id}/cancel", response_model=ApiMessageResponse)
-async def cancel_consultation(
+@router.post("/{consultation_id}/complete", response_model=ConsultationResponse)
+async def complete_consultation(
     consultation_id: str,
-    request:Request,
+    data: ConsultationComplete,
     db: Session = Depends(get_db)
-)-> ApiMessageResponse:
+):
     """
-    Cancel consultation (soft delete - sets status to cancelled).
-    Only allowed for draft/in_progress consultations.
+    Complete a consultation with discharge text.
+    Sets status to completed, signs it, and stores the discharge document.
     """
-    current_user = get_user_from_header(db, request)
-    
+    current_user = get_current_user(db)
+
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
         Consultation.clinic_id == current_user.clinic_id,
         Consultation.doctor_id == current_user.id
     ).first()
-    
+
     if not consultation:
         raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    # Only allow cancellation of non-completed consultations
-    if consultation.status in ["completed", "discharged"]:
+
+    if consultation.status == "completed":
+        raise HTTPException(status_code=400, detail="Consultation is already completed")
+
+    old_status = consultation.status
+    consultation.status = "completed"
+    consultation.is_signed = True
+    consultation.signed_at = datetime.utcnow()
+    consultation.discharge_text = data.discharge_text
+
+    db.commit()
+    db.refresh(consultation)
+
+    audit_log = GDPRAuditLog(
+        clinic_id=current_user.clinic_id,
+        user_id=current_user.id,
+        patient_id=consultation.patient_id,
+        action="consultation_status_changed",
+        legal_basis="consent",
+        data_category="medical_consultation",
+        details={
+            "consultation_id": consultation_id,
+            "old_status": old_status,
+            "new_status": "completed",
+            "signed": True,
+            "has_discharge": True
+        }
+    )
+    db.add(audit_log)
+    db.commit()
+
+    return consultation
+
+@router.post("/{consultation_id}/amend", response_model=ConsultationResponse)
+async def amend_consultation(
+    consultation_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Amend a completed consultation (doctor only).
+    Preserves original signature, reopens for editing.
+    """
+    current_user = get_current_user(db)
+
+    if current_user.role not in ["doctor", "admin"]:
+        raise HTTPException(status_code=403, detail="Only doctors can amend consultations")
+
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id
+    ).first()
+
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+
+    if consultation.status != "completed":
+        raise HTTPException(status_code=400, detail="Only completed consultations can be amended")
+
+    # Preserve original signature in amendment history
+    history = consultation.amendment_history or []
+    history.append({
+        "user_id": current_user.id,
+        "user_name": current_user.full_name,
+        "timestamp": datetime.utcnow().isoformat(),
+        "original_signed_at": consultation.signed_at.isoformat() if consultation.signed_at else None,
+        "action": "amendment_started"
+    })
+    consultation.amendment_history = history
+    consultation.status = "in_progress"
+    consultation.amended_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(consultation)
+
+    audit_log = GDPRAuditLog(
+        clinic_id=current_user.clinic_id,
+        user_id=current_user.id,
+        patient_id=consultation.patient_id,
+        action="consult_amended",
+        legal_basis="consent",
+        data_category="medical_consultation",
+        details={
+            "consultation_id": consultation_id,
+            "amended_by": current_user.full_name,
+            "original_signed_at": consultation.signed_at.isoformat() if consultation.signed_at else None
+        }
+    )
+    db.add(audit_log)
+    db.commit()
+
+    return consultation
+
+@router.delete("/{consultation_id}")
+async def delete_consultation(
+    consultation_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a consultation (doctor only). Hard delete with GDPR audit log.
+    Only allowed for scheduled or in_progress consultations.
+    """
+    current_user = get_current_user(db)
+
+    if current_user.role not in ["doctor", "admin"]:
+        raise HTTPException(status_code=403, detail="Only doctors can delete consultations")
+
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id
+    ).first()
+
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+
+    if consultation.status in ["completed"]:
         raise HTTPException(
             status_code=400,
-            detail="Cannot cancel completed/discharged consultation"
+            detail="Cannot delete completed consultation"
         )
-    
+
+    patient_id = consultation.patient_id
+
+    # Audit log before deletion
+    audit_log = GDPRAuditLog(
+        clinic_id=current_user.clinic_id,
+        user_id=current_user.id,
+        patient_id=patient_id,
+        action="consult_deleted",
+        legal_basis="consent",
+        data_category="medical_consultation",
+        details={
+            "consultation_id": consultation_id,
+            "deleted_by": current_user.full_name,
+            "original_status": consultation.status,
+            "consultation_date": consultation.consultation_date.isoformat() if consultation.consultation_date else None
+        }
+    )
+    db.add(audit_log)
+
+    db.delete(consultation)
+    db.commit()
+
+    return {"message": "Consultation deleted successfully"}
+
+@router.post("/{consultation_id}/generate-discharge")
+async def generate_discharge(
+    consultation_id: str,
+    db: Session = Depends(get_db)
+)-> List[ConsultationListItem]:
+    """
+    Generate a discharge summary from consultation data and pinned files.
+    Uses AI (LLM) to generate Romanian-language discharge text.
+    Falls back to template-based generation if AI fails.
+    """
+    current_user = get_current_user(db)
+
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id
+    ).first()
+
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+
+    patient = db.query(Patient).filter(Patient.id == consultation.patient_id).first()
+
+    # Get pinned documents
+    pinned_docs = []
+    if consultation.pinned_files:
+        pinned_docs = db.query(Document).filter(
+            Document.id.in_(consultation.pinned_files),
+            Document.clinic_id == current_user.clinic_id
+        ).all()
+
+    # Build discharge from structured data (template-based fallback)
+    discharge_text = _generate_template_discharge(
+        patient, consultation, pinned_docs, current_user
+    )
+
+    # Try AI generation
+    try:
+        ai_text = await _generate_ai_discharge(patient, consultation, pinned_docs, current_user)
+        if ai_text:
+            discharge_text = ai_text
+    except Exception as e:
+        app_logger.warning(f"AI discharge generation failed, using template: {e}")
+
+    return {"discharge_text": discharge_text}
+
+def _generate_template_discharge(patient, consultation, pinned_docs, doctor):
+    """Template-based discharge generation fallback."""
+    specialty_labels = {
+        "internal_medicine": "Medicină Internă",
+        "cardiology": "Cardiologie",
+        "respiratory": "Pneumologie",
+        "gynecology": "Ginecologie"
+    }
+
+    lines = []
+    lines.append("SCRISOARE MEDICALĂ / BILET DE IEȘIRE")
+    lines.append("=" * 40)
+    lines.append("")
+    lines.append(f"Pacient: {patient.given_name} {patient.family_name}")
+    if patient.cnp:
+        lines.append(f"CNP: {patient.cnp}")
+    if patient.birth_date:
+        lines.append(f"Data nașterii: {patient.birth_date}")
+    lines.append("")
+    lines.append(f"Specialitate: {specialty_labels.get(consultation.specialty, consultation.specialty)}")
+    lines.append(f"Data consultației: {consultation.consultation_date.strftime('%d.%m.%Y')}")
+    lines.append(f"Medic: Dr. {doctor.full_name}")
+    lines.append("")
+
+    # Add structured data fields
+    if consultation.structured_data:
+        lines.append("CONSTATĂRI CLINICE")
+        lines.append("-" * 30)
+        for key, value in consultation.structured_data.items():
+            if value:
+                label = key.replace("_", " ").title()
+                lines.append(f"{label}: {value}")
+        lines.append("")
+
+    # Add pinned documents summary
+    if pinned_docs:
+        lines.append("DOCUMENTE ATAȘATE")
+        lines.append("-" * 30)
+        for doc in pinned_docs:
+            doc_type = doc.document_type or "Document"
+            lines.append(f"- {doc.original_filename} ({doc_type})")
+        lines.append("")
+
+    lines.append("")
+    lines.append(f"Semnătură medic: Dr. {doctor.full_name}")
+    lines.append(f"Data: {datetime.utcnow().strftime('%d.%m.%Y')}")
+
+    return "\n".join(lines)
+
+async def _generate_ai_discharge(patient, consultation, pinned_docs, doctor):
+    """AI-powered discharge generation using Anthropic API."""
+    try:
+        import anthropic
+    except ImportError:
+        app_logger.info("Anthropic SDK not installed, skipping AI discharge generation")
+        return None
+
+    import os
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        app_logger.info("ANTHROPIC_API_KEY not set, skipping AI discharge generation")
+        return None
+
+    specialty_labels = {
+        "internal_medicine": "Medicină Internă",
+        "cardiology": "Cardiologie",
+        "respiratory": "Pneumologie",
+        "gynecology": "Ginecologie"
+    }
+
+    # Build prompt
+    prompt_parts = [
+        "Generează o scrisoare medicală (bilet de ieșire) în limba română, profesională și completă.",
+        "",
+        f"Pacient: {patient.given_name} {patient.family_name}",
+    ]
+    if patient.cnp:
+        prompt_parts.append(f"CNP: {patient.cnp}")
+    if patient.birth_date:
+        prompt_parts.append(f"Data nașterii: {patient.birth_date}")
+    prompt_parts.append(f"Specialitate: {specialty_labels.get(consultation.specialty, consultation.specialty)}")
+    prompt_parts.append(f"Data consultației: {consultation.consultation_date.strftime('%d.%m.%Y')}")
+    prompt_parts.append(f"Medic: Dr. {doctor.full_name}")
+    prompt_parts.append("")
+
+    if consultation.structured_data:
+        prompt_parts.append("Date clinice din consultație:")
+        for key, value in consultation.structured_data.items():
+            if value:
+                prompt_parts.append(f"  {key}: {value}")
+        prompt_parts.append("")
+
+    if pinned_docs:
+        prompt_parts.append("Documente atașate:")
+        for doc in pinned_docs:
+            prompt_parts.append(f"  - {doc.original_filename} ({doc.document_type or 'document'})")
+            if doc.extracted_data:
+                prompt_parts.append(f"    Date extrase: {doc.extracted_data}")
+        prompt_parts.append("")
+
+    prompt_parts.append("Generează scrisoarea medicală completă, cu secțiuni standard: diagnostic, anamneza, examen clinic, investigații, tratament recomandat, recomandări la externare.")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": "\n".join(prompt_parts)}]
+    )
+
+    return message.content[0].text
+
+# ============================
+# EXISTING ENDPOINTS (Updated)
+# ============================
+
+@router.get("/drafts", response_model=List[ConsultationListItem])
+async def get_draft_consultations(db: Session = Depends(get_db)):
+    """Get all scheduled consultations for current doctor."""
+    current_user = get_current_user(db)
+
+    drafts = db.query(Consultation).filter(
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id,
+        Consultation.status == "scheduled"
+    ).order_by(
+        Consultation.last_autosave_at.desc()
+    ).all()
+
+    return drafts
+
+@router.delete("/{consultation_id}/cancel")
+async def cancel_consultation(
+    consultation_id: str,
+    request:Request,
+    db: Session = Depends(get_db)
+):
+    """Cancel consultation (soft delete - sets status to cancelled)."""
+    current_user = get_current_user(db)
+
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id,
+        Consultation.doctor_id == current_user.id
+    ).first()
+
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+
+    if consultation.status == "completed":
+        raise HTTPException(status_code=400, detail="Cannot cancel completed consultation")
+
     consultation.status = "cancelled"
     db.commit()
-    
-    # Audit log
+
     audit_log = GDPRAuditLog(
         clinic_id=current_user.clinic_id,
         user_id=current_user.id,
@@ -398,13 +746,9 @@ async def cancel_consultation(
     )
     db.add(audit_log)
     db.commit()
-    
-    return ApiMessageResponse(message="Consultation cancelled successfully")
 
+    return {"message": "Consultation cancelled successfully"}
 
-# ----------------------------
-# Get Patient History for Split View
-# ----------------------------
 @router.get("/{consultation_id}/patient-history")
 async def get_patient_history_for_consultation(
     consultation_id: str,
@@ -412,41 +756,37 @@ async def get_patient_history_for_consultation(
     db: Session = Depends(get_db)
 ):
     """
-    Get patient's previous consultations and documents.
-    Used for left panel in Step 2 split view.
-    Returns same structure as View Patient Modal's Documents & History tab.
+    Get patient's previous consultations and documents for left panel.
     """
-    current_user = get_user_from_header(db, request)
-    
+    current_user = get_current_user(db)
+
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
         Consultation.clinic_id == current_user.clinic_id
     ).first()
-    
+
     if not consultation:
         raise HTTPException(status_code=404, detail="Consultation not found")
-    
+
     patient = db.query(Patient).filter(Patient.id == consultation.patient_id).first()
-    
-    # Get previous consultations (exclude current one)
+
     previous_consultations = db.query(Consultation).filter(
         Consultation.patient_id == consultation.patient_id,
         Consultation.clinic_id == current_user.clinic_id,
         Consultation.id != consultation_id,
-        Consultation.status.in_(["completed", "discharged"])
+        Consultation.status == "completed"
     ).order_by(
         Consultation.consultation_date.desc()
     ).all()
-    
-    # Get documents
+
+    # Get all documents (not just validated) for the patient
     documents = db.query(Document).filter(
         Document.patient_id == consultation.patient_id,
-        Document.clinic_id == current_user.clinic_id,
-        Document.validation_status == "validated"
+        Document.clinic_id == current_user.clinic_id
     ).order_by(
         Document.created_at.desc()
     ).all()
-    
+
     return {
         "patient": {
             "id": patient.id,
@@ -461,7 +801,8 @@ async def get_patient_history_for_consultation(
                 "specialty": c.specialty,
                 "consultation_date": c.consultation_date.isoformat(),
                 "structured_data": c.structured_data,
-                "is_signed": c.is_signed
+                "is_signed": c.is_signed,
+                "discharge_text": c.discharge_text
             }
             for c in previous_consultations
         ],
@@ -478,9 +819,7 @@ async def get_patient_history_for_consultation(
         ]
     }
 
-# ----------------------------
-# EXISTING ENDPOINTS (Keep for backward compatibility)
-# ----------------------------
+# Legacy CRUD endpoints
 
 @router.post("", response_model=ConsultationResponse)
 async def create_consultation(
@@ -489,16 +828,16 @@ async def create_consultation(
     db: Session = Depends(get_db)
 )-> ConsultationResponse:
     """Legacy endpoint - use /start instead"""
-    current_user = get_user_from_header(db, request)
-    
+    current_user = get_current_user(db)
+
     patient = db.query(Patient).filter(
         Patient.id == consultation_data.patient_id,
         Patient.clinic_id == current_user.clinic_id
     ).first()
-    
+
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    
+
     new_consultation = Consultation(
         id=str(uuid.uuid4()),
         patient_id=consultation_data.patient_id,
@@ -508,14 +847,14 @@ async def create_consultation(
         consultation_date=consultation_data.consultation_date or datetime.utcnow(),
         structured_data=consultation_data.structured_data,
         audio_file_path=consultation_data.audio_file_path,
-        status="draft",
+        status="scheduled",
         is_signed=False
     )
-    
+
     db.add(new_consultation)
     db.commit()
     db.refresh(new_consultation)
-    
+
     return new_consultation
 
 @router.get("", response_model=List[ConsultationResponse])
@@ -528,22 +867,22 @@ async def get_consultations(
     db: Session = Depends(get_db),
 )-> List[ConsultationResponse]:
     """Get consultations with optional filters"""
-    current_user = get_user_from_header(db, request)
-    
+    current_user = get_current_user(db)
+
     query = db.query(Consultation).filter(
         Consultation.clinic_id == current_user.clinic_id
     )
-    
+
     if patient_id:
         query = query.filter(Consultation.patient_id == patient_id)
-    
+
     if status:
         query = query.filter(Consultation.status == status)
-    
+
     consultations = query.order_by(
         Consultation.consultation_date.desc()
     ).offset(skip).limit(limit).all()
-    
+
     return consultations
 
 @router.get("/{consultation_id}/openehr")
@@ -589,16 +928,16 @@ async def get_consultation(
     db: Session = Depends(get_db),
 )-> ConsultationResponse:
     """Get specific consultation"""
-    current_user = get_user_from_header(db, request)
-    
+    current_user = get_current_user(db)
+
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
         Consultation.clinic_id == current_user.clinic_id
     ).first()
-    
+
     if not consultation:
         raise HTTPException(status_code=404, detail="Consultation not found")
-    
+
     return consultation
 
 @router.put("/{consultation_id}", response_model=ConsultationResponse)
@@ -609,17 +948,16 @@ async def update_consultation(
     db: Session = Depends(get_db)
 )-> ConsultationResponse:
     """Update consultation - legacy endpoint"""
-    current_user = get_user_from_header(db, request)
-    
+    current_user = get_current_user(db)
+
     consultation = db.query(Consultation).filter(
         Consultation.id == consultation_id,
         Consultation.clinic_id == current_user.clinic_id
     ).first()
-    
+
     if not consultation:
         raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    # Update fields
+
     if consultation_data.specialty is not None:
         consultation.specialty = consultation_data.specialty
     if consultation_data.consultation_date is not None:
@@ -634,10 +972,14 @@ async def update_consultation(
         consultation.is_signed = consultation_data.is_signed
         if consultation_data.is_signed:
             consultation.signed_at = datetime.utcnow()
-    
+    if consultation_data.pinned_files is not None:
+        consultation.pinned_files = consultation_data.pinned_files
+    if consultation_data.discharge_text is not None:
+        consultation.discharge_text = consultation_data.discharge_text
+
     db.commit()
     db.refresh(consultation)
-    
+
     return consultation
 
 @router.get("/today/stats", response_model=ConsultationTodayStatsResponse)
@@ -646,381 +988,13 @@ async def get_today_stats(
     db: Session = Depends(get_db),
 )-> ConsultationTodayStatsResponse:
     """Get today's consultation statistics"""
-    current_user = get_user_from_header(db, request)
+    current_user = get_current_user(db)
+
     today = date.today()
-    
+
     patients_today = db.query(Consultation.patient_id).filter(
         Consultation.clinic_id == current_user.clinic_id,
-        func.date(Consultation.consultation_date) == today
+        cast(Consultation.consultation_date, Date) == today
     ).distinct().count()
-    
-    return ConsultationTodayStatsResponse(patients_today=patients_today)
 
-
-@router.get("/today/queue", response_model=ConsultationTodayQueueResponse)
-async def get_today_consultation_queue(
-    request: Request,
-    db: Session = Depends(get_db),
-) -> ConsultationTodayQueueResponse:
-    """Get today's consultations split into remaining vs completed."""
-    current_user = get_user_from_header(db, request)
-    today = date.today()
-
-    base_q = db.query(Consultation, Patient).join(
-        Patient, Patient.id == Consultation.patient_id
-    ).filter(
-        Consultation.clinic_id == current_user.clinic_id,
-        func.date(Consultation.consultation_date) == today,
-    )
-
-    remaining_statuses = ("completed", "discharged", "cancelled")
-    completed_statuses = ("completed", "discharged")
-
-    remaining_rows = base_q.filter(
-        Consultation.status.notin_(remaining_statuses)
-    ).order_by(Consultation.consultation_date.asc()).all()
-
-    completed_rows = base_q.filter(
-        Consultation.status.in_(completed_statuses)
-    ).order_by(Consultation.consultation_date.desc()).all()
-
-    remaining = [
-        ConsultationTodayQueueItem(
-            id=consultation.id,
-            patient_name=" ".join(
-                part for part in [patient.given_name, patient.family_name] if part
-            ).strip() or "Unnamed patient",
-            specialty=consultation.specialty,
-            consultation_date=consultation.consultation_date,
-            status=consultation.status,
-        )
-        for consultation, patient in remaining_rows
-    ]
-
-    completed = [
-        ConsultationTodayQueueItem(
-            id=consultation.id,
-            patient_name=" ".join(
-                part for part in [patient.given_name, patient.family_name] if part
-            ).strip() or "Unnamed patient",
-            specialty=consultation.specialty,
-            consultation_date=consultation.consultation_date,
-            status=consultation.status,
-        )
-        for consultation, patient in completed_rows
-    ]
-
-    return ConsultationTodayQueueResponse(remaining=remaining, completed=completed)
-
-
-
-@router.get("/templates/{specialty}")
-async def get_consultation_template(
-    specialty: str,
-    db: Session = Depends(get_db)
-):
-    """Get template definition for specialty"""
-    template_service = TemplateService(db)
-    try:
-        template = template_service.get_template(specialty)
-        return template
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-@router.post("/{consultation_id}/pre-fill", response_model=ConsultationResponse)
-async def pre_fill_consultation(
-    consultation_id: str,
-    request:Request,
-    selected_documents: Optional[List[str]] = None,
-    db: Session = Depends(get_db)
-)-> ConsultationResponse:
-    """
-    Pre-fill consultation with patient history.
-    Called after doctor selects which documents to include.
-    """
-    current_user = get_user_from_header(db, request)
-    
-    consultation = db.query(Consultation).filter(
-        Consultation.id == consultation_id,
-        Consultation.clinic_id == current_user.clinic_id
-    ).first()
-    
-    if not consultation:
-        raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    template_service = TemplateService(db)
-    pre_filled_data = template_service.pre_fill_template(
-        consultation.patient_id,
-        consultation.specialty,
-        selected_documents
-    )
-    
-    # Merge with existing data (don't overwrite manual entries)
-    existing_data = consultation.structured_data or {}
-    merged_data = {**pre_filled_data, **existing_data}
-    
-    consultation.structured_data = merged_data
-    consultation.last_autosave_at = datetime.utcnow()
-    
-    db.commit()
-    db.refresh(consultation)
-    
-    return consultation
-    
-@router.post("/{consultation_id}/audio/upload", response_model=ConsultationAudioUploadResponse)
-async def upload_consultation_audio(
-    consultation_id: str,
-    request:Request,
-    audio_file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-)-> ConsultationAudioUploadResponse:
-    """
-    Upload audio file for consultation.
-    Stores file temporarily for processing.
-    """
-    current_user = get_user_from_header(db, request)
-    
-    consultation = db.query(Consultation).filter(
-        Consultation.id == consultation_id,
-        Consultation.clinic_id == current_user.clinic_id,
-        Consultation.doctor_id == current_user.id
-    ).first()
-    
-    if not consultation:
-        raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    # Validate file type
-    allowed_formats = [".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"]
-    file_ext = Path(audio_file.filename).suffix.lower()
-    if file_ext not in allowed_formats:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported audio format. Allowed: {', '.join(allowed_formats)}"
-        )
-    
-    # Create uploads directory if not exists
-    upload_dir = Path("uploads/audio/temp")
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Generate unique filename
-    audio_filename = f"{consultation_id}_{uuid.uuid4()}{file_ext}"
-    audio_path = upload_dir / audio_filename
-    
-    # Save file
-    async with aiofiles.open(audio_path, 'wb') as f:
-        content = await audio_file.read()
-        await f.write(content)
-    
-    # Get audio duration (if available)
-    audio_duration = None
-    try:
-        import wave
-        if file_ext == ".wav":
-            with wave.open(str(audio_path), 'rb') as wav:
-                frames = wav.getnframes()
-                rate = wav.getframerate()
-                audio_duration = int(frames / rate)
-    except:
-        pass  # Duration optional for now
-    
-    # Update consultation
-    consultation.audio_file_path = str(audio_path)
-    consultation.audio_duration_seconds = audio_duration
-    consultation.last_autosave_at = datetime.utcnow()
-    
-    db.commit()
-    
-    return ConsultationAudioUploadResponse(
-        message="Audio uploaded successfully",
-        audio_file_path=str(audio_path),
-        audio_duration_seconds=audio_duration,
-    )
-
-@router.post("/{consultation_id}/audio/process", response_model=ConsultationAudioProcessResponse)
-async def process_consultation_audio(
-    consultation_id: str,
-    request:Request,
-    db: Session = Depends(get_db)
-)-> ConsultationAudioProcessResponse:
-    """
-    Process uploaded audio: transcribe and extract fields.
-    This is the main endpoint called when doctor clicks "End Recording".
-    
-    Steps:
-    1. Transcribe audio using Whisper API
-    2. Extract structured fields using GPT-4
-    3. Extract ICD-10 codes from diagnosis
-    4. Update consultation with extracted data
-    5. Delete audio file (GDPR requirement)
-    """
-    current_user = get_user_from_header(db, request)
-    
-    consultation = db.query(Consultation).filter(
-        Consultation.id == consultation_id,
-        Consultation.clinic_id == current_user.clinic_id,
-        Consultation.doctor_id == current_user.id
-    ).first()
-    
-    if not consultation:
-        raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    if not consultation.audio_file_path:
-        raise HTTPException(status_code=400, detail="No audio file uploaded")
-    
-    try:
-        # Step 1: Transcribe audio
-        app_logger.info(f"Transcribing audio for consultation {consultation_id}")
-        transcript = await audio_service.transcribe_audio(
-            consultation.audio_file_path,
-            language="ro"
-        )
-        
-        consultation.audio_transcript = transcript
-        db.commit()
-        
-        # Step 2: Get template for field extraction
-        template_service = TemplateService(db)
-        template = template_service.get_template(consultation.specialty)
-        
-        # Step 3: Extract fields from transcript
-        app_logger.info(f"Extracting fields for consultation {consultation_id}")
-        extracted_data = await llm_service.extract_fields_from_transcript(
-            transcript=transcript,
-            template=template,
-            existing_data=consultation.structured_data
-        )
-        
-        # Step 4: Extract ICD-10 codes if diagnosis mentioned
-        if "diagnosis" in extracted_data and extracted_data["diagnosis"].get("diagnoses"):
-            diagnosis_text = extracted_data["diagnosis"]["diagnoses"]
-            app_logger.info(f"Extracting ICD-10 codes for consultation {consultation_id}")
-            
-            icd10_codes = await llm_service.extract_icd10_codes(
-                diagnosis_text=diagnosis_text,
-                icd10_database=""  # Load from CSV or use LLM's knowledge
-            )
-            
-            extracted_data["diagnosis"]["icd10_codes"] = icd10_codes
-        
-        # Step 5: Merge extracted data with existing (don't overwrite manual entries)
-        existing_data = consultation.structured_data or {}
-        
-        # Deep merge: extracted data goes in, but existing manual entries stay
-        merged_data = _deep_merge_with_confidence(existing_data, extracted_data)
-        
-        consultation.structured_data = merged_data
-        consultation.last_autosave_at = datetime.utcnow()
-        
-        db.commit()
-        
-        # Step 6: Delete audio file (GDPR requirement - keep only transcript)
-        try:
-            audio_path = Path(consultation.audio_file_path)
-            if audio_path.exists():
-                audio_path.unlink()
-                app_logger.info(f"Deleted audio file for consultation {consultation_id}")
-            consultation.audio_file_path = None  # Clear path after deletion
-            db.commit()
-        except Exception as e:
-            app_logger.error(f"Failed to delete audio file: {str(e)}")
-        
-        # Audit log
-        audit_log = GDPRAuditLog(
-            clinic_id=current_user.clinic_id,
-            user_id=current_user.id,
-            patient_id=consultation.patient_id,
-            action="audio_processed_and_deleted",
-            legal_basis="consent",
-            data_category="medical_consultation",
-            details={
-                "consultation_id": consultation_id,
-                "transcript_length": len(transcript),
-                "fields_extracted": list(extracted_data.keys()),
-                "audio_deleted": True
-            }
-        )
-        db.add(audit_log)
-        db.commit()
-        
-        return ConsultationAudioProcessResponse(
-            message="Audio processed successfully",
-            transcript=transcript,
-            extracted_data=merged_data,
-            audio_deleted=True,
-        )
-        
-    except Exception as e:
-        app_logger.error(f"Audio processing failed for consultation {consultation_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Audio processing failed: {str(e)}")
-
-def _deep_merge_with_confidence(
-    existing: Dict[str, Any],
-    extracted: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Deep merge extracted data with existing data.
-    
-    Rules:
-    - If field exists in 'existing' and not in 'extracted': keep existing
-    - If field exists in 'extracted' with high confidence: use extracted
-    - If field exists in both with medium/low confidence: keep existing (doctor manually entered)
-    - If field only in extracted: add it
-    """
-    merged = dict(existing)
-    
-    for section_id, section_data in extracted.items():
-        if section_id not in merged:
-            merged[section_id] = section_data
-        else:
-            # Merge section-level data
-            merged_section = dict(merged[section_id])
-            
-            for field_id, field_value in section_data.items():
-                # Skip confidence fields
-                if field_id.endswith("_confidence"):
-                    continue
-                
-                # Check confidence
-                confidence_key = f"{field_id}_confidence"
-                confidence = section_data.get(confidence_key, "medium")
-                
-                # If field doesn't exist, add it
-                if field_id not in merged_section:
-                    merged_section[field_id] = field_value
-                    if confidence_key in section_data:
-                        merged_section[confidence_key] = section_data[confidence_key]
-                
-                # If field exists and extracted has high confidence, consider updating
-                elif confidence == "high":
-                    # Only update if existing value is empty/null
-                    if not merged_section[field_id]:
-                        merged_section[field_id] = field_value
-                        if confidence_key in section_data:
-                            merged_section[confidence_key] = section_data[confidence_key]
-            
-            merged[section_id] = merged_section
-    
-    return merged
-
-@router.get("/{consultation_id}/audio/transcript", response_model=ConsultationTranscriptResponse)
-async def get_consultation_transcript(
-    consultation_id: str,
-    request:Request,
-    db: Session = Depends(get_db)
-)-> ConsultationTranscriptResponse:
-    """Get audio transcript for consultation (for review/editing)"""
-    current_user = get_user_from_header(db, request)
-    
-    consultation = db.query(Consultation).filter(
-        Consultation.id == consultation_id,
-        Consultation.clinic_id == current_user.clinic_id
-    ).first()
-    
-    if not consultation:
-        raise HTTPException(status_code=404, detail="Consultation not found")
-    
-    return ConsultationTranscriptResponse(
-        consultation_id=consultation_id,
-        transcript=consultation.audio_transcript,
-        duration_seconds=consultation.audio_duration_seconds,
-    )
+    return {"patients_today": patients_today}
