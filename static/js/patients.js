@@ -1,4 +1,4 @@
-    //Patient CRUD + rendering
+//Patient CRUD + rendering
 // patients.js
 // -----------------------------------------------------------------------------
 // Handles patient-related functionality for the SPA
@@ -72,7 +72,7 @@ export class PatientManager {
                 //console.log('Setting new timeout...');
                 searchTimeout = setTimeout(() => {
                     //console.log('--- DEBOUNCED SEARCH EXECUTING ---')
-                    this.searchPatients(value);
+                    this.loadPatients(value);
                 }, 300);
             });
         }
@@ -101,51 +101,35 @@ export class PatientManager {
     // -------------------------------------------------------------------------
     // Data Loading
     // -------------------------------------------------------------------------
-    async loadPatients(page = 1, searchQuery = '') {
+    /**
+     * Load patients into Patients tab with pagination and rendering.
+     */
+    async loadPatients(searchQuery = '',page = 1) {
         try {
-            //console.log('loadPatients called - page:', page, 'search:', searchQuery);
-            // Build URL with pagination parameters
-            let url = apiUrl(API_CONFIG.ENDPOINTS.patients, ``);
-            const params = new URLSearchParams({
-                page: page,
-                per_page: this.perPage
-            });
-            
-            if (searchQuery) {
-                params.append('search', searchQuery);
-            }
+            page = page || this.currentPage || 1;
+            const data = await this.fetchPatientsRaw(searchQuery,page);
 
-            if (this.currentSort) {
-            params.append('sort_by', this.currentSort); // <-- Add this
-            }
-            
-            url += `?${params.toString()}`;
-            
-            //console.log('Fetching URL:', url);
-
-            const response = await fetch(url);
-            if (!response.ok) throw new Error('Failed to load patients');
-
-            const data = await response.json();
-            
-            // Update state from paginated response
             this.patients = data.patients;
             this.currentPage = data.page;
             this.totalPages = data.total_pages;
             this.totalPatients = data.total;
             this.hasNext = data.has_next;
             this.hasPrev = data.has_prev;
-            
-            // Update UI
+
+            // UI updates
             this.renderPatients();
             this.updatePaginationControls();
             this.updatePatientCount();
 
+            return data;
+
         } catch (err) {
             console.error(err);
             showToast('Could not load patients', 'error');
+            return { patients: [] };
         }
     }
+
 
     // -------------------------------------------------------------------------
     // Pagination Controls
@@ -190,13 +174,13 @@ export class PatientManager {
     // -------------------------------------------------------------------------
     async nextPage() {
         if (this.hasNext) {
-            await this.loadPatients(this.currentPage + 1, this.searchInput?.value || '');
+            await this.loadPatients(this.searchInput?.value || '',this.currentPage + 1);
         }
     }
 
     async previousPage() {
         if (this.hasPrev) {
-            await this.loadPatients(this.currentPage - 1, this.searchInput?.value || '');
+            await this.loadPatients(this.searchInput?.value || '', this.currentPage - 1);
         }
     }
 
@@ -205,11 +189,10 @@ export class PatientManager {
     // -------------------------------------------------------------------------
     async searchPatients(query) {
         // Reset to page 1 when searching
-        
-        //console.log('searchPatients called with:', query);
-        
-        await this.loadPatients(1, query);
+        const data = await this.fetchPatientsRaw(query,1);
+        return data.patients || [];
     }
+
 
 
     // -------------------------------------------------------------------------
@@ -231,7 +214,7 @@ export class PatientManager {
             card.innerHTML = `
                 <div class="patient-info">
                     <h3>${patient.given_name} ${patient.family_name}</h3>
-                    <p>${patient.birth_date || ''} ${patient.phone ? '• ' + patient.phone : ''}</p>
+                    <p>${patient.birth_date || patient.phone ? `${patient.birth_date || ''}${patient.phone ? ' • ' + patient.phone : ''}` : '&nbsp;'}</p>
                 </div>
                 <div class="patient-actions">
                     <button class="btn-icon primary" data-action="view" data-id="${patient.id}" title="View Patient"><i class="fas fa-eye"></i></button>
@@ -337,12 +320,60 @@ export class PatientManager {
                 window.app.agendaManager.startConsultFromPatient(id);
                 break;
             case 'upload':
-                this.app.documentManager.uploadDocumentForPatient(id);
+                app.navigation.navigateTo('documents',null,id);
                 break;
             default:
                 console.warn('Unknown patient action:', action);
         }
     }
+
+    /**
+     * Retrieves full patient details by ID from the backend.
+     * Used when launching a consultation or displaying patient info
+     * outside the main patient list context.
+     */
+    async getPatientById(id) {
+        try {
+            const url = apiUrl(API_CONFIG.ENDPOINTS.patients, `${id}`);
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Patient not found');
+            return await response.json();
+        } catch (err) {
+            console.error('getPatientById error:', err);
+            return null;
+        }
+    }
+
+
+    /** -------------------------------------------------
+     * Fetch patients from backend without touching UI.
+     * Returns raw JSON data for reuse in other modules (e.g., Consultations).
+     * ---------------------------------------------------
+     */
+    async fetchPatientsRaw(searchQuery = '',page = 1) {
+        try {
+            let url = apiUrl(API_CONFIG.ENDPOINTS.patients);
+            const params = new URLSearchParams({
+            page,
+            per_page: this.perPage
+            });
+
+            if (searchQuery) params.append('search', searchQuery);
+            if (this.currentSort) params.append('sort_by', this.currentSort);
+            url += `?${params.toString()}`;
+            
+            //console.log("URL",url);
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Failed to fetch patients');
+            const data = await response.json();
+            return data; // ✅ no DOM updates, just data
+        } catch (err) {
+            console.error('fetchPatientsRaw error:', err);
+            showToast('Error fetching patients', 'error');
+            return { patients: [], total: 0, total_pages: 1 };
+        }
+    }
+
 
     // -------------------------------------------------------------------------
     // Edit Patient
@@ -500,73 +531,183 @@ export class PatientManager {
     }
 
     initViewPatientTabs() {
-        const tabButtons = document.querySelectorAll('.modal-tabs .tab-button');
-        const tabContents = document.querySelectorAll('.modal-body .tab-content');
-        
-        tabButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                const targetTab = button.dataset.tab;
-                
-                // Remove active from all
-                tabButtons.forEach(btn => btn.classList.remove('active'));
-                tabContents.forEach(content => content.classList.remove('active'));
-                
-                // Add active to clicked
-                button.classList.add('active');
-                document.getElementById(`${targetTab}-tab`).classList.add('active');
-                
-                // Load documents when switching to documents tab
-                if (targetTab === 'documents' && this.currentViewPatientId) {
-                    this.loadPatientDocuments(this.currentViewPatientId);
-                }
+        //V4 - Always resets to Overview tab when opening the modal , Prevents duplicate event listeners scoped to the view-patient modal
+        const modal = document.getElementById('view-patient-modal');
+        const tabButtons = modal.querySelectorAll('.modal-tabs .tab-button');
+        const tabContents = modal.querySelectorAll('.modal-body .tab-content');
+ 
+        // Reset to overview tab
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        tabContents.forEach(content => content.classList.remove('active'));
+        modal.querySelector('.tab-button[data-tab="overview"]')?.classList.add('active');
+        document.getElementById('overview-tab')?.classList.add('active');
+ 
+        // Only bind listeners once
+        if (!this._viewTabsInitialized) {
+            this._viewTabsInitialized = true;
+            tabButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const targetTab = button.dataset.tab;
+ 
+                    tabButtons.forEach(btn => btn.classList.remove('active'));
+                    tabContents.forEach(content => content.classList.remove('active'));
+ 
+                    button.classList.add('active');
+                    document.getElementById(`${targetTab}-tab`)?.classList.add('active');
+ 
+                    if (targetTab === 'documents' && this.currentViewPatientId) {
+                        this.loadPatientDocuments(this.currentViewPatientId);
+                    }
+                });
             });
-        });
+        }
     }
 
     async loadPatientDocuments(patientId) {
+        //print a log to confirm the function is called and patientId is correct
+        //console.log('Loading documents for patient ID:', patientId);
         const container = document.getElementById('documents-list');
         container.innerHTML = '<div class="loading-placeholder">Loading documents...</div>';
         
         try {
-            // Fetch consultations for this patient
-            const response = await fetch(apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`));
-            
-            if (!response.ok) throw new Error('Failed to load consultations');
-            
-            const consultations = await response.json();
-            
-            if (consultations.length === 0) {
+            const consultationsPromise = fetch(
+                apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)
+            ).then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to load consultations');
+                }
+                return response.json();
+            });
+
+            const documentsPromise = fetch(
+                apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)
+            ).then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to load documents');
+                }
+                return response.json();
+            });
+
+            const [consultationsResult, documentsResult] = await Promise.allSettled([
+                consultationsPromise,
+                documentsPromise,
+            ]);
+
+            const consultations = consultationsResult.status === 'fulfilled'
+                ? consultationsResult.value
+                : [];
+            const documents = documentsResult.status === 'fulfilled'
+                ? documentsResult.value
+                : [];
+            const consultationsError = consultationsResult.status === 'rejected'
+                ? 'Unable to load consultations right now.'
+                : '';
+            const documentsError = documentsResult.status === 'rejected'
+                ? 'Unable to load documents right now.'
+                : '';
+
+            if (
+                consultations.length === 0 &&
+                documents.length === 0 &&
+                !consultationsError &&
+                !documentsError
+            ) {
                 container.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-icon">📄</div>
-                        <h4>No consultations yet</h4>
-                        <p>Consultations will appear here once created</p>
+                        <h4>No consultations or documents yet</h4>
+                        <p>Consultations and documents will appear here once created</p>
                     </div>
                 `;
                 return;
             }
-            
-            // Render consultations
-            container.innerHTML = consultations.map(consultation => `
-                <div class="consultation-history-item">
-                    <div class="consultation-date">
-                        ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric'
-                        })}
+
+            const documentsSection = documentsError
+                ? `
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <h4>${documentsError}</h4>
+                        <p>Please try again later.</p>
                     </div>
-                    <div class="consultation-details">
-                        <span class="consultation-type-badge">${consultation.consultation_type}</span>
-                        <span class="consultation-status status-${consultation.status}">${consultation.status}</span>
-                        ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
+                `
+                : documents.length
+                ? this.renderGroupedDocuments(documents)
+                : `
+                    <div class="empty-state">
+                        <div class="empty-icon">📁</div>
+                        <h4>No documents yet</h4>
+                        <p>Uploaded documents will appear here once available</p>
                     </div>
+                `;
+
+            const sortedConsultations = [...consultations].sort((a, b) => {
+                const dateA = new Date(a.consultation_date || 0).getTime();
+                const dateB = new Date(b.consultation_date || 0).getTime();
+                return dateB - dateA;
+            });
+
+            const consultationsSection = consultationsError
+                ? `
+                    <div class="empty-state">
+                        <div class="empty-icon">⚠️</div>
+                        <h4>${consultationsError}</h4>
+                        <p>Please try again later.</p>
+                    </div>
+                `
+                : sortedConsultations.length
+                ? sortedConsultations.map(consultation => {
+                    const specialtyLabel = consultation.specialty || consultation.consultation_type || 'Consultation';
+                    const safeSpecialty = this.escapeHtml(specialtyLabel);
+                    const statusLabel = consultation.status || 'unknown';
+                    const statusClass = String(statusLabel).toLowerCase().replace(/[^a-z0-9_-]/g, '');
+                    return `
+                        <div class="consultation-history-item">
+                            <div class="consultation-date">
+                                ${new Date(consultation.consultation_date).toLocaleDateString('ro-RO', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                })}
+                            </div>
+                            <div class="consultation-details">
+                                <span class="consultation-type-badge">${safeSpecialty}</span>
+                                <span class="consultation-status status-${statusClass}">${this.escapeHtml(statusLabel)}</span>
+                                ${consultation.is_signed ? '<span class="signed-badge"><i class="fas fa-signature"></i> Signed</span>' : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('')
+                : `
+                    <div class="empty-state">
+                        <div class="empty-icon">🩺</div>
+                        <h4>No consultations yet</h4>
+                        <p>Consultations will appear here once created</p>
+                    </div>
+                `;
+
+            container.innerHTML = `
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
+                    ${consultationsSection}
                 </div>
-            `).join('');
-            
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
+                    ${documentsSection}
+                </div>
+            `;
+            this.bindDocumentHistoryActions();
         } catch (err) {
-            console.error('Failed to load consultations:', err);
-            container.innerHTML = '<p class="text-error">Failed to load consultation history</p>';
+            console.error('Failed to load documents or consultations:', err);
+            container.innerHTML = `
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
+                    <p class="text-error">Unable to load consultations right now.</p>
+                </div>
+                <div class="documents-section">
+                    <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
+                    <p class="text-error">Unable to load documents right now.</p>
+                </div>
+            `;
         }
     }
 
@@ -574,38 +715,210 @@ export class PatientManager {
     renderGroupedDocuments(documents) {
         // Group documents by type
         const grouped = documents.reduce((acc, doc) => {
-            const type = doc.document_type || 'other';
+            const type = (doc.document_type || 'uncategorized').trim() || 'uncategorized';
             if (!acc[type]) acc[type] = [];
             acc[type].push(doc);
             return acc;
         }, {});
         
         // Render each group
-        const container = document.getElementById('documents-list');
-        const html = Object.entries(grouped).map(([type, docs]) => `
-            <div class="document-group">
-                <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
-                    <i class="fas fa-chevron-down"></i>
-                    <span class="document-group-title">${type.replace('_', ' ').toUpperCase()}</span>
-                    <span class="document-group-count">${docs.length}</span>
-                </div>
-                <div class="document-items">
-                    ${docs.map(doc => `
+        const html = Object.entries(grouped)
+            .sort(([typeA], [typeB]) => typeA.localeCompare(typeB))
+            .map(([type, docs]) => {
+                const sortedDocs = [...docs].sort((a, b) => {
+                    const dateA = new Date(a.created_at || 0).getTime();
+                    const dateB = new Date(b.created_at || 0).getTime();
+                    return dateB - dateA;
+                });
+
+                const titleLabel = this.escapeHtml(type.replace(/_/g, ' ').toUpperCase());
+                const groupItems = sortedDocs.map(doc => {
+                    const rawFilename = doc.filename || doc.title || 'Untitled';
+                    const filename = this.escapeHtml(rawFilename);
+                    const encodedFilename = encodeURIComponent(rawFilename);
+                    const snippet = doc.text_snippet || '';
+                    const truncatedSnippet = snippet
+                        ? this.escapeHtml(this.truncateText(snippet, 160))
+                        : '';
+                    const snippetMarkup = truncatedSnippet
+                        ? `<span class="document-snippet">${truncatedSnippet}</span>`
+                        : '<span class="document-snippet text-muted">No extracted text</span>';
+                    const downloadAction = doc.has_original_file && doc.download_url
+                        ? `
+                            <a class="btn-small" href="${doc.download_url}" target="_blank" rel="noopener">
+                                <i class="fas fa-download"></i>
+                            </a>
+                        `
+                        : '';
+
+                    return `
                         <div class="document-item-row">
-                            <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
-                            <span class="document-title">${doc.filename || doc.title}</span>
+                            <div class="document-item-details">
+                                <span class="document-date">${new Date(doc.created_at).toLocaleDateString('ro-RO')}</span>
+                                <span class="document-title">${filename}</span>
+                                ${snippetMarkup}
+                            </div>
                             <div class="document-actions">
-                                <button class="btn-small" onclick="app.viewDocument('${doc.id}')">
-                                    <i class="fas fa-eye"></i>
+                                <button
+                                    class="btn-small document-view-btn"
+                                    data-action="view-document-text"
+                                    data-document-id="${doc.id}"
+                                    data-full-text-url="${doc.full_text_url}"
+                                    data-document-title="${encodedFilename}"
+                                >
+                                    <i class="fas fa-eye"></i> View
                                 </button>
+                                ${downloadAction}
                             </div>
                         </div>
-                    `).join('')}
+                    `;
+                }).join('');
+
+                return `
+                    <div class="document-group">
+                        <div class="document-group-header" onclick="this.classList.toggle('collapsed'); this.nextElementSibling.classList.toggle('collapsed')">
+                            <i class="fas fa-chevron-down"></i>
+                            <span class="document-group-title">${titleLabel}</span>
+                            <span class="document-group-count">${sortedDocs.length}</span>
+                        </div>
+                        <div class="document-items">
+                            ${groupItems}
+                        </div>
+                    </div>
+                `;
+            })
+            .join('');
+        
+        return html;
+    }
+
+    bindDocumentHistoryActions() {
+        const container = document.getElementById('documents-list');
+        if (!container || container.dataset.actionsBound) {
+            return;
+        }
+
+        container.addEventListener('click', (event) => {
+            const target = event.target.closest('[data-action="view-document-text"]');
+            if (!target) {
+                return;
+            }
+            const documentId = target.dataset.documentId;
+            const fullTextUrl = target.dataset.fullTextUrl;
+            const documentTitle = target.dataset.documentTitle;
+            this.openDocumentTextModal(documentId, fullTextUrl, documentTitle);
+        });
+
+        container.dataset.actionsBound = 'true';
+    }
+
+    ensureDocumentTextModal() {
+        let modal = document.getElementById('document-text-modal');
+        if (modal) {
+            return modal;
+        }
+
+        modal = document.createElement('div');
+        modal.id = 'document-text-modal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-content large">
+                <div class="modal-header">
+                    <h2 id="document-text-modal-title">Extracted Text</h2>
+                    <button class="modal-close" data-action="close-document-text-modal">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div id="document-text-modal-content">
+                        <div class="loading-placeholder">Loading text...</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn-secondary" data-action="close-document-text-modal">Close</button>
                 </div>
             </div>
-        `).join('');
-        
-        container.innerHTML = html;
+        `;
+
+        document.body.appendChild(modal);
+
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+                hideModal('document-text-modal');
+            }
+        });
+
+        modal.querySelectorAll('[data-action="close-document-text-modal"]').forEach(button => {
+            button.addEventListener('click', () => hideModal('document-text-modal'));
+        });
+
+        return modal;
+    }
+
+    async openDocumentTextModal(documentId, fullTextUrl, documentTitle) {
+        if (!documentId || !fullTextUrl) {
+            showToast('Document text is unavailable.', 'warning');
+            return;
+        }
+
+        const modal = this.ensureDocumentTextModal();
+        const title = modal.querySelector('#document-text-modal-title');
+        const content = modal.querySelector('#document-text-modal-content');
+        let decodedTitle = '';
+        if (documentTitle) {
+            try {
+                decodedTitle = decodeURIComponent(documentTitle);
+            } catch (error) {
+                decodedTitle = documentTitle;
+            }
+        }
+
+        title.textContent = documentTitle
+            ? `Extracted Text - ${decodedTitle}`
+            : 'Extracted Text';
+        content.innerHTML = '<div class="loading-placeholder">Loading text...</div>';
+        showModal('document-text-modal');
+
+        try {
+            const response = await fetch(fullTextUrl);
+            if (!response.ok) {
+                throw new Error('Failed to load document text');
+            }
+            const data = await response.json();
+            const text = data?.text || '';
+            content.innerHTML = text
+                ? `
+                    <pre style="white-space: pre-wrap; max-height: 400px; overflow-y: auto; margin: 0;">
+${this.escapeHtml(text)}
+                    </pre>
+                `
+                : '<p class="text-muted">No extracted text available.</p>';
+        } catch (error) {
+            console.error('Failed to load document text:', error);
+            content.innerHTML = '<p class="text-error">Unable to load extracted text.</p>';
+        }
+    }
+
+    escapeHtml(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    truncateText(text, maxLength) {
+        if (!text) {
+            return '';
+        }
+        if (text.length <= maxLength) {
+            return text;
+        }
+        return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
     }
 
     // Actions from modal footer

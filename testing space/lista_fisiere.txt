@@ -37,16 +37,38 @@
 │   │   ├── __init__.py
 │   │   ├── __pycache__
 │   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── audio_service.cpython-312.pyc
 │   │   │   ├── document.cpython-312.pyc
 │   │   │   ├── enhanced_ocr.cpython-312.pyc
+│   │   │   ├── llm_extraction_service.cpython-312.pyc
 │   │   │   ├── ocr.cpython-312.pyc
 │   │   │   ├── romanian_document_templates.cpython-312.pyc
-│   │   │   └── romanian_id_processor.cpython-312.pyc
+│   │   │   ├── romanian_id_processor.cpython-312.pyc
+│   │   │   └── template_service.cpython-312.pyc
+│   │   ├── audio_service.py
 │   │   ├── document.py
 │   │   ├── enhanced_ocr.py
+│   │   ├── llm_extraction_service.py
 │   │   ├── ocr.py
 │   │   ├── romanian_document_templates.py
-│   │   └── romanian_id_processor.py
+│   │   ├── romanian_id_processor.py
+│   │   ├── template_service.py
+│   │   └── templates
+│   │       ├── __pycache__
+│   │       │   ├── base_template.cpython-312.pyc
+│   │       │   ├── cardiology_template.cpython-312.pyc
+│   │       │   ├── core_sections.cpython-312.pyc
+│   │       │   ├── gynecology_template.cpython-312.pyc
+│   │       │   ├── internal_medicine_template.cpython-312.pyc
+│   │       │   ├── obstetrics_template.cpython-312.pyc
+│   │       │   └── respiratory_template.cpython-312.pyc
+│   │       ├── base_template.py
+│   │       ├── cardiology_template.py
+│   │       ├── core_sections.py
+│   │       ├── gynecology_template.py
+│   │       ├── internal_medicine_template.py
+│   │       ├── obstetrics_template.py
+│   │       └── respiratory_template.py
 │   └── utils
 │       ├── __init__.py
 │       ├── __pycache__
@@ -76,20 +98,26 @@
 │   ├── components
 │   │   └── document-manager.html
 │   ├── css
-│   │   ├── document-manager.css
+│   │   ├── old-document-manager.css
 │   │   └── styles.css
 │   ├── favicon.ico
 │   ├── images
+│   │   ├── bg_login.jpg
 │   │   └── reconomed-logo.png
 │   ├── index.html
 │   ├── js
 │   │   ├── app.js
 │   │   ├── auth.js
+│   │   ├── clinics.js
 │   │   ├── consultations.js
-│   │   ├── document-manager.js
+│   │   ├── documents
+│   │   │   ├── documents.actions.js
+│   │   │   └── documents.navigation.js
 │   │   ├── documents.js
 │   │   ├── image-compression.js
 │   │   ├── navigation.js
+│   │   ├── old-document-manager.js
+│   │   ├── old-documents.js
 │   │   ├── old_app.js
 │   │   ├── patients.js
 │   │   ├── ui.js
@@ -99,5 +127,13 @@
 │   └── templates
 │       └── gdpr_consent_ro.html
 └── uploads
+    ├── 2562cfb4-fec5-48c1-ad65-8d8e928ae88a.png
+    ├── 3493d334-3778-4d6e-91cf-74fc3e1c881e.jpeg
+    ├── 543f9e02-96a9-44d5-83ca-75b615123c07.jpg
+    ├── 71ca6850-c720-4471-8e2d-e720700e7699.png
+    ├── 74e6a3d9-410f-46a3-b9a8-d54660e537a7.png
+    ├── a28b7cf1-ff96-40b5-ba84-7bed2f6b24b6.png
+    ├── cd34a9dd-d47e-421c-b9a7-887d86a0dc22.png
+    └── de4d94e3-87f6-46e7-91b9-294ba3bc85a8.png
 
-16 directories, 85 files
+19 directories, 118 files

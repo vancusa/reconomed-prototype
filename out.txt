@@ -1,0 +1,179 @@
+.
+├── README.md
+├── app
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── auth.cpython-312.pyc
+│   │   ├── database.cpython-312.pyc
+│   │   ├── main.cpython-312.pyc
+│   │   ├── models.cpython-312.pyc
+│   │   └── schemas.cpython-312.pyc
+│   ├── auth.py
+│   ├── database.py
+│   ├── main.py
+│   ├── models.py
+│   ├── routers
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── auth.cpython-312.pyc
+│   │   │   ├── clinics.cpython-312.pyc
+│   │   │   ├── consultations.cpython-312.pyc
+│   │   │   ├── dashboard.cpython-312.pyc
+│   │   │   ├── documents.cpython-312.pyc
+│   │   │   ├── patients.cpython-312.pyc
+│   │   │   └── search.cpython-312.pyc
+│   │   ├── auth.py
+│   │   ├── clinics.py
+│   │   ├── consultations.py
+│   │   ├── dashboard.py
+│   │   ├── documents.py
+│   │   ├── patients.py
+│   │   └── search.py
+│   ├── schemas.py
+│   ├── services
+│   │   ├── __init__.py
+│   │   ├── __pycache__
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── audio_service.cpython-312.pyc
+│   │   │   ├── bulk_ocr.cpython-312.pyc
+│   │   │   ├── document.cpython-312.pyc
+│   │   │   ├── enhanced_ocr.cpython-312.pyc
+│   │   │   ├── gdpr_logging.cpython-312.pyc
+│   │   │   ├── llm_extraction_service.cpython-312.pyc
+│   │   │   ├── ocr.cpython-312.pyc
+│   │   │   ├── ocr_worker.cpython-312.pyc
+│   │   │   ├── romanian_document_templates.cpython-312.pyc
+│   │   │   ├── romanian_id_processor.cpython-312.pyc
+│   │   │   └── template_service.cpython-312.pyc
+│   │   ├── audio_service.py
+│   │   ├── bulk_ocr.py
+│   │   ├── document.py
+│   │   ├── enhanced_ocr.py
+│   │   ├── gdpr_logging.py
+│   │   ├── llm_extraction_service.py
+│   │   ├── ocr.py
+│   │   ├── ocr_worker.py
+│   │   ├── romanian_document_templates.py
+│   │   ├── romanian_id_processor.py
+│   │   ├── template_service.py
+│   │   └── templates
+│   │       ├── __pycache__
+│   │       │   ├── base_template.cpython-312.pyc
+│   │       │   ├── cardiology_template.cpython-312.pyc
+│   │       │   ├── core_sections.cpython-312.pyc
+│   │       │   ├── gynecology_template.cpython-312.pyc
+│   │       │   ├── internal_medicine_template.cpython-312.pyc
+│   │       │   ├── obstetrics_template.cpython-312.pyc
+│   │       │   └── respiratory_template.cpython-312.pyc
+│   │       ├── base_template.py
+│   │       ├── cardiology_template.py
+│   │       ├── core_sections.py
+│   │       ├── gynecology_template.py
+│   │       ├── internal_medicine_template.py
+│   │       ├── obstetrics_template.py
+│   │       └── respiratory_template.py
+│   └── utils
+│       ├── __init__.py
+│       ├── __pycache__
+│       │   ├── __init__.cpython-312.pyc
+│       │   ├── file.cpython-312.pyc
+│       │   ├── gdpr_utils.cpython-312.pyc
+│       │   └── romanian_validation.cpython-312.pyc
+│       ├── file.py
+│       ├── gdpr_utils.py
+│       └── romanian_validation.py
+├── audit.log
+├── out.txt
+├── reconomed.db
+├── requirements.txt
+├── static
+│   ├── components
+│   │   └── document-manager.html
+│   ├── css
+│   │   ├── old-document-manager.css
+│   │   └── styles.css
+│   ├── favicon.ico
+│   ├── images
+│   │   ├── bg_login.jpg
+│   │   └── reconomed-logo.png
+│   ├── index.html
+│   ├── js
+│   │   ├── app.js
+│   │   ├── auth.js
+│   │   ├── clinics.js
+│   │   ├── consultations.js
+│   │   ├── documents
+│   │   │   ├── documents.actions.js
+│   │   │   └── documents.navigation.js
+│   │   ├── documents.js
+│   │   ├── image-compression.js
+│   │   ├── navigation.js
+│   │   ├── old-document-manager.js
+│   │   ├── old-documents.js
+│   │   ├── old_app.js
+│   │   ├── patients.js
+│   │   ├── ui.js
+│   │   ├── upload-handler.js
+│   │   └── utils.js
+│   ├── login.html
+│   └── templates
+│       └── gdpr_consent_ro.html
+├── testing space
+│   ├── analyze_project.py
+│   ├── classes.png
+│   ├── classes.txt
+│   ├── classes_myproject.png
+│   ├── clean_up.py
+│   ├── graph.dot
+│   ├── graph.html
+│   ├── lista_fisiere.txt
+│   ├── out.txt
+│   ├── out_gray_deskew_psm11.txt
+│   ├── out_gray_deskew_psm3.txt
+│   ├── out_gray_deskew_psm4.txt
+│   ├── out_gray_deskew_psm6.txt
+│   ├── out_gray_psm11.txt
+│   ├── out_gray_psm3.txt
+│   ├── out_gray_psm4.txt
+│   ├── out_gray_psm6.txt
+│   ├── out_thr_deskew_psm11.txt
+│   ├── out_thr_deskew_psm3.txt
+│   ├── out_thr_deskew_psm4.txt
+│   ├── out_thr_deskew_psm6.txt
+│   ├── out_thr_psm11.txt
+│   ├── out_thr_psm3.txt
+│   ├── out_thr_psm4.txt
+│   ├── out_thr_psm6.txt
+│   ├── packages.png
+│   ├── packages_myproject.png
+│   ├── populate_db.py
+│   ├── reconomed.db.backup_20251204_081726
+│   ├── reconomed.db.backup_20251204_082511
+│   ├── reconomed.db.backup_20251217_094754
+│   ├── reconomed.db.backup_20251217_100415
+│   ├── reconomed.log
+│   ├── setup_clinic.py
+│   ├── temp_img.jpg
+│   ├── temp_img2.jpg
+│   ├── temp_migrate_link1.py
+│   ├── temp_migrate_link2.py
+│   ├── temp_migrate_link3.py
+│   └── temp_to_test.py
+└── uploads
+    ├── 0d1a5b87-a977-44a4-89e1-36fa8f15fe9f.jpg
+    ├── 1b64f288-f52d-4f1e-912a-ce01fa3591ab.png
+    ├── 21235eb7-0112-4d31-9281-46819e79dd19.tif
+    ├── 227de0b8-63f3-4f23-891e-198d21160a9e.png
+    ├── 22f71080-3c24-48f3-a249-5ac769f69cf8.jpg
+    ├── 2562cfb4-fec5-48c1-ad65-8d8e928ae88a.png
+    ├── 527ddaa0-c0d1-44ce-8064-6332b3f11bde.tif
+    ├── 5b7efa79-7fb8-4e43-86f4-ca3036de80ea.jpg
+    ├── 8a26e50a-5f31-4030-8541-2b4e5e233c86.jpg
+    ├── 939b6b19-fae8-472c-89b8-1b3e673d4113.jpg
+    ├── cbafc100-7d01-4359-b2e9-863b968baf27.jpg
+    ├── de2e9328-3f43-4c3c-b484-240ceab060b4.jpg
+    └── e441168b-d3fc-4b45-adfd-c97056004996.jpg
+
+20 directories, 157 files

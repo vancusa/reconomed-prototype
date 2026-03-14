@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ReconoMed - Healthcare Document Processing</title>
     <link rel="stylesheet" href="/static/css/styles.css">
-    <link rel="stylesheet" href="/static/css/document-manager.css">
+    <!--<link rel="stylesheet" href="/static/css/document-manager.css">-->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -161,18 +161,16 @@
 
                 <!-- Upload Area -->
                 <div id="upload-area" class="upload-area">
-                    <div class="upload-dropzone" id="upload-dropzone">
-                        <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
-                        <div id="upload-prompt" class="upload-prompt">
-                            <div class="upload-icon">📷</div>
-                            <h3>Upload Documents</h3>
-                            <p>Drag and drop images here or click to select files</p>
-                            <p class="upload-hint">Images will be compressed automatically</p>
-                        </div>
-                        <div id="upload-status" class="upload-status" style="display: none;">
+                    <input type="file" id="file-input" multiple accept="image/*" style="display: none;">
+                    <div id="upload-prompt">
+                        <div class="upload-icon">📷</div>
+                        <h3>Upload Documents</h3>
+                        <p>Drag and drop images here or <span class="upload-link clickable">click to select files</span></p>
+                        <p class="upload-hint">Images will be compressed automatically</p>
+                    <div id="upload-status" class="upload-status" style="display: none;">
                             <div class="spinner"></div>
                             <p>Compressing and uploading files...</p>
-                        </div>
+                    </div>
                     </div>
                 </div>
 
@@ -180,32 +178,43 @@
                 <div class="document-tabs">
                     <div class="document-tabs__header">
                         <button class="tab-button active" data-tab="unprocessed">
+                            <i class="fas fa-inbox"></i>
                             Unprocessed <span class="tab-count" id="unprocessed-count">0</span>
                         </button>
                         <button class="tab-button" data-tab="processing">
+                            <i class="fas fa-spinner"></i>
                             Processing <span class="tab-count" id="processing-count">0</span>
                         </button>
                         <button class="tab-button" data-tab="validation">
+                            <i class="fas fa-clipboard-check"></i>
                             Validation <span class="tab-count" id="validation-count">0</span>
                         </button>
                         <button class="tab-button" data-tab="completed">
+                            <i class="fas fa-check-circle"></i>
                             Completed <span class="tab-count" id="completed-count">0</span>
+                        </button>
+                        <button class="tab-button" data-tab="error">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            Error <span class="tab-count" id="error-count">0</span>
                         </button>
                     </div>
 
                     <div class="document-tabs__content">
-                        <!-- Unprocessed Tab -->
                         <div id="unprocessed-tab" class="tab-content active">
-                            <div class="uploads-toolbar">
+                            <div class="uploads-toolbar" id="uploads-toolbar">
                                 <div class="uploads-toolbar__left">
                                     <label class="select-all">
                                         <input type="checkbox" id="select-all">
-                                        Select All (<span id="total-uploads">0</span>)
+                                        <span id="select-all-label">Select all (<span id="total-uploads">0</span>)</span>
                                     </label>
                                 </div>
                                 <div class="uploads-toolbar__right">
-                                    <button class="view-toggle active" data-view="grid">⊞</button>
-                                    <button class="view-toggle" data-view="list">☰</button>
+                                    <button class="view-toggle active" data-view="grid" aria-label="Grid view">
+                                        <i class="fas fa-th-large"></i>
+                                    </button>
+                                    <button class="view-toggle" data-view="list" aria-label="List view">
+                                        <i class="fas fa-list"></i>
+                                    </button>
                                 </div>
                             </div>
 
@@ -220,7 +229,10 @@
                                             <select id="batch-patient">
                                                 <option value="">Select Patient...</option>
                                             </select>
-                                            <button id="apply-batch-patient" class="btn-secondary">Apply</button>
+                                            <button id="apply-batch-patient" class="btn-secondary">
+                                                <i class="fas fa-check"></i>
+                                                Apply
+                                            </button>
                                         </div>
                                     </div>
                                     <div class="batch-control-group">
@@ -231,33 +243,31 @@
                                                 <option value="romanian_id">Romanian ID</option>
                                                 <option value="lab_result">Lab Result</option>
                                                 <option value="discharge_note">Discharge Note</option>
-                                                <option value="prescription">Prescription</option>
                                             </select>
-                                            <button id="apply-batch-type" class="btn-secondary">Apply</button>
+                                            <button id="apply-batch-type" class="btn-secondary">
+                                                <i class="fas fa-check"></i>
+                                                Apply
+                                            </button>
                                         </div>
                                     </div>
                                     <div class="batch-control-group">
-                                        <button id="start-processing" class="btn-primary">Start OCR Processing</button>
+                                        <button id="start-processing" class="btn-primary">
+                                            <i class="fas fa-sync-alt"></i>
+                                            Start OCR Processing
+                                        </button>
                                     </div>
                                 </div>
                             </div>
-
                             <div id="file-container" class="file-container grid"></div>
                             <div id="empty-state" class="empty-state">
-                                <div class="empty-icon">📄</div>
-                                <h3>No uploads yet</h3>
-                                <p>Upload some documents to get started</p>
                             </div>
                         </div>
 
                         <!-- Processing Tab -->
                         <div id="processing-tab" class="tab-content">
                             <div class="queue-summary">
-                                <h3>Processing <span id="processing-total">0</span> documents</h3>
-                                <p>Documents are processed automatically in order</p>
-                                <button class="btn-secondary" onclick="app.refreshProcessingQueue()">
-                                    <i class="fas fa-sync-alt"></i> Refresh Queue
-                                </button>
+                                <h3 id="processing-title">Processing</h3>
+                                <p id="processing-body">Documents are processing automatically.</p>
                             </div>
                             <div id="processing-list" class="processing-list"></div>
                         </div>
@@ -287,6 +297,14 @@
                             </div>
                             <div id="completed-list" class="completed-list"></div>
                         </div>
+                        <!-- Error Tab -->
+                        <div id="error-tab" class="tab-content">
+                            <div class="validation-summary">
+                                <h3><span id="error-total">0</span> documents with errors</h3>
+                                <p>These uploads failed OCR; consider deleting or re-uploading</p>
+                            </div>
+                            <div id="error-list" class="validation-list"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -296,22 +314,160 @@
         <section id="consult" class="content-section">
             <div id="consult-container"></div>
         </section>
-    </main>
 
-    <!-- Patient Details Modal -->
-    <div id="patient-details-modal" class="modal">
-        <div class="modal-content large">
-            <div class="modal-header">
-                <h2>Patient Details</h2>
-                <button class="modal-close" onclick="closePatientDetailsModal()">
-                    <i class="fas fa-times"></i>
-                </button>
+        <!-- Consultations Section -->
+        <!-- ===================== CONSULTATIONS SECTION ===================== -->
+        <section id="consultations" class="content-section">
+        <div class="page-header">
+            <h1>Consultations</h1>
+            <p>Manage patients, conduct consultations, and generate discharges</p>
+        </div>
+
+        <!-- Persistent patient header -->
+        <div id="patient-header" class="patient-header hidden">
+            <div class="patient-header__info">
+            <h2 id="patient-name">Select a Patient</h2>
+            <p id="patient-details">Age — / ID — / Gender —</p>
             </div>
-            <div class="patient-details-content" id="patient-details-content">
-                <!-- Patient details will be loaded here -->
+            <div class="patient-header__actions">
+            <button id="change-patient" class="btn-secondary small">Change Patient</button>
             </div>
         </div>
-    </div>
+
+        <!-- Consultation Tabs -->
+        <div class="consultation-tabs">
+            <div class="consultation-tabs__header">
+                <button class="tab-button active" data-tab="patient-selection">
+                    Patient Selection
+                </button>
+                <button class="tab-button" data-tab="patient-review">
+                    Patient Review
+                </button>
+                <button class="tab-button" data-tab="consultation">
+                    Consultation
+                </button>
+                <button class="tab-button" data-tab="discharge">
+                    Discharge
+                </button>
+            </div>
+
+            <div class="consultation-tabs__content">
+            <!-- 1️⃣ PATIENT SELECTION TAB -->
+            <div id="patient-selection-tab" class="tab-content active">
+                <div class="patient-selection-container">
+                <h3>Select or Search for a Patient</h3>
+
+                <div class="form-group">
+                    <label for="consult-patient-search">Search Patient</label>
+                    <input
+                    type="text"
+                    id="consult-patient-search"
+                    placeholder="Search by name, CNP, or phone..."
+                    />
+                </div>
+
+                <div id="patient-search-results" class="consult-patient-search-results">
+                    <div class="empty-state">
+                    <div class="empty-icon">🔍</div>
+                    <h4>Search for a patient to begin</h4>
+                    <p>Results will appear here</p>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button id="new-patient-btn" class="btn-secondary">
+                    + Add New Patient
+                    </button>
+                </div>
+                </div>
+            </div>
+
+            <!-- 2️⃣ PATIENT REVIEW TAB -->
+            <div id="patient-review-tab" class="tab-content">
+                <div class="patient-review-container">
+                <h3>Patient Documents</h3>
+                <p class="muted">Grouped by type and date</p>
+
+                <div id="patient-document-tree" class="document-tree">
+                    <div class="empty-state">
+                    <div class="empty-icon">📁</div>
+                    <h4>No documents yet</h4>
+                    <p>Select a patient to load their history</p>
+                    </div>
+                </div>
+                </div>
+            </div>
+
+            <!-- 3️⃣ CONSULTATION TAB -->
+            <div id="consultation-tab" class="tab-content">
+                <div class="consultation-container">
+                <h3>New Consultation</h3>
+
+                <form id="consultation-form" class="consultation-form">
+                    <div class="form-row">
+                    <div class="form-group">
+                        <label for="consultation-type">Consultation Type *</label>
+                        <select id="consultation-type" name="consultation_type" required>
+                        <option value="">Select type...</option>
+                        <!-- To be populated dynamically from doctor’s specialties -->
+                        </select>
+                    </div>
+                    </div>
+
+                    <div class="form-group">
+                    <label for="consultation-notes">Consultation Notes</label>
+                    <textarea
+                        id="consultation-notes"
+                        name="notes"
+                        rows="8"
+                        placeholder="Dictate or type your notes here..."
+                    ></textarea>
+                    </div>
+
+                    <div class="consultation-actions">
+                    <button type="button" id="start-audio-recording" class="btn-secondary">
+                        <i class="fas fa-microphone"></i> Start Recording
+                    </button>
+                    <button type="submit" class="btn-primary">
+                        <i class="fas fa-save"></i> Save Consultation
+                    </button>
+                    </div>
+                </form>
+                </div>
+            </div>
+
+            <!-- 4️⃣ DISCHARGE TAB -->
+            <div id="discharge-tab" class="tab-content">
+                <div class="discharge-container">
+                <h3>Generate Discharge Summary</h3>
+
+                <p class="muted">Select documents and consult data to include</p>
+
+                <div id="discharge-selection" class="discharge-selection">
+                    <div id="discharge-doc-list" class="discharge-doc-list">
+                    <!-- Populated dynamically with documents grouped by type -->
+                    </div>
+
+                    <div id="discharge-preview" class="discharge-preview">
+                    <h4>Discharge Summary Preview</h4>
+                    <div id="discharge-content" class="discharge-content"></div>
+                    </div>
+                </div>
+
+                <div class="discharge-actions">
+                    <button id="generate-discharge" class="btn-primary">
+                    <i class="fas fa-file-medical"></i> Generate Discharge
+                    </button>
+                    <button id="download-discharge" class="btn-secondary">
+                    <i class="fas fa-download"></i> Download
+                    </button>
+                </div>
+                </div>
+            </div>
+            </div>
+        </div>
+        </section>
+    </main>
 
     <!-- Add Patient Modal -->
     <div id="add-patient-modal" class="modal">
@@ -368,13 +524,24 @@
         </div>
     </div>
 
-
     <!-- Validation Modal -->
     <div id="validation-modal" class="validation-modal" style="display: none;">
         <div class="validation-modal__content">
             <div class="validation-modal__header">
                 <button id="validation-back" class="back-button">← Back to list</button>
                 <h3 id="validation-title">Document Validation</h3>
+                <span id="validation-filename" class="validation-filename"></span>
+            </div>
+            <div class="validation-modal__actions">
+                <button id="approve-validation" class="btn btn-primary">
+                    <i class="fas fa-check"></i> Assign & complete
+            </button>
+            <button id="save-draft" class="btn btn-secondary">
+                <i class="fas fa-save"></i> Save draft
+            </button>
+            <button id="reject-validation" class="btn btn-reject">
+                <i class="fas fa-times"></i> Reject
+                </button>
             </div>
             <div class="validation-modal__body">
                 <div class="validation-image">
@@ -691,7 +858,7 @@
         </div>
         <p>Processing...</p>
     </div>
-
+    
     <!-- Toast Notifications -->
     <div id="toast-container" class="toast-container"></div>
 

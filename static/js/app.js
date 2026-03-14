@@ -20,7 +20,7 @@ const API_CONFIG = {
         documents: '/documents/',
         patients: '/patients/',
         search: '/search/'
-    }
+    }  
 };
 
 function apiUrl(endpoint, path = '') {
@@ -97,6 +97,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 window.app = app;
+window.consultationManager = app.consultationManager;
+window.clinicManager = app.clinicManager;
+window.documentManager = app.DocumentManager;
+
 
 // Make consultationManager available globally for any remaining inline handlers
 window.consultationManager = app.consultationManager;

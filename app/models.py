@@ -138,29 +138,89 @@ class Consultation(Base):
 class Document(Base):
     __tablename__ = "documents"
     
+    # Core identification
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    patient_id = Column(String, ForeignKey("patients.id"), nullable=False)
-    clinic_id = Column(String, ForeignKey("clinics.id"), nullable=False)
+    patient_id = Column(String, ForeignKey("patients.id"), nullable=True, index=True)
+    clinic_id = Column(String, ForeignKey("clinics.id"), nullable=False, index=True)
 
+    #File metadata
     filename = Column(String(255), nullable=False)
     original_filename = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
-    file_size = Column(Integer)
-    document_type = Column(String(100))
-    document_subtype = Column(String(100))
-    ocr_text = Column(Text)
-    ocr_confidence = Column(Integer, default=0)
-    ocr_status = Column(String(20), default="pending")
-    extracted_data = Column(JSON)
-    validation_status = Column(String(20), default="pending")
-    validated_by = Column(String, ForeignKey("users.id"))
-    validated_at = Column(DateTime)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    file_size = Column(Integer, nullable=True)
+
+    # Document classification
+    document_type = Column(String(100), nullable=True)
+    document_subtype = Column(String(100), nullable=True)
+    
+    # OCR results
+    ocr_text = Column(Text, nullable=True)
+    ocr_confidence = Column(Integer, default=0, nullable=True)
+    ocr_status = Column(String(20), default="pending", nullable=True)
+    extracted_data = Column(JSON, nullable=True)
+    
+    #Validation tracking
+    validation_status = Column(String(20), default="pending", nullable=True)
+    validated_by = Column(String, ForeignKey("users.id"), nullable=True)
+    validated_at = Column(DateTime, nullable=True)
+    
+    #Timestamp
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Link to upload (one-to-one relationship)
+    upload_id = Column(String, ForeignKey('uploads.id'), nullable=True, unique=True)
+
 
     # Relationships
     patient = relationship("Patient", back_populates="documents")
     clinic = relationship("Clinic", back_populates="documents")
     validator = relationship("User", back_populates="validated_documents")
+    upload = relationship("Upload", back_populates="document")
+
+# ----------------------------
+# Uploads
+# ----------------------------
+class Upload(Base):
+    __tablename__ = "uploads"
+
+    #Core identification
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    clinic_id = Column(String, ForeignKey("clinics.id"), nullable=True, index=True)
+    
+    #File metadata
+    filename = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+    file_size = Column(Integer, nullable=True)
+
+    document_type = Column(String, nullable=True)
+
+    # Queue management fields
+    job_state = Column(String, nullable=False, default='queued', index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    claimed_at = Column(DateTime, nullable=True)
+    claimed_by = Column(String, nullable=True)
+    error_message = Column(Text, nullable=True)
+    
+    # Optional patient association
+    patient_id = Column(String, ForeignKey('patients.id'), nullable=True, index=True)
+    
+    # Timestamps
+    uploaded_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime, nullable=False, index=True) #set in code: expires_at = now_utc + timedelta(days=30)
+
+    # Relationships
+    clinic = relationship("Clinic", back_populates="uploads")
+    patient = relationship("Patient", back_populates="uploads")
+
+    # One Document per Upload
+    document = relationship(
+        "Document",
+        back_populates="upload",
+        uselist=False,
+        cascade="all, delete-orphan",
+        single_parent=True,
+    )
+
 
 # ----------------------------
 # GDPR Audit Logs
@@ -173,10 +233,11 @@ class GDPRAuditLog(Base):
     user_id = Column(String, ForeignKey("users.id"))
     patient_id = Column(String, ForeignKey("patients.id"))
 
-    action = Column(String(100), nullable=False)
-    legal_basis = Column(String(100))
-    data_category = Column(String(100))
-    details = Column(JSON)
+    action = Column(String(100), nullable=False)        # e.g. "ocr_completed"
+    legal_basis = Column(String(100))                   # e.g. "art9_2_h_medical_diagnosis"
+    data_category = Column(String(100))                 # e.g. "health_data_document"
+    details = Column(JSON)                              # JSON dict, no raw PHI if possible
+    
     ip_address = Column(String(45))
     user_agent = Column(String(500))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -185,25 +246,3 @@ class GDPRAuditLog(Base):
     clinic = relationship("Clinic", back_populates="gdpr_logs")
     user = relationship("User", back_populates="gdpr_logs")
     patient = relationship("Patient", back_populates="gdpr_logs")
-
-# ----------------------------
-# Uploads
-# ----------------------------
-class Upload(Base):
-    __tablename__ = "uploads"
-
-    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    clinic_id = Column(String, ForeignKey("clinics.id"))
-    filename = Column(String, nullable=False)
-    file_path = Column(String, nullable=False)
-    file_size = Column(Integer)
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
-    expires_at = Column(DateTime)
-    patient_id = Column(String, ForeignKey("patients.id"))
-    document_type = Column(String)
-    ocr_status = Column(String, default="pending")
-
-    # Relationships
-    clinic = relationship("Clinic", back_populates="uploads")
-    patient = relationship("Patient", back_populates="uploads")
-    

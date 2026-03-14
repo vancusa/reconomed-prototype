@@ -110,7 +110,6 @@ export class ConsultationManager {
             console.error('Error loading consultation:', error);
             showToast('Failed to load consultation', 'error');
         }
-    }
 
     // ----------------------------
     // Render the two-panel layout
@@ -379,10 +378,15 @@ export class ConsultationManager {
         }, 30000);
     }
 
-    stopAutoSave() {
-        if (this.autoSaveInterval) {
-            clearInterval(this.autoSaveInterval);
-            this.autoSaveInterval = null;
+    // --- Discharge patient select: load consultations for patient when changed ---
+    const dischargeSelect = document.getElementById('discharge-patient');
+    if (dischargeSelect) {
+      const changeHandler = async (e) => {
+        const pid = e.target.value;
+        if (pid) {
+          await this.loadConsultationsForPatient(pid);
+        } else {
+          this._clearElementById('patient-consultations');
         }
         if (this.autoSaveDebounceTimer) {
             clearTimeout(this.autoSaveDebounceTimer);
@@ -426,6 +430,25 @@ export class ConsultationManager {
         } finally {
             this.autoSaveInFlight = false;
         }
+      } catch (e) {
+        // swallow; this is best-effort
+      }
+      this.cleanup();
+    };
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+    this._domHandlers.push({ el: window, type: 'beforeunload', handler: beforeUnloadHandler });
+  }
+
+  /**
+   * Remove attached DOM handlers and stop periodic tasks.
+   */
+  unbindUIEvents() {
+    for (const { el, type, handler } of this._domHandlers) {
+      try {
+        el.removeEventListener(type, handler);
+      } catch (err) {
+        // ignore removal errors
+      }
     }
 
     collectFormData() {
@@ -450,10 +473,29 @@ export class ConsultationManager {
             error: { icon: 'fa-exclamation-circle text-danger', text: 'Eroare la salvare' }
         };
 
-        const state = states[status] || states.unsaved;
-        icon.className = `fas ${state.icon}`;
-        text.textContent = state.text;
+        showToast('Patients loaded', 'success');
+        return patients;
+    } catch (err) {
+      console.error('loadPatientsList error', err);
+      showToast('Could not load patients', 'error');
+      return [];
     }
+  }
+
+/**
+     * Initiates a new consultation directly from a patient card.
+     * Fetches full patient details, sets the selected patient,
+     * updates the consultation header, and switches to the
+     * consultation form tab for immediate use.
+     */
+    async startFromPatient(patientId) {
+      try {
+        // 1. Fetch full patient details (using your patientManager)
+        const patient = await app.patientManager.getPatientById(patientId);
+        if (!patient) {
+          showToast('Patient not found', 'error');
+          return;
+        }
 
     // ----------------------------
     // Specialty Change
@@ -478,7 +520,7 @@ export class ConsultationManager {
             console.error('Error changing specialty:', error);
             showToast('Eroare la schimbarea specialității', 'error');
         }
-    }
+        this.switchConsultationTab('patient-review');
 
     // ----------------------------
     // Action Buttons
@@ -606,4 +648,8 @@ export class ConsultationManager {
         this.pinnedFiles = [];
         this.isAmendment = false;
     }
+    this._hideRecordingIndicator();
+    // stop any leftover stream tracks
+    this._stopAudioStream();
+  }
 }

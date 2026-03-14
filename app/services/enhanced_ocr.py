@@ -7,6 +7,7 @@ from PIL import Image
 import io
 import numpy as np
 import logging
+import cv2
 
 # Loggers
 audit_logger = logging.getLogger("reconomed.audit")
@@ -54,17 +55,28 @@ class RomanianOCRProcessor:
         image = self._normalize_input_to_image(image_input)
         app_logger.debug("Input normalized to PIL Image")
         
+        w, h = image.size
+        if w < 600 or h < 600:
+            app_logger.info(f"Image too small ({w}x{h}); skipping layout detection and using full OCR.")
+            return self._process_with_full_ocr(image, hint_document_type)
+
         # Layout detection
         detected_layout, document_subtype = self._detect_document_layout(image)
         app_logger.debug(f"Detected layout: {detected_layout}, subtype: {document_subtype}")
 
         # Route processing based on detected layout
         if detected_layout == "romanian_id":
-            return self._process_romanian_id(image, document_subtype)
-        else:
-            # Fall back to full OCR for other documents
-            return self._process_with_full_ocr(image, hint_document_type)
+            # v1: ID OCR disabled unless explicitly requested
+            id_hints = {"romanian_id", "id_card", "carte_identitate", "ci", "eci"}
+            if hint_document_type not in id_hints:
+                app_logger.info("ID layout detected, but ID OCR disabled for v1. Falling back to full OCR.")
+                return self._process_with_full_ocr(image, hint_document_type)
 
+            return self._process_romanian_id(image, document_subtype)
+
+        # Otherwise: normal medical docs
+        return self._process_with_full_ocr(image, hint_document_type)
+        
     def _normalize_hint(self, hint: Optional[str]) -> Optional[str]:
         """Normalize document type hints"""
         if not hint:
@@ -310,43 +322,200 @@ class RomanianOCRProcessor:
             app_logger.error(f"Full OCR processing failed: {e}", exc_info=True)
             return self._create_fallback_result(image)
 
+    def _reconstruct_text_by_lines(self, ocr_data: dict) -> str:
+            words = []
+            n = len(ocr_data.get("text", []))
+            for i in range(n):
+                txt = (ocr_data["text"][i] or "").strip()
+                conf = ocr_data["conf"][i]
+                if not txt:
+                    continue
+                try:
+                    if float(conf) < 0:  # tesseract uses -1 for non-words
+                        continue
+                except Exception:
+                    pass
+                words.append({
+                    "block": ocr_data["block_num"][i],
+                    "par": ocr_data["par_num"][i],
+                    "line": ocr_data["line_num"][i],
+                    "left": ocr_data["left"][i],
+                    "text": txt
+                })
+
+            # group words by line, then sort by x-position
+            from collections import defaultdict
+            lines = defaultdict(list)
+            for w in words:
+                key = (w["block"], w["par"], w["line"])
+                lines[key].append(w)
+
+            out_lines = []
+            for key in sorted(lines.keys()):
+                line_words = sorted(lines[key], key=lambda x: x["left"])
+                out_lines.append(" ".join(w["text"] for w in line_words))
+
+            return "\n".join(out_lines)
+
+    def _preprocess_for_document(self, pil_img: Image.Image) -> Image.Image:
+        img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # denoise
+        gray = cv2.fastNlMeansDenoising(gray, h=12)
+
+        # adaptive threshold (very good for photos)
+        thr = cv2.adaptiveThreshold(
+            gray, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            31, 11
+        )
+
+        return Image.fromarray(thr)
+
+    def _preprocess_grayscale_clahe(self, pil_img: Image.Image) -> Image.Image:
+        img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # local contrast enhancement
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+
+        # mild denoise
+        gray = cv2.fastNlMeansDenoising(gray, h=10)
+
+        return Image.fromarray(gray)
+
+    def _repair_spacing(self, text: str) -> str:
+        # add space after punctuation if missing
+        text = re.sub(r"([,;:\.\!\?])(?=\S)", r"\1 ", text)
+
+        # fix common glued patterns around Romanian diacritics / words
+        # split CamelCase-ish OCR glue: "...multipleLeziune..." -> "...multiple Leziune..."
+        text = re.sub(r"([a-zăâîșț])([A-ZĂÂÎȘȚ])", r"\1 \2", text)
+
+        # add spaces between letters and numbers: "CO2a" -> "CO2 a"
+        text = re.sub(r"([A-Za-zăâîșțĂÂÎȘȚ])(\d)", r"\1 \2", text)
+        text = re.sub(r"(\d)([A-Za-zăâîșțĂÂÎȘȚ])", r"\1 \2", text)
+
+        # collapse repeated spaces
+        text = re.sub(r"[ \t]{2,}", " ", text)
+
+        # clean weird OCR separators
+        text = re.sub(r"[|]{2,}", " ", text)
+        text = re.sub(r"^\s*[|/]+\s*$", "", text, flags=re.MULTILINE)
+
+        # split common Romanian glued patterns (very high ROI)
+        text = re.sub(r"\b(S-a)([a-zăâîșț])", r"\1 \2", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(Se)(va|a)\b", r"\1 \2", text, flags=re.IGNORECASE)  # "Seva" -> "Se va" (common OCR)
+        text = re.sub(r"(Evitarea|Igienizare|Reevaluare|Leziune|Diagnosticul|Tratament|Recomandări)(?=[A-Za-zăâîșț])",
+                    r"\1 ", text)
+
+        # remove line-noise characters that survive thresholding
+        text = re.sub(r"[|]{1,}", " ", text)
+        text = re.sub(r"[_]{1,}", " ", text)
+        text = re.sub(r"\s*/\s*", " ", text)
+
+        # collapse whitespace
+        text = re.sub(r"[ \t]{2,}", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        return text.strip()
+
     def _extract_text_romanian_optimized(self, image: Image.Image) -> Tuple[str, int]:
-        """Extract text optimized for Romanian"""
+        """
+        Extract text optimized for Romanian medical documents using
+        multiple OCR configurations and select the best result.
+        """
         try:
-            app_logger.debug("Starting Romanian OCR")
-            
-            # Store current image
+            app_logger.debug("Starting Romanian OCR (multi-config)")
+
+            # Store original image (used elsewhere in pipeline)
             self._current_image = image.copy()
-            
-            # Romanian OCR configuration
-            romanian_config = r'--oem 3 --psm 6 -c preserve_interword_spaces=1'
-            
-            # Extract text
-            text_ro_en = pytesseract.image_to_string(
-                image, 
-                lang='ron+eng', 
-                config=romanian_config
+
+            # Preprocessing options for the image
+            variants = [
+                ("thr", self._preprocess_for_document(image)),
+                ("clahe", self._preprocess_grayscale_clahe(image)),
+            ]
+
+            # OCR configurations to try
+            ocr_configs = [
+                r"--oem 3 --psm 3 -c preserve_interword_spaces=1",   # fully automatic page segmentation
+                r"--oem 3 --psm 4 -c preserve_interword_spaces=1",   # block / semi-structured
+                r"--oem 3 --psm 6 -c preserve_interword_spaces=1",   # uniform text
+                r"--oem 3 --psm 11 -c preserve_interword_spaces=1",  # sparse text
+            ]
+
+            best_text = ""
+            best_confidence = 0
+            best_score = float("-inf")
+
+            for variant_tag, variant_img in variants:
+                # Use variant_img for OCR in this iteration
+                for config in ocr_configs:
+                    
+                    app_logger.debug(f"Running OCR with config: {config}")
+
+                    ocr_data = pytesseract.image_to_data(
+                        variant_img,
+                        lang="ron+eng",
+                        config=config,
+                        output_type=pytesseract.Output.DICT
+                    )
+
+                    # Reconstruct text by lines (replaces image_to_string)
+                    raw_text = self._reconstruct_text_by_lines(ocr_data)
+                    cleaned_text = self._clean_romanian_ocr_errors(raw_text)
+                    cleaned_text = self._repair_spacing(cleaned_text)
+
+                    # Confidence
+                    confidences = [
+                        int(c) for c in ocr_data.get("conf", []) if c != "-1"
+                    ]
+                    avg_conf = int(sum(confidences) / len(confidences)) if confidences else 0
+
+                    # Simple quality heuristics
+                    char_count = len(cleaned_text)
+                    word_count = len(cleaned_text.split())
+                    garbage_ratio = (
+                        sum(1 for w in cleaned_text.split() if len(w) <= 1) / word_count
+                        if word_count > 0
+                        else 1.0
+                    )
+
+                    tokens = cleaned_text.split()
+                    long_tokens = sum(1 for t in tokens if len(t) >= 20)
+                    long_token_ratio = long_tokens / len(tokens) if tokens else 1.0
+
+                    # Composite score (tunable, but works well in practice)
+                    score = (
+                        avg_conf
+                        + 0.3 * word_count
+                        - 20 * garbage_ratio
+                        - 25 * long_token_ratio
+                    )
+
+                    app_logger.debug(
+                        f"OCR result: chars={char_count}, words={word_count}, "
+                        f"conf={avg_conf}, garbage_ratio={garbage_ratio:.2f}, score={score:.1f}"
+                    )
+
+                    if score > best_score and char_count > 0:
+                        best_score = score
+                        best_text = cleaned_text
+                        best_confidence = avg_conf
+
+            app_logger.debug(
+                f"Selected OCR output with {len(best_text)} chars "
+                f"and {best_confidence}% confidence"
             )
-            
-            # Get confidence
-            ocr_data = pytesseract.image_to_data(
-                image,
-                lang='ron+eng', 
-                config=romanian_config,
-                output_type=pytesseract.Output.DICT
-            )
-            
-            confidences = [int(c) for c in ocr_data["conf"] if c != "-1"]
-            avg_confidence = int(sum(confidences) / len(confidences)) if confidences else 0
-            
-            # Clean text
-            cleaned_text = self._clean_romanian_ocr_errors(text_ro_en)
-            
-            app_logger.debug(f"OCR extracted {len(cleaned_text)} chars with {avg_confidence}% confidence")
-            return cleaned_text, avg_confidence
-            
+
+            return best_text, best_confidence
+
         except Exception as e:
-            app_logger.error(f"Romanian OCR failed: {e}")
+            app_logger.error(f"Romanian OCR failed: {e}", exc_info=True)
             return self._basic_fallback_ocr(image)
 
     def _clean_romanian_ocr_errors(self, text: str) -> str:

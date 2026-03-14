@@ -1,5 +1,5 @@
 """Authentication endpoints"""
-from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Form, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
@@ -8,10 +8,11 @@ from typing import Optional
 from app.database import get_db
 from app.auth import (
     verify_password, get_password_hash, create_access_token, 
-    get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES
+    get_current_user, ACCESS_TOKEN_EXPIRE_MINUTES, get_user_from_header
 )
 from app.models import User, Clinic
 from pydantic import BaseModel, EmailStr
+from app.schemas import CurrentUserInfoResponse
 
 router = APIRouter(
     #prefix="/auth",
@@ -180,20 +181,20 @@ async def change_password(
     
     return {"message": "Password updated successfully"}
 
-@router.get("/me")
-async def get_current_user_info(db: Session = Depends(get_db)):
+@router.get("/me", response_model=CurrentUserInfoResponse)
+async def get_current_user_info(
+    request: Request,
+    db: Session = Depends(get_db),
+)-> CurrentUserInfoResponse:
     """Get current authenticated user info"""
-    # Get demo doctor for MVP
-    user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    return {
-        "id": user.id,
-        "email": user.email,
-        "full_name": user.full_name,
-        "role": user.role,
-        "specialties": user.specialties or ["internal_medicine", "cardiology", "respiratory", "gynecology"],
-        "clinic_id": user.clinic_id
-    }
+    user = get_user_from_header(db, request)
+        
+    return CurrentUserInfoResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        role=user.role,
+        specialties=user.specialties or ["internal_medicine", "cardiology", "respiratory", "gynecology"],
+        clinic_id=user.clinic_id,
+        clinic_name=getattr(user, "clinic", None).name if getattr(user, "clinic", None) else None,
+    )

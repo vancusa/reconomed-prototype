@@ -1,529 +1,649 @@
-"""Document management endpoints"""
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
+# app/routers/documents.py
+# Upload-centric Documents router (MVP)
+#
+# Public API surface is Upload-first:
+# - Upload a file -> Upload row created with job_state=queued
+# - Worker claims and OCRs -> creates/updates 1 Document per Upload
+# - Doctor sees items by tab (derived server-side) -> assigns patient & completes
+# - Reject deletes immediately (Upload + Document + file)
+#
+# Internal/technical state:
+#   Upload.job_state: queued | processing | ocr_done | ocr_failed
+#
+# Human/clinical state:
+#   Document.validation_status: pending | approved | rejected
+#   Upload.patient_id indicates association
+#
+# Tabs are derived (not stored):
+# - unprocessed: job_state == queued
+# - processing: job_state == processing
+# - validation: job_state == ocr_done AND (patient_id is null OR document.validation_status != approved)
+# - completed: job_state == ocr_done AND patient_id not null AND document.validation_status == approved
+# - error: job_state == ocr_failed
+
+from __future__ import annotations
+
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from uuid import uuid4
+from typing import List
+
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any, Optional
-import json
-import os
-import uuid
-import logging
-from datetime import datetime
 
 from app.database import get_db
-from app.schemas import UploadCreate, UploadResponse, PatientResponse, UserResponse
-from app.models import Patient, Document, User, Upload
-from app.services.document import EnhancedDocumentService
-from app.services.romanian_document_templates import RomanianDocumentTemplates
-from app.services.ocr import extract_text_from_image, extract_text_confidence
-from app.services.enhanced_ocr import RomanianOCRProcessor
-from app.utils.file import validate_file_type, generate_unique_filename, save_uploaded_file
+from app.models import Upload, Document, Patient, User
+from app.auth import get_user_from_header
 
-router = APIRouter(
-    #prefix="/documents",
-    tags=["documents"],
-    responses={404: {"description": "Not found"}},
+from app.schemas import (
+    # Enums
+    JobState, ValidationStatus, TabName,
+    # Upload list/detail schemas
+    UploadCardResponse, UploadListResponse,
+    UploadDocumentSummary, UploadDetailResponse,
+    UploadOCRResponse,
+    # Workflow actions
+    UploadCompleteRequest, UploadCompleteResponse,
+    UploadRejectResponse,
+    UploadBatchAssignRequest,
+    UploadBatchTypeRequest,
+    # Patient document list item
+    PatientDocumentListItem,
+    DocumentTextResponse,
 )
 
-# Reuse the loggers created in app.main
-audit_logger = logging.getLogger("reconomed.audit")
-app_logger=logging.getLogger("reconomed.app")
-
-#--------------------------------------ROUTERS --------------------------------------
-
-#------------------------------Core Upload Workflow Routes --------------------------------
-# ------------------------------------
-# Upload endpoint (Batch Upload)
-# ------------------------------------
-@router.post("/uploads", response_model=List[UploadResponse])
-async def upload_file(
-    request: Request,
-    files: List[UploadFile] = File(...),
-    patient_id: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    app_logger.debug(f"Received {len(files)} files for upload (patient_id={patient_id})")
-    audit_logger.info(f"user={user} action=batch_upload count={len(files)}")
-
-    # Demo user lookup
-    current_user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not current_user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-
-    uploaded_files: List[Upload] = []
-
-    for file in files:
-        try:
-            content = await file.read()
-            if not content:
-                app_logger.warning(f"File {file.filename} is empty, skipping.")
-                continue
-
-            if not validate_file_type(file.content_type):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"File type {file.content_type} not supported"
-                )
-
-            unique_filename = generate_unique_filename(file.filename)
-            file_path = save_uploaded_file(content, unique_filename)
-            file_size = len(content)
-            app_logger.debug(f"File {file.filename} saved as {unique_filename} ({file_size} bytes)")
-
-            # Save metadata to DB (Upload model, no OCR yet)
-            upload = Upload(
-                id=str(uuid.uuid4()),
-                patient_id=patient_id,
-                clinic_id=current_user.clinic_id,
-                filename=unique_filename,
-                file_path=file_path,
-                file_size=file_size,
-                document_type="pending_ocr",
-                ocr_status="pending"
-            )
-            db.add(upload)
-            db.commit()
-            db.refresh(upload)
-
-            audit_logger.info(f"user={user} action=upload_success upload_id={upload.id} patient_id={patient_id}")
-            uploaded_files.append(upload)
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            app_logger.error(f"Unexpected error while uploading {file.filename}: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-    return uploaded_files
-
-# ------------------------------------
-# Get Unprocessed Uploads
-# ------------------------------------
-@router.get("/uploads/unprocessed", response_model=List[UploadResponse])
-async def get_unprocessed_uploads(
-    request: Request,
-    patient_id: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    app_logger.debug(f"Fetching unprocessed uploads (patient_id={patient_id})")
-    audit_logger.info(f"user={user} action=list_unprocessed patient_id={patient_id}")
-
-    try:
-        query = db.query(Upload).filter(Upload.ocr_status == "pending")
-
-        if patient_id:
-            query = query.filter(Upload.patient_id == patient_id)
-
-        uploads = query.all()
-        app_logger.info(f"Found {len(uploads)} unprocessed uploads")
-
-        return uploads
-
-    except Exception as e:
-        app_logger.error(f"Error fetching unprocessed uploads: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to fetch unprocessed uploads")
-
-# ------------------------------------------------------
-# Assign patient to upload
-# ------------------------------------------------------
-@router.put("/uploads/{upload_id}/patient", response_model=UploadResponse)
-async def assign_patient(
-    upload_id: str,
-    patient_id: str,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    app_logger.debug(f"Assigning patient {patient_id} to upload {upload_id}")
-    audit_logger.info(f"user={user} action=assign_patient upload_id={upload_id} patient_id={patient_id}")
-
-    upload = db.query(Upload).filter(Upload.id == upload_id).first()
-    if not upload:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    upload.patient_id = patient_id
-    db.commit()
-    db.refresh(upload)
-    return upload
-
-
-# ------------------------------------------------------
-# Set document type for an upload
-# ------------------------------------------------------
-@router.put("/uploads/{upload_id}/type", response_model=UploadResponse)
-async def set_document_type(
-    upload_id: str,
-    document_type: str,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    app_logger.debug(f"Setting document type for upload {upload_id} -> {document_type}")
-    audit_logger.info(f"user={user} action=set_document_type upload_id={upload_id} type={document_type}")
-
-    upload = db.query(Upload).filter(Upload.id == upload_id).first()
-    if not upload:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    upload.document_type = document_type
-    db.commit()
-    db.refresh(upload)
-    return upload
-
-
-# ------------------------------------------------------
-# Start OCR processing (batch queue)
-# ------------------------------------------------------
-@router.post("/uploads/batch-ocr")
-async def start_batch_processing(
-    request: Request,
-    db: Session = Depends(get_db),
-    patient_id: Optional[str] = None
-):
-    user = request.headers.get("X-User", "anonymous")
-    app_logger.debug(f"Starting OCR batch processing (patient_id={patient_id})")
-    audit_logger.info(f"user={user} action=batch_ocr patient_id={patient_id}")
-
-    query = db.query(Upload).filter(Upload.ocr_status == "pending")
-    if patient_id:
-        query = query.filter(Upload.patient_id == patient_id)
-
-    uploads = query.all()
-    for upl in uploads:
-        upl.ocr_status = "queued"
-        upl.expires_at = upl.expires_at or datetime.utcnow()
-    db.commit()
-
-    return {
-        "message": "OCR batch processing started",
-        "queued_count": len(uploads),
-        "upload_ids": [upl.id for upl in uploads]
-    }
-
-#----------------------------Processing Queue Routes -----------------------------------------
-
-# ------------------------------------------------------
-# Get processing queue
-# ------------------------------------------------------
-@router.get("/processing-queue", response_model=List[UploadResponse])
-async def get_processing_queue(
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    app_logger.debug("Fetching OCR processing queue")
-    audit_logger.info(f"user={user} action=get_processing_queue")
-
-    uploads = db.query(Upload).filter(Upload.ocr_status.in_(["queued", "processing"])).all()
-    return uploads
-
-# ------------------------------------------------------
-# Get Individual Processing Status
-# ------------------------------------------------------
-@router.get("/processing/{upload_id}")
-async def get_processing_status(upload_id: str, request: Request, db: Session = Depends(get_db)):
-    user = request.headers.get("X-User", "anonymous")
-    audit_logger.info(f"user={user} action=get_processing_status upload_id={upload_id}")
-
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    return {
-        "document_id": doc.id,
-        "ocr_status": doc.ocr_status,
-        "ocr_confidence": doc.ocr_confidence,
-        "validation_status": doc.validation_status,
-    }
-
-# ------------------------------------------------------
-# Cancel Processing
-# ------------------------------------------------------
-@router.delete("/processing/{upload_id}")
-async def cancel_processing(upload_id: str, request: Request, db: Session = Depends(get_db)):
-    user = request.headers.get("X-User", "anonymous")
-    audit_logger.info(f"user={user} action=cancel_processing upload_id={upload_id}")
-
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    # If already processed, cannot cancel
-    if doc.ocr_status not in ["pending", "processing"]:
-        raise HTTPException(status_code=400, detail="Processing cannot be cancelled")
-
-    doc.ocr_status = "cancelled"
-    db.commit()
-    return {"message": "Processing cancelled"}
-
-#------------------------Validation Workflow Routes------------------------------------------------
-# ------------------------------------------------------
-# Get validation queue
-# ------------------------------------------------------
-@router.get("/validation-queue", response_model=List[UploadResponse])
-async def get_validation_queue(
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    app_logger.debug("Fetching validation queue")
-    audit_logger.info(f"user={user} action=get_validation_queue")
-
-    # In your flow, validation would normally happen on processed OCR docs.
-    # Here we consider uploads with "ocr_status = completed" as ready for validation.
-    uploads = db.query(Upload).filter(Upload.ocr_status == "completed").all()
-    return uploads
-
-# ------------------------------------------------------
-# Get Validation Details
-# ------------------------------------------------------
-@router.get("/validation/{upload_id}")
-async def get_validation_details(upload_id: str, request: Request, db: Session = Depends(get_db)):
-    user = request.headers.get("X-User", "anonymous")
-    audit_logger.info(f"user={user} action=get_validation_details upload_id={upload_id}")
-
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    return {
-        "document_id": doc.id,
-        "ocr_text": doc.ocr_text,
-        "ocr_confidence": doc.ocr_confidence,
-        "validation_status": doc.validation_status,
-        "file_path": doc.file_path,  # you could serve via /static
-    }
-
-# ------------------------------------------------------
-# Approve Validation
-# ------------------------------------------------------
-@router.post("/validation/{upload_id}/approve")
-async def approve_validation(upload_id: str, body: dict, request: Request, db: Session = Depends(get_db)):
-    user = request.headers.get("X-User", "anonymous")
-    audit_logger.info(f"user={user} action=approve_validation upload_id={upload_id}")
-
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    corrected_fields = body.get("corrected_fields", {})
-    create_patient = body.get("create_patient", False)
-
-    # Apply corrections
-    doc.extracted_data = corrected_fields
-    doc.validation_status = "approved"
-    db.commit()
-
-    # Optionally, create patient logic here
-    if create_patient:
-        app_logger.info(f"Would create patient from document {upload_id}")
-
-    return {
-        "document_id": doc.id,
-        "status": "approved",
-        "extracted_data": doc.extracted_data,
-    }
-
-# ------------------------------------------------------
-# Reject Validation
-# ------------------------------------------------------
-@router.post("/validation/{upload_id}/reject")
-async def reject_validation(upload_id: str, body: dict, request: Request, db: Session = Depends(get_db)):
-    user = request.headers.get("X-User", "anonymous")
-    audit_logger.info(f"user={user} action=reject_validation upload_id={upload_id}")
-
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    reason = body.get("reason", "No reason provided")
-    doc.validation_status = "rejected"
-    db.commit()
-
-    return {"message": f"Rejected, moved to manual entry. Reason: {reason}"}
-
-# ----------------- Utility Routes -------------------
-
-# ------------------------------------------------------
-# Get Upload Details
-# ------------------------------------------------------
-@router.get("/uploads/{upload_id}")
-async def get_upload_details(upload_id: str, request: Request, db: Session = Depends(get_db)):
-    user = request.headers.get("X-User", "anonymous")
-    audit_logger.info(f"user={user} action=get_upload_details upload_id={upload_id}")
-
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    return {
-        "document_id": doc.id,
-        "original_filename": doc.original_filename,
-        "saved_filename": doc.filename,
-        "ocr_status": doc.ocr_status,
-        "validation_status": doc.validation_status,
-        "file_size": doc.file_size,
-    }
-
-# ------------------------------------------------------
-# Delete Upload
-# ------------------------------------------------------
-@router.delete("/uploads/{upload_id}")
-async def delete_upload(upload_id: str, request: Request, db: Session = Depends(get_db)):
-    user = request.headers.get("X-User", "anonymous")
-    audit_logger.info(f"user={user} action=delete_upload upload_id={upload_id}")
-
-    doc = db.query(Document).filter(Document.id == upload_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Upload not found")
-
-    db.delete(doc)
-    db.commit()
-    return {"message": "Upload deleted"}
-
-# ------------------------------------------------------
-# Get Supported Document Types (reuse existing)
-# ------------------------------------------------------
-@router.get("/document-types")
-async def get_supported_document_types():
-    """Get list of supported Romanian document types"""
-    templates = RomanianDocumentTemplates.get_all_templates()
-    
-    return {
-        "supported_types": [
-            {
-                "template_id": t.template_id,
-                "document_type": t.document_type,
-                "language": t.language,
-                "confidence_threshold": t.confidence_threshold,
-                "description": {
-                    "romanian_id": "Carte de identitate românească",
-                    "lab_result": "Rezultate analize medicale", 
-                    "prescription": "Rețetă medicală",
-                    "doctors_note": "Scrisoare medicală",
-                    "photo":"Imagine (ex: ecografie, radiografie, curbă spirometrie, etc)"
-                }.get(t.document_type, t.document_type)
-            }
-            for t in templates
-        ],
-        "usage_note": "Provide hint_type parameter to OCR endpoint for better accuracy"
-    }
-
-# ------------------------------------------------------
-# Get documents for specific patient
-# ------------------------------------------------------
-@router.get("/patients/{patient_id}/documents", response_model=List[UploadResponse])
-async def get_patient_documents(
-    patient_id: str,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    app_logger.debug(f"Fetching documents for patient {patient_id}")
-    audit_logger.info(f"user={user} action=get_patient_documents patient_id={patient_id}")
-
-    try:
-        # Get uploads for this patient
-        uploads = db.query(Upload).filter(Upload.patient_id == patient_id).all()
-        
-        # Convert to response format with status mapping
-        documents = []
-        for upload in uploads:
-            doc_data = {
-                "id": upload.id,
-                "name": upload.filename,
-                "original_filename": upload.filename,
-                "status": upload.ocr_status or "pending",
-                "file_size": upload.file_size,
-                "uploaded_at": upload.uploaded_at,
-                "document_type": upload.document_type
-            }
-            documents.append(doc_data)
-        
-        return documents
-
-    except Exception as e:
-        app_logger.error(f"Error fetching patient documents: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to fetch patient documents")
-
-# ------------------------------------------------------
-# Download document file
-# ------------------------------------------------------
-@router.get("/documents/{doc_id}/download")
-async def download_document(
-    doc_id: str,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    audit_logger.info(f"user={user} action=download_document doc_id={doc_id}")
-
-    try:
-        # Find the upload record
-        upload = db.query(Upload).filter(Upload.id == doc_id).first()
-        if not upload:
-            raise HTTPException(status_code=404, detail="Document not found")
-
-        # Check if file exists
-        if not os.path.exists(upload.file_path):
-            raise HTTPException(status_code=404, detail="File not found on disk")
-
-        # Return file for download
-        from fastapi.responses import FileResponse
-        return FileResponse(
-            path=upload.file_path,
-            filename=upload.filename,
-            media_type='application/octet-stream'
+# File utils (adjust these imports to your actual module paths/names)
+from app.utils.file import validate_file_type, save_uploaded_file
+
+# OCR processing service (Step 2)
+from app.services.upload_processing import UploadProcessingService
+
+router = APIRouter(tags=["documents"])
+
+processing_svc = UploadProcessingService(max_attempts=3, stale_timeout_seconds=600)
+
+# ----------------------------
+# Helpers
+# ----------------------------
+
+def _preview_url(upload_id: str) -> str:
+    """
+    UI can use this as a stable link for preview/download.
+    Adjust if your frontend expects another URL.
+    """
+    return f"/api/documents/uploads/{upload_id}/download"
+
+def _make_upload_card(db: Session, upload: Upload) -> UploadCardResponse:
+    """
+    Build UploadCardResponse, including optional OCR snippet from the linked Document.
+    """
+    doc = db.query(Document).filter(Document.upload_id == upload.id).first()
+    snippet = None
+    if doc and getattr(doc, "ocr_text", None):
+        snippet = (doc.ocr_text or "")[:500]
+
+    patient_name = None
+    if upload.patient:
+        patient_name = " ".join(
+            part for part in [upload.patient.given_name, upload.patient.family_name] if part
+        ).strip() or None
+
+    return UploadCardResponse(
+        id=upload.id,
+        clinic_id=upload.clinic_id,
+        filename=upload.filename,
+        file_size=getattr(upload, "file_size", None),
+        document_type=getattr(upload, "document_type", None) or getattr(doc, "document_type", None),
+        job_state=upload.job_state,
+        uploaded_at=upload.uploaded_at,
+        expires_at=upload.expires_at,
+        patient_id=getattr(upload, "patient_id", None),
+        patient_name=patient_name,
+        validated_at=getattr(doc, "validated_at", None),
+        preview_url=_preview_url(upload.id),
+        ocr_snippet=snippet,
+    )
+
+def _make_upload_detail(db: Session, upload: Upload) -> UploadDetailResponse:
+    """
+    Build UploadDetailResponse with document summary (if exists).
+    """
+    doc = db.query(Document).filter(Document.upload_id == upload.id).first()
+    doc_summary = None
+    if doc:
+        doc_summary = UploadDocumentSummary(
+            id=doc.id,
+            upload_id=doc.upload_id,
+            validation_status=doc.validation_status,
+            validated_by=getattr(doc, "validated_by", None),
+            validated_at=getattr(doc, "validated_at", None),
         )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        app_logger.error(f"Error downloading document: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Download failed")
+    return UploadDetailResponse(
+        id=upload.id,
+        clinic_id=upload.clinic_id,
+        filename=upload.filename,
+        file_path=upload.file_path,
+        file_size=getattr(upload, "file_size", None),
+        document_type=getattr(upload, "document_type", None),
+        job_state=upload.job_state,
+        attempts=getattr(upload, "attempts", 0) or 0,
+        claimed_at=getattr(upload, "claimed_at", None),
+        claimed_by=getattr(upload, "claimed_by", None),
+        error_message=getattr(upload, "error_message", None),
+        patient_id=getattr(upload, "patient_id", None),
+        uploaded_at=upload.uploaded_at,
+        expires_at=upload.expires_at,
+        preview_url=_preview_url(upload.id),
+        document=doc_summary,
+    )
 
-# ------------------------------------------------------
-# Validate document (approve/reject)
-# ------------------------------------------------------
-@router.post("/documents/{doc_id}/validate")
-async def validate_document(
-    doc_id: str,
-    body: dict,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    user = request.headers.get("X-User", "anonymous")
-    approved = body.get("approved", False)
-    
-    audit_logger.info(f"user={user} action=validate_document doc_id={doc_id} approved={approved}")
+def _require_same_clinic(user: User, upload: Upload) -> None:
+    """
+    Multi-tenant guard: user can only act within their clinic.
+    """
+    if upload.clinic_id != user.clinic_id:
+        raise HTTPException(status_code=403, detail="Forbidden (wrong clinic)")
 
+def _remove_upload_file(upload: Upload) -> None:
+    if not upload.file_path:
+        return
     try:
-        # Find the upload record
-        upload = db.query(Upload).filter(Upload.id == doc_id).first()
-        if not upload:
-            raise HTTPException(status_code=404, detail="Document not found")
+        file_path = Path(upload.file_path)
+        if file_path.exists():
+            file_path.unlink()
+        if file_path.parent.exists() and not any(file_path.parent.iterdir()):
+            file_path.parent.rmdir()
+    except Exception:
+        # In MVP: do not block delete if file removal fails.
+        pass
 
-        # Update validation status
-        if approved:
-            upload.ocr_status = "validated"
+def _document_has_original_file(upload: Upload | None) -> bool:
+    if not upload or not upload.file_path:
+        return False
+    return os.path.exists(upload.file_path)
+
+def _make_document_snippet(text: str | None, length: int = 300) -> str:
+    if not text:
+        return ""
+    return text.strip()[:length]
+
+# ----------------------------
+# Upload endpoints
+# ----------------------------
+
+@router.post("/uploads", response_model=List[UploadCardResponse])
+async def upload_files(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Upload one or multiple files (no patient required).
+    Behavior:
+    - Saves file to disk
+    - Creates Upload rows in DB
+    - Sets job_state=queued immediately (server-side auto OCR)
+    - Returns UploadCardResponse cards for UI rendering
+    """
+    user = get_user_from_header(db, request)
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+
+    created: List[Upload] = []
+
+    for f in files:
+        # Validate file type (pdf/jpg/png/etc.)
+        if not validate_file_type(f.content_type, f.filename):
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {f.filename}")
+
+        # Save to disk
+        upload_id = str(uuid4())
+        file_path, file_size = await save_uploaded_file(
+            f,
+            clinic_id=user.clinic_id,
+            upload_id=upload_id,
+        )
+
+        # Create upload row (auto-queue)
+        upload = Upload(
+            id=upload_id,
+            clinic_id=user.clinic_id,
+            filename=f.filename,
+            file_path=file_path,
+            file_size=file_size,
+            document_type=None,
+            patient_id=None,
+            job_state=JobState.QUEUED.value,
+            attempts=0,
+            claimed_at=None,
+            claimed_by=None,
+            error_message=None,
+            uploaded_at=datetime.utcnow(),
+            expires_at=datetime.utcnow() + timedelta(days=30),
+        )
+        db.add(upload)
+        created.append(upload)
+
+    db.commit()
+
+    # refresh to get IDs
+    for u in created:
+        db.refresh(u)
+
+    # Return cards (UI can drop them into Unprocessed tab)
+    return [_make_upload_card(db, u) for u in created]
+
+@router.get("/uploads", response_model=UploadListResponse)
+def list_uploads_by_tab(
+    request: Request,
+    tab: TabName = Query(TabName.UNPROCESSED),
+    db: Session = Depends(get_db),
+):
+    """
+    List uploads for a specific UI tab.
+    This is the *single* contract the UI should use for tab content.
+
+    Tab derivation rules (server-side):
+    - unprocessed: job_state == queued
+    - processing: job_state == processing
+    - validation: job_state == ocr_done AND (patient_id is null OR document.validation_status != approved)
+    - completed: job_state == ocr_done AND patient_id not null AND document.validation_status == approved
+    - error: job_state == ocr_failed
+    """
+    user = get_user_from_header(db, request)
+
+    processing_svc.cleanup_expired_uploads(db, clinic_id=user.clinic_id)
+
+    q = db.query(Upload).filter(Upload.clinic_id == user.clinic_id)
+
+    if tab == TabName.UNPROCESSED:
+        q = q.filter(Upload.job_state == JobState.QUEUED.value)
+
+    elif tab == TabName.PROCESSING:
+        q = q.filter(Upload.job_state == JobState.PROCESSING.value)
+
+    elif tab == TabName.ERROR:
+        q = q.filter(Upload.job_state == JobState.OCR_FAILED.value)
+
+    elif tab in (TabName.VALIDATION, TabName.COMPLETED):
+        # job_state must be OCR_DONE for both validation/completed
+        q = q.filter(Upload.job_state == JobState.OCR_DONE.value)
+
+        # Now apply validation/patient logic via Document join
+        # One Document per Upload, but join is safe.
+        q = q.outerjoin(Document, Document.upload_id == Upload.id)
+
+        if tab == TabName.VALIDATION:
+            # Needs action if patient not assigned OR doc not approved (or doc missing)
+            q = q.filter(
+                (Upload.patient_id == None) |  # noqa: E711
+                (Document.id == None) |         # noqa: E711
+                (Document.validation_status != ValidationStatus.APPROVED.value)
+            )
         else:
-            upload.ocr_status = "rejected"
-        
-        db.commit()
-        db.refresh(upload)
+            # COMPLETED: patient assigned AND doc approved
+            q = q.filter(
+                (Upload.patient_id != None) &  # noqa: E711
+                (Document.validation_status == ValidationStatus.APPROVED.value)
+            )
 
-        # Return updated document data
-        return {
-            "id": upload.id,
-            "name": upload.filename,
-            "status": upload.ocr_status,
-            "validated_at": datetime.utcnow().isoformat(),
-            "validated_by": user
-        }
+    # order newest first for UI
+    uploads = q.order_by(Upload.uploaded_at.desc()).all()
+    items = [_make_upload_card(db, u) for u in uploads]
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        app_logger.error(f"Error validating document: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Validation failed")
+    return UploadListResponse(items=items, total=len(items))
+
+@router.post("/uploads/batch/assign", response_model=UploadListResponse)
+def batch_assign_uploads(
+    request: Request,
+    payload: UploadBatchAssignRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Assign a patient to multiple uploads in a single call.
+    Updates associated Document.patient_id when present.
+    """
+    user = get_user_from_header(db, request)
+
+    patient = db.query(Patient).filter(
+        Patient.id == payload.patient_id,
+        Patient.clinic_id == user.clinic_id,
+    ).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    upload_ids = list(dict.fromkeys(payload.upload_ids))
+    uploads = db.query(Upload).filter(
+        Upload.clinic_id == user.clinic_id,
+        Upload.id.in_(upload_ids),
+    ).all()
+
+    if len(uploads) != len(upload_ids):
+        raise HTTPException(status_code=404, detail="One or more uploads not found")
+
+    for upload in uploads:
+        upload.patient_id = patient.id
+        if upload.document:
+            upload.document.patient_id = patient.id
+
+    db.commit()
+
+    items = [_make_upload_card(db, u) for u in uploads]
+    return UploadListResponse(items=items, total=len(items))
+
+@router.post("/uploads/batch/type", response_model=UploadListResponse)
+def batch_update_upload_type(
+    request: Request,
+    payload: UploadBatchTypeRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Update document_type for multiple uploads in a single call.
+    Updates associated Document.document_type when present.
+    """
+    user = get_user_from_header(db, request)
+
+    upload_ids = list(dict.fromkeys(payload.upload_ids))
+    uploads = db.query(Upload).filter(
+        Upload.clinic_id == user.clinic_id,
+        Upload.id.in_(upload_ids),
+    ).all()
+
+    if len(uploads) != len(upload_ids):
+        raise HTTPException(status_code=404, detail="One or more uploads not found")
+
+    for upload in uploads:
+        upload.document_type = payload.document_type
+        if upload.document:
+            upload.document.document_type = payload.document_type
+
+    db.commit()
+
+    items = [_make_upload_card(db, u) for u in uploads]
+    return UploadListResponse(items=items, total=len(items))
+
+@router.get("/uploads/{upload_id}", response_model=UploadDetailResponse)
+def get_upload_detail(
+    upload_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Fetch upload details + document summary.
+    Used by the Validation screen when opening a card.
+    """
+    user = get_user_from_header(db, request)
+
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    _require_same_clinic(user, upload)
+    return _make_upload_detail(db, upload)
+
+@router.get("/uploads/{upload_id}/ocr", response_model=UploadOCRResponse)
+def get_upload_ocr_text(
+    upload_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Fetch full OCR text for an upload.
+    This is separate from list endpoints to keep list payloads small.
+    """
+    user = get_user_from_header(db, request)
+
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    _require_same_clinic(user, upload)
+
+    doc = db.query(Document).filter(Document.upload_id == upload_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="OCR not available yet")
+
+    if upload.job_state != JobState.OCR_DONE.value:
+        raise HTTPException(status_code=409, detail=f"OCR not finished (state={upload.job_state})")
+
+    return UploadOCRResponse(
+        upload_id=upload_id,
+        document_id=doc.id,
+        ocr_text=doc.ocr_text or "",
+        ocr_metadata=None,
+    )
+
+@router.post("/uploads/{upload_id}/complete", response_model=UploadCompleteResponse)
+def complete_upload_assign_and_approve(
+    upload_id: str,
+    payload: UploadCompleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Doctor primary action (Option C):
+    - Assign patient
+    - Approve validation
+    - Optional: edit OCR text
+    - Optional: set document_type
+
+    This is the only doctor-facing "complete" action required for MVP.
+    """
+    user = get_user_from_header(db, request)
+
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    _require_same_clinic(user, upload)
+
+    if upload.job_state != JobState.OCR_DONE.value:
+        raise HTTPException(status_code=409, detail=f"Upload not ready for completion (state={upload.job_state})")
+
+    # Verify patient exists and belongs to same clinic
+    patient = db.query(Patient).filter(Patient.id == payload.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    if patient.clinic_id != user.clinic_id:
+        raise HTTPException(status_code=403, detail="Forbidden (patient in different clinic)")
+
+    doc = db.query(Document).filter(Document.upload_id == upload_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found for upload")
+
+    # Apply edits
+    upload.patient_id = payload.patient_id
+    doc.patient_id = payload.patient_id
+
+    # Mark validation as approved
+    doc.validation_status = ValidationStatus.APPROVED.value
+    doc.validated_by = user.email
+    doc.validated_at = datetime.utcnow()
+
+    if payload.document_type:
+        upload.document_type = payload.document_type
+        doc.document_type = payload.document_type
+
+    if payload.edited_ocr_text is not None:
+        doc.ocr_text = payload.edited_ocr_text
+
+    db.commit()
+    db.refresh(upload)
+
+    _remove_upload_file(upload)
+
+    return UploadCompleteResponse(upload=_make_upload_detail(db, upload))
+
+@router.delete("/uploads/{upload_id}", response_model=UploadRejectResponse)
+def reject_and_delete_upload(
+    upload_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Doctor rejection behavior for MVP:
+    - Immediate deletion of Upload + linked Document + file on disk.
+    No reason/motive required in v1.
+    """
+    user = get_user_from_header(db, request)
+
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    _require_same_clinic(user, upload)
+
+    # delete linked Document (if cascade isn't configured)
+    doc = db.query(Document).filter(Document.upload_id == upload_id).first()
+    if doc:
+        db.delete(doc)
+
+    # delete file from disk
+    _remove_upload_file(upload)
+
+    db.delete(upload)
+    db.commit()
+
+    return UploadRejectResponse(deleted=True, upload_id=upload_id)
+
+@router.get("/uploads/{upload_id}/download")
+def download_upload_file(
+    upload_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Download the original uploaded file.
+    Useful for previewing in UI (PDF) and for debugging OCR.
+    """
+    user = get_user_from_header(db, request)
+
+    upload = db.query(Upload).filter(Upload.id == upload_id).first()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    _require_same_clinic(user, upload)
+
+    if not upload.file_path or not os.path.exists(upload.file_path):
+        raise HTTPException(status_code=404, detail="File unavailable")
+
+    return FileResponse(
+        upload.file_path,
+        filename=upload.filename,
+        media_type="application/octet-stream",
+    )
+
+@router.get("", response_model=List[PatientDocumentListItem])
+def list_patient_documents(
+    request: Request,
+    patient_id: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+):
+    """List documents for a given patient.
+
+    Used by the patient "Documents & History" view.
+    Only returns documents for the caller's clinic.
+    """
+    # print a log to confirm the function is called and patient_id is received
+    #print(f"Listing documents for patient ID: {patient_id}")
+    user = get_user_from_header(db, request)
+
+    # Ensure patient exists in this clinic (prevents cross-clinic leakage)
+    patient = (
+        db.query(Patient)
+        .filter(Patient.id == patient_id, Patient.clinic_id == user.clinic_id)
+        .first()
+    )
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    docs = (
+        db.query(Document)
+        .filter(Document.patient_id == patient_id, Document.clinic_id == user.clinic_id)
+        .order_by(Document.created_at.desc())
+        .all()
+    )
+
+    items: List[PatientDocumentListItem] = []
+    for doc in docs:
+        ocr_text = getattr(doc, "ocr_text", None) or ""
+        has_full_text = bool(ocr_text.strip())
+        has_original_file = _document_has_original_file(doc.upload)
+        items.append(
+            PatientDocumentListItem(
+                id=doc.id,
+                filename=doc.filename or doc.original_filename,
+                document_type=getattr(doc, "document_type", None),
+                created_at=doc.created_at,
+                text_snippet=_make_document_snippet(ocr_text),
+                has_full_text=has_full_text,
+                has_original_file=has_original_file,
+                download_url=_preview_url(doc.upload_id)
+                if getattr(doc, "upload_id", None) and has_original_file
+                else None,
+                full_text_url=f"/api/documents/{doc.id}/text",
+            )
+        )
+
+    #log the document list for debugging
+    #print(f"Patient {patient_id} has {len(items)} documents")
+    #print(f"Documents: {[item.id for item in items]}")
+    return items
+
+@router.get("/{document_id}/text", response_model=DocumentTextResponse)
+def get_document_text(
+    document_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Return full OCR text for a document."""
+    user = get_user_from_header(db, request)
+
+    doc = (
+        db.query(Document)
+        .filter(Document.id == document_id, Document.clinic_id == user.clinic_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return DocumentTextResponse(
+        id=doc.id,
+        text=(doc.ocr_text or ""),
+    )
+
+# ----------------------------
+# Optional debug/admin endpoints (keep for now, can remove later)
+# ----------------------------
+
+@router.post("/processing/run-next")
+def run_next_ocr_job_for_clinic(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Debug/admin endpoint:
+    - Claims next queued job for the current clinic and processes it.
+    In production, the background worker should handle this automatically.
+    """
+    user = get_user_from_header(db, request)
+
+    # Optional stale recovery for this clinic
+    processing_svc.recover_stale_jobs(db, clinic_id=user.clinic_id)
+
+    upl = processing_svc.claim_next(db, clinic_id=user.clinic_id)
+    if not upl:
+        return {"processed": False, "message": "No queued uploads"}
+
+    result = processing_svc.process_upload(db, upload_id=upl.id)
+    return {
+        "processed": result.processed,
+        "upload_id": result.upload_id,
+        "document_id": result.document_id,
+        "state": result.state,
+        "message": result.message,
+    }

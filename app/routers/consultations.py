@@ -5,16 +5,23 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, cast, Date
 from typing import List, Optional
 import uuid
+import aiofiles
 import logging
 from datetime import datetime, date
 
 from app.database import get_db
+from app.auth import get_user_from_header
 from app.models import Consultation, User, Patient, GDPRAuditLog, Document
 from app.schemas import (
     ConsultationStart, ConsultationAutoSave, ConsultationCreate,
     ConsultationUpdate, ConsultationResponse, ConsultationListItem,
     AgendaItem, ConsultationComplete
 )
+from app.services.audio_service import AudioTranscriptionService
+from app.services.llm_extraction_service import LLMExtractionService
+from app.services.template_service import TemplateService
+from app.services.openehr_composer import build_composition
+
 
 router = APIRouter(tags=["consultations"])
 
@@ -22,15 +29,10 @@ router = APIRouter(tags=["consultations"])
 audit_logger = logging.getLogger("reconomed.audit")
 app_logger = logging.getLogger("reconomed.app")
 
-# ----------------------------
-# Helper: Get Current User
-# ----------------------------
-def get_current_user(db: Session) -> User:
-    """Get demo doctor for MVP"""
-    user = db.query(User).filter(User.email == "doctor@reconomed.ro").first()
-    if not user:
-        raise HTTPException(status_code=500, detail="Demo user not found")
-    return user
+
+# Initialize services (use environment variables in production)
+audio_service = AudioTranscriptionService(api_key=os.getenv("OPENAI_API_KEY"))
+llm_service = LLMExtractionService(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ============================
 # AGENDA ENDPOINTS
@@ -141,8 +143,9 @@ async def get_consultation_counts(db: Session = Depends(get_db)):
 @router.post("/start", response_model=ConsultationResponse)
 async def start_consultation(
     data: ConsultationStart,
+    request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """
     Start new consultation - creates scheduled consultation with patient and specialty.
     Called from Agenda '+ Add Patient' or Patient card 'Start Consult'.
@@ -202,8 +205,9 @@ async def start_consultation(
 async def auto_save_consultation(
     consultation_id: str,
     data: ConsultationAutoSave,
+    request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """
     Auto-save consultation data every 30 seconds from frontend.
     Updates structured_data, pinned_files, audio fields, and last_autosave_at.
@@ -247,6 +251,7 @@ async def auto_save_consultation(
 async def update_consultation_specialty(
     consultation_id: str,
     specialty: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Change specialty mid-consultation."""
@@ -296,8 +301,9 @@ async def update_consultation_specialty(
 async def update_consultation_status(
     consultation_id: str,
     status: str,
+    request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """
     Update consultation status with validated transitions.
     scheduled → in_progress → pending_review/completed
@@ -530,7 +536,7 @@ async def delete_consultation(
 async def generate_discharge(
     consultation_id: str,
     db: Session = Depends(get_db)
-):
+)-> List[ConsultationListItem]:
     """
     Generate a discharge summary from consultation data and pinned files.
     Uses AI (LLM) to generate Romanian-language discharge text.
@@ -705,6 +711,7 @@ async def get_draft_consultations(db: Session = Depends(get_db)):
 @router.delete("/{consultation_id}/cancel")
 async def cancel_consultation(
     consultation_id: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """Cancel consultation (soft delete - sets status to cancelled)."""
@@ -745,6 +752,7 @@ async def cancel_consultation(
 @router.get("/{consultation_id}/patient-history")
 async def get_patient_history_for_consultation(
     consultation_id: str,
+    request:Request,
     db: Session = Depends(get_db)
 ):
     """
@@ -813,11 +821,12 @@ async def get_patient_history_for_consultation(
 
 # Legacy CRUD endpoints
 
-@router.post("/", response_model=ConsultationResponse)
+@router.post("", response_model=ConsultationResponse)
 async def create_consultation(
     consultation_data: ConsultationCreate,
+    request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """Legacy endpoint - use /start instead"""
     current_user = get_current_user(db)
 
@@ -848,14 +857,15 @@ async def create_consultation(
 
     return new_consultation
 
-@router.get("/", response_model=List[ConsultationResponse])
+@router.get("", response_model=List[ConsultationResponse])
 async def get_consultations(
+    request:Request,
     patient_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: Session = Depends(get_db)
-):
+    db: Session = Depends(get_db),
+)-> List[ConsultationResponse]:
     """Get consultations with optional filters"""
     current_user = get_current_user(db)
 
@@ -875,11 +885,48 @@ async def get_consultations(
 
     return consultations
 
+@router.get("/{consultation_id}/openehr")
+async def get_consultation_openehr(
+    consultation_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Build an openEHR composition-like payload for a consultation."""
+    current_user = get_user_from_header(db, request)
+
+    consultation = db.query(Consultation).filter(
+        Consultation.id == consultation_id,
+        Consultation.clinic_id == current_user.clinic_id,
+    ).first()
+
+    if not consultation:
+        raise HTTPException(status_code=404, detail="Consultation not found")
+
+    template_service = TemplateService(db)
+    try:
+        template = template_service.get_template(consultation.specialty)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="No template found for specialty")
+
+    if not consultation.structured_data:
+        raise HTTPException(status_code=400, detail="No structured data available")
+
+    context = {
+        "consultation_id": consultation.id,
+        "consultation_date": consultation.consultation_date,
+        "specialty": consultation.specialty,
+        "language": "ro",
+        "territory": "RO",
+    }
+
+    return build_composition(template, consultation.structured_data, context)
+
 @router.get("/{consultation_id}", response_model=ConsultationResponse)
 async def get_consultation(
     consultation_id: str,
-    db: Session = Depends(get_db)
-):
+    request:Request,
+    db: Session = Depends(get_db),
+)-> ConsultationResponse:
     """Get specific consultation"""
     current_user = get_current_user(db)
 
@@ -897,8 +944,9 @@ async def get_consultation(
 async def update_consultation(
     consultation_id: str,
     consultation_data: ConsultationUpdate,
+    request:Request,
     db: Session = Depends(get_db)
-):
+)-> ConsultationResponse:
     """Update consultation - legacy endpoint"""
     current_user = get_current_user(db)
 
@@ -934,8 +982,11 @@ async def update_consultation(
 
     return consultation
 
-@router.get("/today/stats")
-async def get_today_stats(db: Session = Depends(get_db)):
+@router.get("/today/stats", response_model=ConsultationTodayStatsResponse)
+async def get_today_stats(
+    request: Request,
+    db: Session = Depends(get_db),
+)-> ConsultationTodayStatsResponse:
     """Get today's consultation statistics"""
     current_user = get_current_user(db)
 

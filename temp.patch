@@ -1,0 +1,394 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/static/js/app.js b/static/js/app.js
+index 7e022f95e39a436921f076d7bc0ffe807cf67338..7b347d92b104c35846a3e4cd619c0061792c8540 100644
+--- a/static/js/app.js
++++ b/static/js/app.js
+@@ -1,66 +1,79 @@
+ // app.js
+ import { checkAuthentication, logout } from './auth.js';
+ import { Navigation } from './navigation.js';
+ import { PatientManager } from './patients.js';
+ import { DocumentManager } from './documents.js';
+ import { ConsultationManager } from './consultations.js';
+ import { showLoading, hideLoading, showToast, showModal, hideModal} from './ui.js';
+ import { startLiveClock } from './utils.js';
+ import { ClinicManager } from './clinics.js';   
+ 
+ // =========================================================================
+ // API CONFIGURATION 
+ // for consistent endpoint management
+ // put them in alphabetical order, like in the routers folder, so that you can check easily
+ // =========================================================================
+ const API_CONFIG = {
+     BASE_URL: '/api',  // Change to '/api/v1' or '/api/v2' when needed
+     ENDPOINTS: {
+-        auth: '/auth/',
+-        clinics:'/clinics/',
+-        consultations: '/consultations/',
++        auth: '/auth',
++        clinics:'/clinics',
++        consultations: '/consultations',
+         consultationCounts: '/consultations/counts',
+-        dashboard: '/dashboard/',
+-        documents: '/documents/', 
+-        patients: '/patients/',
+-        search: '/search/'
++        dashboard: '/dashboard',
++        documents: '/documents', 
++        patients: '/patients',
++        search: '/search'
+     }  
+ };
+ 
+ // Helper function to build API URLs
+ function apiUrl(endpoint, path = '',params = {}) {
+     let url = `${API_CONFIG.BASE_URL}${endpoint}`;
+     
+     // 1. Substitute Path Parameters (like :clinicId)
+     // We explicitly check for :clinicId
+     if (params.clinicId) {
+         url = url.replace(':clinicId', params.clinicId);
+     }
+ 
+-    // 2. Append the rest of the path
+-    url = `${url}${path}`; 
++    // 2. Append the rest of the path with stable slash handling
++    const normalizedPath = String(path || '');
++    if (!normalizedPath) {
++        return url;
++    }
++
++    // query-string only path: keep route untouched
++    if (normalizedPath.startsWith('?')) {
++        return `${url}${normalizedPath}`;
++    }
++
++    // enforce exactly one slash between endpoint and appended path segment
++    const baseNoSlash = url.replace(/\/+$/, '');
++    const pathNoSlash = normalizedPath.replace(/^\/+/, '');
++    url = `${baseNoSlash}/${pathNoSlash}`;
+ 
+     // 3. Handle Query Parameters (if you ever need them)
+     // (Omitted for brevity, but a complete helper would handle them here)
+     
+     return url;
+ }
+ 
+ function apiFetch(input, init = {}) {
+   return fetch(input, withUserHeader(init));
+ }
+ 
+ // Export for ES modules
+ export { API_CONFIG, apiUrl, apiFetch };
+ 
+ // Keep backward compatibility for legacy scripts
+ if (typeof window !== 'undefined') {
+   window.API_CONFIG = API_CONFIG;
+   window.apiUrl = apiUrl;
+   window.apiFetch = apiFetch;
+ }
+ 
+ // =========================================================================
+ // Request helpers: ensure X-User header is present for backend context
+ // =========================================================================
+ function getStoredUserEmail() {
+diff --git a/static/js/patients.js b/static/js/patients.js
+index 57204a3b48d62cfb00344133c0dc761e44acda4d..f6204fb87a74f4c2c094849b34ba85c92c812219 100644
+--- a/static/js/patients.js
++++ b/static/js/patients.js
+@@ -1,68 +1,84 @@
+ //Patient CRUD + rendering
+ // patients.js
+ // -----------------------------------------------------------------------------
+ // Handles patient-related functionality for the SPA
+ //
+ // Responsibilities:
+ //  - Load, search, render patients
+ //  - Add new patients via form submission
+ //  - Support programmatic actions like view/edit
+ //  - Integrate with UI for notifications and modals
+ //
+ // Assumes HTML structure contains:
+ //   - <div id="patients-grid"></div> for patient cards
+ //   - <form id="add-patient-form"></form> for adding / editing patients
+ //   - <input id="patient-search" /> for live search/filtering
+ // -----------------------------------------------------------------------------
+ 
+ import { showToast, showModal, hideModal } from './ui.js';
+ 
+ export class PatientManager {
+     constructor(app) {
+         this.app = app;
+         this.patients = [];
++        this.viewPatientTabsInitialized = false;
++        this.latestDocumentsRequestToken = 0;
+ 
+         //for showing patients with pagination:
+         this.currentPage = 1;
+         this.perPage = 8;
+         this.totalPages = 1;
+         this.totalPatients = 0;
+         this.hasNext = false;
+         this.hasPrev = false;
+ 
+         // DOM references
+         this.gridContainer = document.getElementById('patients-grid');
+         this.addForm = document.getElementById('add-patient-form');
+         this.searchInput = document.getElementById('patient-search');
+         this.sortSelect = document.getElementById('patient-sort');
+ 
+         //DOM pagination references
+         this.paginationContainer = document.getElementById('patients-pagination');
+         this.patientCountDisplay = document.getElementById('patient-count-display');
+     }
+ 
++    getViewPatientModalElements() {
++        const modal = document.getElementById('view-patient-modal');
++        if (!modal) {
++            return { modal: null, tabButtons: [], tabContents: [], documentsContainer: null };
++        }
++
++        return {
++            modal,
++            tabButtons: Array.from(modal.querySelectorAll('.modal-tabs .tab-button')),
++            tabContents: Array.from(modal.querySelectorAll('.modal-body .tab-content')),
++            documentsContainer: modal.querySelector('#documents-list')
++        };
++    }
++
+     // -------------------------------------------------------------------------
+     // Initialization
+     // -------------------------------------------------------------------------
+     init() {
+         if (this.addForm) {
+             this.addForm.onsubmit = (e) => {
+             e.preventDefault();
+             this.addPatient();
+             };
+         //    this.addForm.addEventListener('submit', (e) => {
+         //        e.preventDefault();
+         //        this.addPatient();
+         //    });
+         }
+ 
+         //console.log('PatientManager init called');
+         //console.log('Search input found:', this.searchInput);
+ 
+         if (this.searchInput) {
+             //console.log('Adding search listener');
+             // Debounced search - Debouncing = Instead of running the search function immediately every time a user types a character  (which can be resource-intensive, especially for network requests), debouncing ensures the function is only executed after a specific period of inactivity has passed since the last event (e.g., the last keypress).
+             let searchTimeout;
+         
+             this.searchInput.addEventListener('input', (e) => {
+                 const value = e.target.value;  // capture immediately
+@@ -513,114 +529,136 @@ export class PatientManager {
+                             (isGranted ? 'Granted' : 'Not Granted');
+             
+             const dateText = consent.granted_at ? 
+                 new Date(consent.granted_at).toLocaleDateString('ro-RO') : 'N/A';
+             
+             return `
+                 <div class="consent-status-item ${status}">
+                     <i class="fas ${icon}"></i>
+                     <div class="consent-info">
+                         <div class="consent-name">
+                             ${key.replace('_', ' ').toUpperCase()}: ${statusText}
+                         </div>
+                         <div class="consent-date">
+                             ${isGranted ? `Granted: ${dateText}` : ''}
+                             ${consent.expires_at ? ` • Expires: ${new Date(consent.expires_at).toLocaleDateString('ro-RO')}` : ''}
+                         </div>
+                     </div>
+                 </div>
+             `;
+         }).join('');
+         
+         container.innerHTML = consentHTML;
+     }
+ 
+     initViewPatientTabs() {
+-        const tabButtons = document.querySelectorAll('.modal-tabs .tab-button');
+-        const tabContents = document.querySelectorAll('.modal-body .tab-content');
+-        
++        if (this.viewPatientTabsInitialized) {
++            return;
++        }
++
++        const { modal, tabButtons, tabContents } = this.getViewPatientModalElements();
++        if (!modal || tabButtons.length === 0 || tabContents.length === 0) {
++            return;
++        }
++
+         tabButtons.forEach(button => {
+             button.addEventListener('click', () => {
+                 const targetTab = button.dataset.tab;
+-                
+-                // Remove active from all
++                if (!targetTab) {
++                    return;
++                }
++
+                 tabButtons.forEach(btn => btn.classList.remove('active'));
+                 tabContents.forEach(content => content.classList.remove('active'));
+-                
+-                // Add active to clicked
++
+                 button.classList.add('active');
+-                document.getElementById(`${targetTab}-tab`).classList.add('active');
+-                
+-                // Load documents when switching to documents tab
++                const targetContent = modal.querySelector(`#${targetTab}-tab`);
++                if (targetContent) {
++                    targetContent.classList.add('active');
++                }
++
+                 if (targetTab === 'documents' && this.currentViewPatientId) {
+                     this.loadPatientDocuments(this.currentViewPatientId);
+                 }
+             });
+         });
++
++        this.viewPatientTabsInitialized = true;
+     }
+ 
+     async loadPatientDocuments(patientId) {
+-        const container = document.getElementById('documents-list');
++        const { documentsContainer: container } = this.getViewPatientModalElements();
++        if (!container) {
++            return;
++        }
++
++        const normalizedPatientId = encodeURIComponent(String(patientId || ''));
++        const requestToken = ++this.latestDocumentsRequestToken;
++
+         container.innerHTML = '<div class="loading-placeholder">Loading documents...</div>';
+         
+         try {
+-            const consultationsPromise = fetch(
+-                apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${patientId}`)
++            const consultationsPromise = apiFetch(
++                apiUrl(API_CONFIG.ENDPOINTS.consultations, `?patient_id=${normalizedPatientId}`)
+             ).then(response => {
+                 if (!response.ok) {
+                     throw new Error('Failed to load consultations');
+                 }
+                 return response.json();
+             });
+ 
+-            const documentsPromise = fetch(
+-                apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${patientId}`)
++            const documentsPromise = apiFetch(
++                apiUrl(API_CONFIG.ENDPOINTS.documents, `?patient_id=${normalizedPatientId}`)
+             ).then(response => {
+                 if (!response.ok) {
+                     throw new Error('Failed to load documents');
+                 }
+                 return response.json();
+             });
+ 
+             const [consultationsResult, documentsResult] = await Promise.allSettled([
+                 consultationsPromise,
+                 documentsPromise,
+             ]);
+ 
+             const consultations = consultationsResult.status === 'fulfilled'
+                 ? consultationsResult.value
+                 : [];
+             const documents = documentsResult.status === 'fulfilled'
+                 ? documentsResult.value
+                 : [];
+             const consultationsError = consultationsResult.status === 'rejected'
+                 ? 'Unable to load consultations right now.'
+                 : '';
+             const documentsError = documentsResult.status === 'rejected'
+                 ? 'Unable to load documents right now.'
+                 : '';
+ 
++            if (requestToken !== this.latestDocumentsRequestToken || this.currentViewPatientId !== patientId) {
++                return;
++            }
++
+             if (
+                 consultations.length === 0 &&
+                 documents.length === 0 &&
+                 !consultationsError &&
+                 !documentsError
+             ) {
+                 container.innerHTML = `
+                     <div class="empty-state">
+                         <div class="empty-icon">📄</div>
+                         <h4>No consultations or documents yet</h4>
+                         <p>Consultations and documents will appear here once created</p>
+                     </div>
+                 `;
+                 return;
+             }
+ 
+             const documentsSection = documentsError
+                 ? `
+                     <div class="empty-state">
+                         <div class="empty-icon">⚠️</div>
+                         <h4>${documentsError}</h4>
+                         <p>Please try again later.</p>
+                     </div>
+                 `
+                 : documents.length
+@@ -669,50 +707,55 @@ export class PatientManager {
+                             </div>
+                         </div>
+                     `;
+                 }).join('')
+                 : `
+                     <div class="empty-state">
+                         <div class="empty-icon">🩺</div>
+                         <h4>No consultations yet</h4>
+                         <p>Consultations will appear here once created</p>
+                     </div>
+                 `;
+ 
+             container.innerHTML = `
+                 <div class="documents-section">
+                     <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
+                     ${consultationsSection}
+                 </div>
+                 <div class="documents-section">
+                     <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
+                     ${documentsSection}
+                 </div>
+             `;
+             this.bindDocumentHistoryActions();
+         } catch (err) {
+             console.error('Failed to load documents or consultations:', err);
++
++            if (requestToken !== this.latestDocumentsRequestToken || this.currentViewPatientId !== patientId) {
++                return;
++            }
++
+             container.innerHTML = `
+                 <div class="documents-section">
+                     <h4 class="section-title"><i class="fas fa-notes-medical"></i> Consultations</h4>
+                     <p class="text-error">Unable to load consultations right now.</p>
+                 </div>
+                 <div class="documents-section">
+                     <h4 class="section-title"><i class="fas fa-file-medical"></i> Documents</h4>
+                     <p class="text-error">Unable to load documents right now.</p>
+                 </div>
+             `;
+         }
+     }
+ 
+     // Placeholder for future document grouping
+     renderGroupedDocuments(documents) {
+         // Group documents by type
+         const grouped = documents.reduce((acc, doc) => {
+             const type = (doc.document_type || 'uncategorized').trim() || 'uncategorized';
+             if (!acc[type]) acc[type] = [];
+             acc[type].push(doc);
+             return acc;
+         }, {});
+         
+         // Render each group
+         const html = Object.entries(grouped)
+ 
+EOF
+)

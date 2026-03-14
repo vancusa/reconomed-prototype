@@ -1,167 +1,118 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ReconoMed - Login</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Merriweather:wght@300;400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/styles.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ReconoMed - Login</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Merriweather:wght@300;400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/styles.css">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
 </head>
 <body>
-    <div class="login-container">
-        <div class="login-left">
-            <div class="login-card">
-                <div class="brand-header">
-                    <div class="login-brand-logo">
-                        <img src="images/reconomed-logo.png" alt="ReconoMed">
-                    </div>
-                    <div class="login-brand-name">ReconoMed</div>
-                    <div class="login-brand-tagline">Intelligent Healthcare Documentation</div>
-                </div>
-
-                <form class="login-form" id="loginForm">
-                    <div class="form-group">
-                        <label for="username">Username or Email</label>
-                        <input type="text" id="username" name="username" required>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="password">Password</label>
-                        <input type="password" id="password" name="password" required>
-                    </div>
-
-                    <div class="form-group">
-                        <label style="margin-bottom: 1rem;">Select Your Role</label>
-                        <div class="role-selector">
-                            <div class="role-option">
-                                <input type="radio" id="doctor" name="role" value="doctor" checked>
-                                <label for="doctor">
-                                    <div class="role-icon">
-                                        <i class="fas fa-user-md"></i>
-                                    </div>
-                                    <div class="role-name">Doctor</div>
-                                </label>
-                            </div>
-                            <div class="role-option">
-                                <input type="radio" id="nurse" name="role" value="nurse">
-                                <label for="nurse">
-                                    <div class="role-icon">
-                                        <i class="fas fa-heartbeat"></i>
-                                    </div>
-                                    <div class="role-name">Nurse</div>
-                                </label>
-                            </div>
-                            <div class="role-option">
-                                <input type="radio" id="admin" name="role" value="admin">
-                                <label for="admin">
-                                    <div class="role-icon">
-                                        <i class="fas fa-cog"></i>
-                                    </div>
-                                    <div class="role-name">Admin</div>
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button type="submit" class="login-btn">
-                        <i class="fas fa-sign-in-alt"></i>
-                        Sign In to ReconoMed
-                    </button>
-                </form>
-
-                <div class="demo-credentials">
-                    <h4>Demo Credentials</h4>
-                    <p><strong>Username:</strong> demo@reconomed.com</p>
-                    <p><strong>Password:</strong> demo123</p>
-                    <p style="margin-top: 0.5rem; font-style: italic;">Use any role to explore the system</p>
-                </div>
-            </div>
+  <div class="login-container">
+    
+    <!-- LEFT SIDE: FORM -->
+    <div class="login-left">
+      <div class="login-card">
+        <div class="brand-header">
+          <div class="login-brand-logo">
+            <img src="images/reconomed-logo.png" alt="ReconoMed">
+          </div>
+          <div class="login-brand-name">ReconoMed</div>
+          <div class="login-brand-tagline">Intelligent Healthcare Documentation</div>
         </div>
 
-        <div class="login-right">
-            <div class="right-content">
-                <div class="feature-highlight">
-                    <h2>Welcome to the Future of Healthcare Documentation</h2>
-                    <p>Streamline your medical workflows with intelligent document processing, ensuring accuracy while saving valuable time.</p>
-                    
-                    <div class="features-list">
-                        <div class="feature-item">
-                            <div class="feature-icon">
-                                <i class="fas fa-shield-alt"></i>
-                            </div>
-                            <div class="feature-text">
-                                <strong>GDPR Compliant</strong><br>
-                                Full data protection and privacy compliance
-                            </div>
-                        </div>
-                        
-                        <div class="feature-item">
-                            <div class="feature-icon">
-                                <i class="fas fa-language"></i>
-                            </div>
-                            <div class="feature-text">
-                                <strong>Multi-Language OCR</strong><br>
-                                Romanian and English text recognition
-                            </div>
-                        </div>
-                        
-                        <div class="feature-item">
-                            <div class="feature-icon">
-                                <i class="fas fa-mobile-alt"></i>
-                            </div>
-                            <div class="feature-text">
-                                <strong>Mobile Ready</strong><br>
-                                Works seamlessly on tablets and smartphones
-                            </div>
-                        </div>
-                        
-                        <div class="feature-item">
-                            <div class="feature-icon">
-                                <i class="fas fa-clock"></i>
-                            </div>
-                            <div class="feature-text">
-                                <strong>Real-Time Processing</strong><br>
-                                Instant document analysis and validation
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        <form class="login-form" id="loginForm">
+          <div class="form-group">
+            <label for="username">Username or Email</label>
+            <input type="text" id="username" name="username" required>
+          </div>
+
+          <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required>
+          </div>
+
+          <div class="form-group">
+            <label style="margin-bottom: 1rem;">Select Your Role</label>
+            <div class="role-selector">
+              <div class="role-option">
+                <input type="radio" id="doctor" name="role" value="doctor" checked>
+                <label for="doctor">
+                  <div class="role-icon"><i class="fas fa-user-md"></i></div>
+                  <div class="role-name">Doctor</div>
+                </label>
+              </div>
+              <div class="role-option">
+                <input type="radio" id="nurse" name="role" value="nurse">
+                <label for="nurse">
+                  <div class="role-icon"><i class="fas fa-heartbeat"></i></div>
+                  <div class="role-name">Nurse</div>
+                </label>
+              </div>
+              <div class="role-option">
+                <input type="radio" id="admin" name="role" value="admin">
+                <label for="admin">
+                  <div class="role-icon"><i class="fas fa-cog"></i></div>
+                  <div class="role-name">Admin</div>
+                </label>
+              </div>
             </div>
+          </div>
+
+          <button type="submit" class="login-btn">
+            <i class="fas fa-sign-in-alt"></i> Sign In to ReconoMed
+          </button>
+        </form>
+
+        <div class="demo-credentials">
+          <h4>Demo Credentials</h4>
+          <p><strong>Username:</strong> demo@reconomed.com</p>
+          <p><strong>Password:</strong> demo123</p>
+          <p style="margin-top: 0.5rem; font-style: italic;">Use any role to explore the system</p>
         </div>
+      </div>
     </div>
 
-    <script>
-        document.getElementById('loginForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const role = document.querySelector('input[name="role"]:checked').value;
-            
-            // Simple demo authentication
-            if (username && password) {
-                // Store user session
-                localStorage.setItem('reconomed_user', JSON.stringify({
-                    username: username,
-                    role: role,
-                    name: username === 'demo@reconomed.com' ? 'Dr. Demo User' : username,
-                    loginTime: new Date().toISOString()
-                }));
-                
-                // Redirect to main app
-                window.location.href = '/';
-            } else {
-                alert('Please enter both username and password');
-            }
-        });
-        
-        // Auto-fill demo credentials when clicking on them
-        document.querySelector('.demo-credentials').addEventListener('click', function() {
-            document.getElementById('username').value = 'demo@reconomed.com';
-            document.getElementById('password').value = 'demo123';
-        });
-    </script>
+    <!-- RIGHT SIDE: IMAGE HERO -->
+    <div class="login-right hero-image">
+      <div class="right-overlay"></div>
+      <div class="right-content hero-text">
+        <h2>Empowering Smarter, Safer Healthcare</h2>
+        <p>Seamlessly capture, process, and secure your medical documentation — powered by ReconoMed’s intelligent workflow engine.</p>
+        <div class="hero-features">
+          <span><i class="fas fa-bolt"></i> Instant Analysis</span>
+          <span><i class="fas fa-shield-alt"></i> Full GDPR Compliance</span>
+          <span><i class="fas fa-mobile-alt"></i> Optimized for Every Device</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const role = document.querySelector('input[name="role"]:checked').value;
+
+      if (username && password) {
+        localStorage.setItem('reconomed_user', JSON.stringify({
+          username,
+          role,
+          name: username === 'demo@reconomed.com' ? 'Dr. Demo User' : username,
+          loginTime: new Date().toISOString()
+        }));
+        window.location.href = '/';
+      } else alert('Please enter both username and password');
+    });
+
+    document.querySelector('.demo-credentials').addEventListener('click', function() {
+      document.getElementById('username').value = 'demo@reconomed.com';
+      document.getElementById('password').value = 'demo123';
+    });
+  </script>
 </body>
 </html>

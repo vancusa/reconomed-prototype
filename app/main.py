@@ -1,11 +1,19 @@
 """ReconoMed FastAPI Application - Main Entry Point"""
+#initialize environment variables
+from dotenv import load_dotenv
+import os
+
+# Load .env file from the project root
+load_dotenv()
+
+#import the necessary packages
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-import os
+from threading import Thread
 
 #---SETUP LOGGING
 import logging
@@ -51,12 +59,14 @@ from app.routers.documents import router as documents_router
 from app.routers.search import router as search_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.consultations import router as consultations_router
+from app.services.ocr_worker import background_ocr_worker
 
 # Create FastAPI app
 app = FastAPI(
     title="ReconoMed API",
     description="Healthcare Document Processing Platform - Premium MVP",
-    version="1.0.0"
+    version="1.0.1",
+    redirect_slashes=False
 )
 
 # Create directories
@@ -65,12 +75,15 @@ os.makedirs("static", exist_ok=True)
 
 # Serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/components", StaticFiles(directory="static/components"), name="components")
+#app.mount("/components", StaticFiles(directory="static/components"), name="components")
 
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Configure for production
+    # "https://reconomed.com",
+    #"https://www.reconomed.com",
+    #    "https://psychic-winner-5gqx4qr9qgxj34rv5-8000.app.github.dev",  #  current dev URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -94,6 +107,11 @@ app.include_router(consultations_router, prefix=f"{API_PREFIX}/consultations", t
 @app.on_event("startup")
 def startup_event():
     create_tables()
+
+#Start the background OCR queue worker
+@app.on_event("startup")
+def start_worker():
+    Thread(target=background_ocr_worker, daemon=True).start()
 
 # Serve frontend
 @app.get("/")
