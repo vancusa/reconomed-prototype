@@ -19,9 +19,9 @@
                 <span>ReconoMed</span>
             </div>
             <div class="nav-menu">
-                <a href="#" class="nav-link active" data-section="dashboard">
-                    <i class="fas fa-chart-line"></i>
-                    <span>Dashboard</span>
+                <a href="#" class="nav-link active" data-section="agenda">
+                    <i class="fas fa-calendar-alt"></i>
+                    <span>Agenda</span>
                 </a>
                 <a href="#" class="nav-link" data-section="patients">
                     <i class="fas fa-users"></i>
@@ -30,10 +30,6 @@
                 <a href="#" class="nav-link" data-section="documents">
                     <i class="fas fa-file-medical"></i>
                     <span>Documents</span>
-                </a>
-                <a href="#" class="nav-link" data-section="consultations">
-                    <i class="fas fa-stethoscope"></i>
-                    <span>Consultations</span>
                 </a>
             </div>
             <div class="nav-user">
@@ -50,149 +46,50 @@
 
     <!-- Main Content Area -->
     <main class="main-content">
-        <!-- Dashboard Section -->
-        <section id="dashboard" class="content-section active">
-            <div class="page-header">
-                <h1>Dashboard</h1>
-                <p>Today's healthcare activity overview</p>
-                <div class="dashboard-date">
-                    <a href="https://calendar.google.com/" target="_blank" alt="Open Google Calendar">
-                            <i class="fas fa-calendar"></i>
-                    </a>
-                    <span id="date-time"></span>
+        <!-- Agenda Section -->
+        <section id="agenda" class="content-section active">
+            <!-- Top Bar -->
+            <div class="agenda-topbar">
+                <div class="agenda-date-nav">
+                    <button class="btn-icon" id="agenda-prev" title="Previous day">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <button class="btn-secondary btn-sm" id="agenda-today-btn">Today</button>
+                    <button class="btn-icon" id="agenda-next" title="Next day">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                    <span class="agenda-date-display" id="agenda-date-display"></span>
                 </div>
-            </div>
-            
-            <!-- Today's Stats -->
-            <div class="stats-section">
-                <h2>Today's Activity</h2>
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon patients">
-                            <i class="fas fa-user-md"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="patients-today"></h3>
-                            <p>Patients Seen Today</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon documents">
-                            <i class="fas fa-upload"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="uploads-today"></h3>
-                            <p>Documents Uploaded</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon pending">
-                            <i class="fas fa-clock"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="pending-processing"></h3>
-                            <p>Pending Processing</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon validated">
-                            <i class="fas fa-check-circle"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="pending-validation"></h3>
-                            <p>Needs Validation</p>
-                        </div>
-                    </div>
+                <div class="agenda-topbar-right">
+                    <span class="agenda-doctor-name" id="agenda-doctor-name"></span>
+                    <button class="btn-primary btn-sm" id="agenda-add-patient">
+                        <i class="fas fa-plus"></i> Add Patient
+                    </button>
                 </div>
             </div>
 
-            <div class="dashboard-grid">
-                <div class="dashboard-card">
-                    <div class="card-header">
-                        <h3>Recent Activity</h3>
-                        <button class="btn-tertiary" onclick="app.refreshActivity()">
-                            <i class="fas fa-sync-alt"></i>
-                        </button>
-                    </div>
-                    <div id="recent-activity" class="activity-list">
-                        <div class="loading-placeholder">Loading recent activity...</div>
-                    </div>
-                </div>
-                
-                <div class="dashboard-card">
-                    <div class="card-header">
-                        <h3>Quick Actions</h3>
-                    </div>
-                    <div class="quick-actions">
-                        <button class="action-btn primary" onclick="showAddPatientModal()">
-                            <i class="fas fa-user-plus"></i>
-                            Add New Patient
-                        </button>
-                        <button class="action-btn secondary" onclick="showSection('documents')">
-                            <i class="fas fa-upload"></i>
-                            Upload Documents
-                        </button>
-                        <button class="action-btn tertiary" onclick="showSection('consultations')">
-                            <i class="fas fa-plus-circle"></i>
-                            Record Consultation
-                        </button>
-                        <button class="action-btn secondary" onclick="app.goToValidation()">
-                            <i class="fas fa-tasks"></i>
-                            Review Pending
-                        </button>
+            <!-- Two-column grid -->
+            <div class="agenda-grid">
+                <!-- Left: Today's Schedule -->
+                <div class="agenda-column agenda-today-col">
+                    <h3 class="agenda-column-title">Today</h3>
+                    <div id="agenda-list" class="agenda-list">
+                        <div class="empty-state">
+                            <p>No consultations scheduled</p>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Overall Stats -->
-            <div class="stats-section">
-                <h2>System Overview</h2>
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-icon patients">
-                            <i class="fas fa-users"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="total-patients"></h3>
-                            <p>Total Patients</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon documents">
-                            <i class="fas fa-file-medical"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="total-documents"></h3>
-                            <p>Total Documents</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon validated">
-                            <i class="fas fa-chart-bar"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="system-efficiency"></h3>
-                            <p>Processing Efficiency</p>
-                        </div>
-                    </div>
-                    
-                    <div class="stat-card">
-                        <div class="stat-icon pending">
-                            <i class="fas fa-tasks"></i>
-                        </div>
-                        <div class="stat-content">
-                            <h3 id="workflow-status"></h3>
-                            <p>Active Workflows</p>
+                <!-- Right: Needs Attention -->
+                <div class="agenda-column agenda-attention-col">
+                    <h3 class="agenda-column-title">Needs Attention</h3>
+                    <div id="attention-list" class="agenda-list">
+                        <div class="empty-state">
+                            <p>All caught up</p>
                         </div>
                     </div>
                 </div>
             </div>
-
         </section>
 
         <!-- Patients Section -->
@@ -395,145 +292,9 @@
             </div>
         </section>
 
-        <!-- Consultations Section -->
-        <section id="consultations" class="content-section">
-            <div class="page-header">
-                <h1>Consultations</h1>
-                <p>Record consultations, generate discharge notes, and manage patient care</p>
-            </div>
-
-            <!-- Consultation Tabs -->
-            <div class="consultation-tabs">
-                <div class="consultation-tabs__header">
-                    <button class="tab-button active" data-tab="new-consultation">
-                        Consultation <span class="tab-count" id="active-consultations">0</span>
-                    </button>
-                    <button class="tab-button" data-tab="patient-review">
-                        Patient Review <span class="tab-count" id="review-pending">0</span>
-                    </button>
-                    <button class="tab-button" data-tab="discharge">
-                        Discharge <span class="tab-count" id="discharge-ready">0</span>
-                    </button>
-
-                    <!--- TODO: In next version, add schedule
-                    
-                    <button class="tab-button" data-tab="calendar">
-                        Today's Schedule <span class="tab-count" id="todays-appointments">0</span>
-                    </button>
-                    
-                    -->
-                </div>
-
-                <div class="consultation-tabs__content">
-                    <!-- New Consultation Tab -->
-                    <div id="new-consultation-tab" class="tab-content active">
-                        <div class="consultation-form-container">
-                            <h3>Start New Consultation</h3>
-                            <form id="new-consultation-form" class="consultation-form">
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="consultation-patient">Select Patient *</label>
-                                        <select id="consultation-patient" name="patient_id" required>
-                                            <option value="">Choose a patient...</option>
-                                        </select>
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="consultation-type">Consultation Type *</label>
-                                        <select id="consultation-type" name="consultation_type" required>
-                                            <option value="">Select type...</option>
-                                            <option value="general">General Consultation</option>
-                                            <option value="followup">Follow-up</option>
-                                            <option value="emergency">Emergency</option>
-                                            <option value="routine">Routine Check</option>
-                                        </select>
-                                    </div>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="consultation-notes">Consultation Notes</label>
-                                    <textarea id="consultation-notes" name="notes" rows="6" 
-                                        placeholder="Record consultation details, symptoms, examination findings..."></textarea>
-                                </div>
-                                
-                                <div class="consultation-actions">
-                                    <button type="button" class="btn-secondary" id="start-audio-recording">
-                                        <i class="fas fa-microphone"></i> Start Audio Recording
-                                    </button>
-                                    <button type="submit" class="btn-primary">
-                                        <i class="fas fa-save"></i> Save Consultation
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-
-                    <!-- Generate Discharge Tab -->
-                    <div id="discharge-tab" class="tab-content">
-                        <div class="discharge-container">
-                            <h3>Generate Discharge Notes</h3>
-                            <div class="discharge-selection">
-                                <div class="form-group">
-                                    <label for="discharge-patient">Select Patient with Completed Consultation</label>
-                                    <select id="discharge-patient" name="patient_id">
-                                        <option value="">Choose patient...</option>
-                                    </select>
-                                </div>
-                                <div id="patient-consultations" class="consultations-list">
-                                    <!-- Consultations will be loaded here -->
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Patient Review Tab -->
-                    <div id="patient-review-tab" class="tab-content">
-                        <div class="review-container">
-                            <h3>Patient Review</h3>
-                            <div class="review-search">
-                                <div class="form-group">
-                                    <label for="review-patient-search">Search Patient</label>
-                                    <input type="text" id="review-patient-search" placeholder="Search by name, CNP, or phone...">
-                                </div>
-                            </div>
-                            <div id="review-results" class="review-results">
-                                <div class="empty-state">
-                                    <div class="empty-icon">🔍</div>
-                                    <h4>Search for a patient to review their history</h4>
-                                    <p>Enter patient name, CNP, or phone number above</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-
-                    <!-- Today's Schedule Tab -->
-                    
-                    <!--- TODO: In next version, add schedule 
-                    <div id="calendar-tab" class="tab-content">
-                        <div class="calendar-container">
-                            <h3>Today's Schedule</h3>
-                            <div class="calendar-integration">
-                                <div class="calendar-info">
-                                    <p>View and manage your Google Calendar appointments</p>
-                                    <div class="calendar-actions">
-                                        <a href="https://calendar.google.com" target="_blank" class="btn-primary">
-                                            <i class="fas fa-external-link-alt"></i> Open Google Calendar
-                                        </a>
-                                        <button class="btn-secondary" onclick="app.syncCalendar()">
-                                            <i class="fas fa-sync-alt"></i> Sync Appointments
-                                        </button>
-                                    </div>
-                                </div>
-                                <div id="todays-appointments-list" class="appointments-list">
-                                    <div class="loading-placeholder">Loading today's appointments...</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    -->
-
-                </div>
-            </div>
+        <!-- Consult Section -->
+        <section id="consult" class="content-section">
+            <div id="consult-container"></div>
         </section>
     </main>
 
@@ -878,6 +639,47 @@
                 <button class="btn-tertiary" onclick="app.exportConsentHistory()">
                     <i class="fas fa-download"></i> Export as PDF
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add to Agenda Modal -->
+    <div id="add-to-agenda-modal" class="modal">
+        <div class="modal-content small">
+            <div class="modal-header">
+                <h2>Add Patient to Agenda</h2>
+                <button class="modal-close" onclick="window.app.agendaManager.closeAddPatientOverlay()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <input type="text" id="agenda-patient-search" placeholder="Search by name or CNP..." autocomplete="off">
+                </div>
+                <div id="agenda-patient-results" class="agenda-search-results">
+                    <div class="empty-state">
+                        <p>Type to search for a patient</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Consult Confirmation Modal -->
+    <div id="delete-consult-modal" class="modal">
+        <div class="modal-content small">
+            <div class="modal-header">
+                <h2>Delete this consult?</h2>
+                <button class="modal-close" onclick="window.app.agendaManager.closeDeleteModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>This action cannot be undone. The consultation record will be permanently deleted.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="window.app.agendaManager.closeDeleteModal()">No</button>
+                <button class="btn-danger" id="confirm-delete-consult">Yes, delete</button>
             </div>
         </div>
     </div>

@@ -1,41 +1,16 @@
-//Nav + section switching
 // navigation.js
-// -----------------------------------------------------------------------------
-// Handles navigation within the SPA (Single Page Application).
-//
-// Responsibilities:
-//  - Listen to clicks on navigation links
-//  - Switch visible sections dynamically (hide others)
-//  - Support programmatic navigation (app.goToSection(...))
-//  - Highlight the active nav link for better UX
-//  - Allow role-based restrictions (nav items may be hidden in auth.js)
-//
-// NOTE: Assumes your HTML structure uses:
-//   <a href="#" class="nav-link" data-section="patients">Patients</a>
-//   <section id="patients" class="section">...</section>
-//
-// Convention:
-//   - Each nav link has data-section="sectionId"
-//   - Each section has id="sectionId"
-//   - Only one section is visible at a time
-// -----------------------------------------------------------------------------
+// Handles SPA section switching and navigation events.
 
 import { showToast } from './ui.js';
 
 export class Navigation {
     constructor(app) {
         this.app = app;
-
-        // DOM references
         this.navLinks = document.querySelectorAll('.nav-link');
         this.sections = document.querySelectorAll('.content-section');
     }
 
-    // -------------------------------------------------------------------------
-    // Initialization
-    // -------------------------------------------------------------------------
     init() {
-        // Bind click listeners on nav links
         this.navLinks.forEach(link => {
             link.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -44,20 +19,16 @@ export class Navigation {
             });
         });
 
-        // Show default section (dashboard or first nav link)
-        const defaultSection = this.navLinks[0]?.dataset.section || 'dashboard';
+        // Default to agenda
+        const defaultSection = 'agenda';
         this.navigateTo(defaultSection);
-
     }
 
-    // -------------------------------------------------------------------------
-    // Core Navigation
-    // -------------------------------------------------------------------------
     navigateTo(sectionId) {
         // Hide all sections
         this.sections.forEach(sec => sec.style.display = 'none');
 
-        // Show the target section
+        // Show target section
         const targetSection = document.getElementById(sectionId);
         if (targetSection) {
             targetSection.style.display = 'block';
@@ -67,7 +38,7 @@ export class Navigation {
             return;
         }
 
-        // Update nav link highlighting
+        // Update nav link highlighting (consult section has no nav link)
         this.navLinks.forEach(link => {
             if (link.dataset.section === sectionId) {
                 link.classList.add('active');
@@ -76,13 +47,14 @@ export class Navigation {
             }
         });
 
-        // Let the app know the active section changed
         this.app.activeSection = sectionId;
+
+        // Fire custom event for managers to hook into
+        document.dispatchEvent(new CustomEvent('section-changed', {
+            detail: { section: sectionId }
+        }));
     }
 
-    // -------------------------------------------------------------------------
-    // Programmatic Navigation
-    // -------------------------------------------------------------------------
     goToSection(sectionId) {
         this.navigateTo(sectionId);
     }

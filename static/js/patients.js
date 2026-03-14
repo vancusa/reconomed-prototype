@@ -334,7 +334,7 @@ export class PatientManager {
                 this.manageGDPR(id);
                 break;
             case 'consult':
-                window.consultationManager.startFromPatient(id);
+                window.app.agendaManager.startConsultFromPatient(id);
                 break;
             case 'upload':
                 this.app.documentManager.uploadDocumentForPatient(id);

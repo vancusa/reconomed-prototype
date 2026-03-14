@@ -49,12 +49,13 @@ function applyRoleBasedAccess(role) {
     // ----- Navigation -----
     const navLinks = document.querySelectorAll('.nav-link');
     const rolePermissions = {
-        doctor: ['dashboard', 'patients', 'documents', 'consultations'],
-        nurse: ['dashboard', 'patients', 'documents'],
-        admin: ['dashboard', 'patients', 'documents', 'consultations'],
-        billing: ['dashboard', 'patients'],
+        doctor: ['agenda', 'patients', 'documents', 'consult'],
+        helper: ['agenda', 'patients', 'documents'],
+        nurse: ['agenda', 'patients', 'documents'],
+        admin: ['agenda', 'patients', 'documents', 'consult'],
+        billing: ['agenda', 'patients'],
     };
-    const allowedSections = rolePermissions[role] || ['dashboard'];
+    const allowedSections = rolePermissions[role] || ['agenda'];
 
     navLinks.forEach(link => {
         const section = link.dataset.section;
