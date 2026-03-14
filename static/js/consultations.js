@@ -268,7 +268,7 @@ class ConsultationManager {
       content.style.display = isTarget ? 'block' : 'none';
     });
 
-    showToast(`Switched to "${tabName}"`, 'info');
+    //showToast(`Switched to "${tabName}"`, 'info');
     // If switching to certain tabs requires loading data, do it here:
     if (tabName === 'discharge') {
       // populate discharge patient select if empty

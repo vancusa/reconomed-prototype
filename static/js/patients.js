@@ -214,7 +214,7 @@ export class PatientManager {
             card.innerHTML = `
                 <div class="patient-info">
                     <h3>${patient.given_name} ${patient.family_name}</h3>
-                    <p>${patient.birth_date || ''} ${patient.phone ? '• ' + patient.phone : ''}</p>
+                    <p>${patient.birth_date || patient.phone ? `${patient.birth_date || ''}${patient.phone ? ' • ' + patient.phone : ''}` : '&nbsp;'}</p>
                 </div>
                 <div class="patient-actions">
                     <button class="btn-icon primary" data-action="view" data-id="${patient.id}" title="View Patient"><i class="fas fa-eye"></i></button>
